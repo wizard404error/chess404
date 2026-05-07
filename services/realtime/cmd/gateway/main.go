@@ -127,6 +127,17 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "ok",
+			"service":   "gateway",
+			"checkedAt": time.Now().UTC(),
+		})
+	})
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{

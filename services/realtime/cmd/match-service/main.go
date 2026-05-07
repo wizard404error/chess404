@@ -29,6 +29,19 @@ func main() {
 		CheckOrigin: func(_ *http.Request) bool { return true },
 	}
 
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":       "ok",
+			"service":      "match-service",
+			"rulesVersion": "v1-alpha-foundation",
+			"checkedAt":    nowUTC(),
+		})
+	})
+
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":       "ok",
