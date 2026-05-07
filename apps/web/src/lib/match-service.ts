@@ -1,0 +1,253 @@
+import type { MatchSnapshotMessage, PlayerIntent } from '@chess404/contracts';
+
+const httpBaseUrl = (process.env.NEXT_PUBLIC_MATCH_SERVICE_HTTP_BASE ?? process.env.NEXT_PUBLIC_MATCH_SERVICE_URL ?? 'http://localhost:8082/api').replace(/\/$/, '');
+const wsBaseUrl = toWebSocketBaseUrl((process.env.NEXT_PUBLIC_MATCH_SERVICE_WS_URL ?? process.env.NEXT_PUBLIC_MATCH_SERVICE_URL ?? 'http://localhost:8082').replace(/\/$/, ''));
+const gatewayBaseUrl = '/api/gateway';
+
+export interface CreateMatchInput {
+  matchId?: string;
+  seed?: number;
+  clockSeconds?: number;
+  starterHandMode?: 'starter_three' | 'full_catalog';
+  queue?: 'casual' | 'rated';
+  whiteGuestId?: string;
+  blackGuestId?: string;
+  whiteAccountId?: string;
+  blackAccountId?: string;
+  whiteName?: string;
+  blackName?: string;
+  whitePlayerSecret?: string;
+  blackPlayerSecret?: string;
+  whiteClaimToken?: string;
+  blackClaimToken?: string;
+}
+
+export interface StoredRoomMeta extends CreateMatchInput {
+  whiteClaimExpiresAt?: string;
+  blackClaimExpiresAt?: string;
+}
+
+const ROOM_META_PREFIX = 'chess404.room.';
+
+export async function createMatch(input: CreateMatchInput = {}): Promise<MatchSnapshotMessage> {
+  const response = await fetch(`${httpBaseUrl}/matches`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(input)
+  });
+
+  return unwrapResponse<MatchSnapshotMessage>(response);
+}
+
+export async function fetchMatch(matchId: string): Promise<MatchSnapshotMessage> {
+  const response = await fetch(`${httpBaseUrl}/matches/${matchId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    cache: 'no-store'
+  });
+
+  return unwrapResponse<MatchSnapshotMessage>(response);
+}
+
+export async function ensureMatch(input: CreateMatchInput & { matchId: string }): Promise<MatchSnapshotMessage> {
+  try {
+    return await fetchMatch(input.matchId);
+  } catch (err) {
+    if (err instanceof Error && /404|not found/i.test(err.message)) {
+      return createMatch(input);
+    }
+    throw err;
+  }
+}
+
+export async function applyIntent(matchId: string, intent: Omit<PlayerIntent, 'matchId'>): Promise<MatchSnapshotMessage> {
+  const response = await fetch(buildIntentUrl(matchId, intent), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      intent: {
+        ...intent,
+        matchId
+      }
+    })
+  });
+
+  return unwrapResponse<MatchSnapshotMessage>(response);
+}
+
+export function createSeatSecret(): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `seat_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
+export function resolveSeatSecret(existingSecret?: string | null, guestSessionSecret?: string | null): string {
+  const stored = normalizeSecret(existingSecret);
+  if (stored) {
+    return stored;
+  }
+  const session = normalizeSecret(guestSessionSecret);
+  if (session) {
+    return session;
+  }
+  return createSeatSecret();
+}
+
+export function readStoredRoomMeta(matchId: string): StoredRoomMeta | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const raw = window.localStorage.getItem(`${ROOM_META_PREFIX}${matchId}`);
+  if (!raw) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as StoredRoomMeta;
+  } catch {
+    return null;
+  }
+}
+
+export function writeStoredRoomMeta(matchId: string, meta: StoredRoomMeta | null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const key = `${ROOM_META_PREFIX}${matchId}`;
+  if (!meta) {
+    window.localStorage.removeItem(key);
+    return;
+  }
+  window.localStorage.setItem(key, JSON.stringify(meta));
+}
+
+export function connectToMatchStream(
+  matchId: string,
+  handlers: {
+    onSnapshot: (snapshot: MatchSnapshotMessage) => void;
+    onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void;
+    onError?: (error: Event) => void;
+  }
+): () => void {
+  let socket: WebSocket | null = null;
+  let reconnectTimer: number | null = null;
+  let disposed = false;
+  let reconnectAttempt = 0;
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimer !== null) {
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (disposed) {
+      return;
+    }
+    clearReconnectTimer();
+    handlers.onStatusChange?.('reconnecting');
+    const delay = Math.min(5000, 500 * 2 ** Math.min(reconnectAttempt, 4));
+    reconnectAttempt += 1;
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  };
+
+  const connect = () => {
+    if (disposed) {
+      return;
+    }
+    handlers.onStatusChange?.(reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
+    const nextSocket = new WebSocket(`${wsBaseUrl}/api/matches/${matchId}/ws`);
+    socket = nextSocket;
+
+    nextSocket.addEventListener('open', () => {
+      reconnectAttempt = 0;
+      handlers.onStatusChange?.('connected');
+    });
+
+    nextSocket.addEventListener('message', event => {
+      try {
+        const payload = JSON.parse(event.data) as { type?: string; payload?: MatchSnapshotMessage };
+        if (payload.type === 'match.snapshot' && payload.payload) {
+          handlers.onSnapshot(payload.payload);
+        }
+      } catch {
+        // Ignore malformed stream payloads for now.
+      }
+    });
+
+    nextSocket.addEventListener('error', event => {
+      handlers.onError?.(event);
+    });
+
+    nextSocket.addEventListener('close', () => {
+      if (socket === nextSocket) {
+        socket = null;
+      }
+      if (!disposed) {
+        scheduleReconnect();
+      }
+    });
+  };
+
+  connect();
+
+  return () => {
+    disposed = true;
+    clearReconnectTimer();
+    handlers.onStatusChange?.('disconnected');
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      socket.close();
+    }
+  };
+}
+
+async function unwrapResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    let message = `Request failed with ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload?.error) {
+        message = payload.error;
+      }
+    } catch {
+      // Ignore parse failures and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+function toWebSocketBaseUrl(input: string): string {
+  if (input.startsWith('https://')) {
+    return `wss://${input.slice('https://'.length)}`;
+  }
+  if (input.startsWith('http://')) {
+    return `ws://${input.slice('http://'.length)}`;
+  }
+  return input;
+}
+
+function buildIntentUrl(matchId: string, intent?: Partial<PlayerIntent>): string {
+  if (typeof intent?.playerClaimToken === 'string' && intent.playerClaimToken.trim()) {
+    return `${gatewayBaseUrl}/matches/${matchId}/intents`;
+  }
+  if (/\/api\/realtime$/i.test(httpBaseUrl)) {
+    return `${httpBaseUrl}/matches/${matchId}`;
+  }
+  return `${httpBaseUrl}/matches/${matchId}/intents`;
+}
+
+function normalizeSecret(value?: string | null): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
