@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import type { MatchSnapshotMessage, MatchState as AuthoritativeMatchState, PlayerIntent } from '@chess404/contracts';
 import { useStockfish } from './usestockfish';
@@ -18,6 +20,7 @@ import AccountPage from './AccountPage';
 import { fetchGatewayBootstrap } from './lib/system-service';
 import {
   applyIntent,
+  configureMatchServiceRuntime,
   connectToMatchStream,
   createMatch,
   ensureMatch,
@@ -25,6 +28,7 @@ import {
   readStoredRoomMeta,
   resolveSeatSecret,
   writeStoredRoomMeta,
+  type MatchServiceRuntimeConfig,
   type StoredRoomMeta,
 } from './lib/match-service';
 import { finalizeAccountMatch, finalizeGuestMatch, type GuestProfile, type MatchSeatClaim } from './lib/platform-service';
@@ -187,7 +191,11 @@ function writeStoredAccountIdentity(
   }
 }
 
-export default function App() {
+export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceHttpBase?: string; matchServiceWsBase?: string } }) {
+  configureMatchServiceRuntime({
+    httpBaseUrl: runtimeConfig?.matchServiceHttpBase,
+    wsBaseUrl: runtimeConfig?.matchServiceWsBase,
+  } satisfies MatchServiceRuntimeConfig);
   const [activePage, setActivePage] = React.useState<string>('Play');
   const [communityFocusGuestId, setCommunityFocusGuestId] = React.useState<string | null>(null);
   const [historyFocusMatchId, setHistoryFocusMatchId] = React.useState<string | null>(null);

@@ -1,8 +1,13 @@
 import type { MatchSnapshotMessage, PlayerIntent } from '@chess404/contracts';
 
-const httpBaseUrl = (process.env.NEXT_PUBLIC_MATCH_SERVICE_HTTP_BASE ?? process.env.NEXT_PUBLIC_MATCH_SERVICE_URL ?? 'http://localhost:8082/api').replace(/\/$/, '');
-const wsBaseUrl = toWebSocketBaseUrl((process.env.NEXT_PUBLIC_MATCH_SERVICE_WS_URL ?? process.env.NEXT_PUBLIC_MATCH_SERVICE_URL ?? 'http://localhost:8082').replace(/\/$/, ''));
 const gatewayBaseUrl = '/api/gateway';
+let httpBaseUrl = '/api/realtime';
+let wsBaseUrl = '';
+
+export interface MatchServiceRuntimeConfig {
+  httpBaseUrl?: string;
+  wsBaseUrl?: string;
+}
 
 export interface CreateMatchInput {
   matchId?: string;
@@ -28,6 +33,18 @@ export interface StoredRoomMeta extends CreateMatchInput {
 }
 
 const ROOM_META_PREFIX = 'chess404.room.';
+
+export function configureMatchServiceRuntime(config?: MatchServiceRuntimeConfig): void {
+  const nextHttpBase = normalizeBaseUrl(config?.httpBaseUrl);
+  if (nextHttpBase) {
+    httpBaseUrl = nextHttpBase;
+  }
+
+  const nextWsBase = normalizeBaseUrl(config?.wsBaseUrl);
+  if (nextWsBase) {
+    wsBaseUrl = toWebSocketBaseUrl(nextWsBase);
+  }
+}
 
 export async function createMatch(input: CreateMatchInput = {}): Promise<MatchSnapshotMessage> {
   const response = await fetch(`${httpBaseUrl}/matches`, {
@@ -166,7 +183,8 @@ export function connectToMatchStream(
       return;
     }
     handlers.onStatusChange?.(reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
-    const nextSocket = new WebSocket(`${wsBaseUrl}/api/matches/${matchId}/ws`);
+    const nextSocketUrl = resolveWebSocketBaseUrl();
+    const nextSocket = new WebSocket(`${nextSocketUrl}/api/matches/${matchId}/ws`);
     socket = nextSocket;
 
     nextSocket.addEventListener('open', () => {
@@ -250,4 +268,20 @@ function buildIntentUrl(matchId: string, intent?: Partial<PlayerIntent>): string
 
 function normalizeSecret(value?: string | null): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeBaseUrl(value?: string | null): string {
+  return typeof value === 'string' ? value.trim().replace(/\/$/, '') : '';
+}
+
+function resolveWebSocketBaseUrl(): string {
+  if (wsBaseUrl) {
+    return wsBaseUrl;
+  }
+
+  if (typeof window !== 'undefined') {
+    throw new Error('Live match stream is unavailable until the match service WebSocket URL is configured.');
+  }
+
+  throw new Error('Match service WebSocket URL is not configured.');
 }
