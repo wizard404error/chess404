@@ -1,4 +1,7 @@
-const backendBaseUrl = (process.env.MATCHMAKING_SERVICE_INTERNAL_URL ?? process.env.NEXT_PUBLIC_MATCHMAKING_SERVICE_URL ?? 'http://127.0.0.1:8084').replace(/\/$/, '');
+const backendBaseUrl = resolveBackendBaseUrl(
+  process.env.MATCHMAKING_SERVICE_INTERNAL_URL,
+  'http://matchmaking-service.railway.internal:8080',
+);
 
 export async function proxyMatchmaking(request: Request, path: string): Promise<Response> {
   const url = `${backendBaseUrl}${path}`;
@@ -43,4 +46,12 @@ function filterResponseHeaders(headers: Headers): Headers {
     next.set(key, value);
   });
   return next;
+}
+
+function resolveBackendBaseUrl(explicit: string | undefined, fallback: string): string {
+  const value = explicit?.trim().replace(/\/$/, '');
+  if (!value || value.includes('${{') || /:\s*$/.test(value)) {
+    return fallback;
+  }
+  return value;
 }

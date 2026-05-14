@@ -1,4 +1,7 @@
-const backendBaseUrl = (process.env.GATEWAY_INTERNAL_URL ?? process.env.NEXT_PUBLIC_GATEWAY_URL ?? 'http://127.0.0.1:8080').replace(/\/$/, '');
+const backendBaseUrl = resolveBackendBaseUrl(
+  process.env.GATEWAY_INTERNAL_URL,
+  'http://gateway.railway.internal:8080',
+);
 
 export async function proxyGateway(request: Request, path: string): Promise<Response> {
   const url = `${backendBaseUrl}${path}`;
@@ -43,4 +46,12 @@ function filterResponseHeaders(headers: Headers): Headers {
     next.set(key, value);
   });
   return next;
+}
+
+function resolveBackendBaseUrl(explicit: string | undefined, fallback: string): string {
+  const value = explicit?.trim().replace(/\/$/, '');
+  if (!value || value.includes('${{') || /:\s*$/.test(value)) {
+    return fallback;
+  }
+  return value;
 }
