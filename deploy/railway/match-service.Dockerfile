@@ -15,6 +15,6 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/match-service /usr/local/bin/match-service
 
-EXPOSE 8081
+EXPOSE 8080
 
 CMD ["/usr/local/bin/match-service"]

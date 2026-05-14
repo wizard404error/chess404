@@ -15,6 +15,6 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/platform-service /usr/local/bin/platform-service
 
-EXPOSE 8083
+EXPOSE 8080
 
 CMD ["/usr/local/bin/platform-service"]

@@ -23,6 +23,6 @@ RUN pnpm --filter @chess404/web build
 ENV NODE_ENV=production
 WORKDIR /app/apps/web
 
-EXPOSE 3000
+EXPOSE 8080
 
-CMD ["sh", "-lc", "pnpm start --hostname 0.0.0.0 --port ${PORT:-3000}"]
+CMD ["sh", "-lc", "pnpm start --hostname 0.0.0.0 --port ${PORT:-8080}"]

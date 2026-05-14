@@ -15,6 +15,6 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/matchmaking-service /usr/local/bin/matchmaking-service
 
-EXPOSE 8084
+EXPOSE 8080
 
 CMD ["/usr/local/bin/matchmaking-service"]
