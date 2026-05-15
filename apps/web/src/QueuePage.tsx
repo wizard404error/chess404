@@ -105,11 +105,7 @@ function formatDateTime(value: string): string {
 }
 
 export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps): React.ReactElement {
-  const hostedRuntime = React.useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    const hostname = window.location.hostname.toLowerCase();
-    return hostname !== 'localhost' && hostname !== '127.0.0.1';
-  }, []);
+  const [hostedRuntime, setHostedRuntime] = React.useState(false);
   const [queue, setQueue] = React.useState<QueueName>(() => readStoredQueueSelection());
   const [whiteTicket, setWhiteTicket] = React.useState<QueueTicket | null>(null);
   const [blackTicket, setBlackTicket] = React.useState<QueueTicket | null>(null);
@@ -121,6 +117,14 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
   const refreshQueue = React.useCallback(async (queueName: QueueName) => {
     const tickets = await fetchQueueTickets(queueName);
     setQueueTickets(tickets);
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const hostname = window.location.hostname.toLowerCase();
+    setHostedRuntime(hostname !== 'localhost' && hostname !== '127.0.0.1');
   }, []);
 
   React.useEffect(() => {

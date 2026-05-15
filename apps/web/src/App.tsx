@@ -196,16 +196,8 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     httpBaseUrl: runtimeConfig?.matchServiceHttpBase,
     wsBaseUrl: runtimeConfig?.matchServiceWsBase,
   } satisfies MatchServiceRuntimeConfig);
-  const hostedRuntime = React.useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    const hostname = window.location.hostname.toLowerCase();
-    return hostname !== 'localhost' && hostname !== '127.0.0.1';
-  }, []);
-  const [activePage, setActivePage] = React.useState<string>(() => {
-    if (typeof window === 'undefined') return 'Play';
-    const hostname = window.location.hostname.toLowerCase();
-    return hostname !== 'localhost' && hostname !== '127.0.0.1' ? 'Queue' : 'Play';
-  });
+  const [hostedRuntime, setHostedRuntime] = React.useState(false);
+  const [activePage, setActivePage] = React.useState<string>('Play');
   const [communityFocusGuestId, setCommunityFocusGuestId] = React.useState<string | null>(null);
   const [historyFocusMatchId, setHistoryFocusMatchId] = React.useState<string | null>(null);
   const [historyFocusGuestId, setHistoryFocusGuestId] = React.useState<string | null>(null);
@@ -549,6 +541,16 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       whiteClaimExpiresAt: nextWhiteExpiresAt ?? storedRoomMeta?.whiteClaimExpiresAt,
       blackClaimExpiresAt: nextBlackExpiresAt ?? storedRoomMeta?.blackClaimExpiresAt,
     });
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hostname = window.location.hostname.toLowerCase();
+    const nextHosted = hostname !== 'localhost' && hostname !== '127.0.0.1';
+    setHostedRuntime(nextHosted);
+    if (nextHosted) {
+      setActivePage(current => current === 'Play' ? 'Queue' : current);
+    }
   }, []);
 
   React.useEffect(() => {
