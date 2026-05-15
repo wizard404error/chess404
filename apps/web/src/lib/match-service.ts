@@ -3,6 +3,8 @@ import type { MatchSnapshotMessage, PlayerIntent } from '@chess404/contracts';
 const gatewayBaseUrl = '/api/gateway';
 let httpBaseUrl = '/api/realtime';
 let wsBaseUrl = '';
+const MATCH_POLL_INTERVAL_MS = 750;
+const MATCH_POLL_RETRY_INTERVAL_MS = 900;
 
 export interface MatchServiceRuntimeConfig {
   httpBaseUrl?: string;
@@ -172,7 +174,7 @@ export function connectToMatchStream(
     }
   };
 
-  const schedulePoll = (delay = 2000) => {
+  const schedulePoll = (delay = MATCH_POLL_INTERVAL_MS) => {
     if (disposed) {
       return;
     }
@@ -220,7 +222,7 @@ export function connectToMatchStream(
     const nextSocketUrl = resolveWebSocketBaseUrl();
     if (!nextSocketUrl) {
       handlers.onStatusChange?.('connected');
-      schedulePoll(reconnectAttempt > 0 ? 1000 : 0);
+      schedulePoll(reconnectAttempt > 0 ? MATCH_POLL_RETRY_INTERVAL_MS : 0);
       return;
     }
     const nextSocket = new WebSocket(`${nextSocketUrl}/api/matches/${matchId}/ws`);

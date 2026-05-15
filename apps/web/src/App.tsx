@@ -198,6 +198,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   } satisfies MatchServiceRuntimeConfig);
   const [hostedRuntime, setHostedRuntime] = React.useState(false);
   const [activePage, setActivePage] = React.useState<string>('Play');
+  const openedBoardMatchRef = React.useRef<string | null>(null);
   const [communityFocusGuestId, setCommunityFocusGuestId] = React.useState<string | null>(null);
   const [historyFocusMatchId, setHistoryFocusMatchId] = React.useState<string | null>(null);
   const [historyFocusGuestId, setHistoryFocusGuestId] = React.useState<string | null>(null);
@@ -1385,6 +1386,18 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
   React.useEffect(() => {
     if (!authoritativeMatchId) {
+      openedBoardMatchRef.current = null;
+      return;
+    }
+    if (openedBoardMatchRef.current === authoritativeMatchId) {
+      return;
+    }
+    openedBoardMatchRef.current = authoritativeMatchId;
+    setActivePage('Play');
+  }, [authoritativeMatchId]);
+
+  React.useEffect(() => {
+    if (!authoritativeMatchId) {
       setAuthoritativeLive(false);
       return;
     }
@@ -1508,6 +1521,19 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       window.clearInterval(interval);
     };
   }, [authoritativeMatchId, over, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions]);
+
+  const playTabLabel = authoritativeMatchId
+    ? 'Match'
+    : hostedRuntime
+      ? 'Board'
+      : 'Play';
+  const boardStatusLabel = authoritativeMatchId
+    ? (authoritativeLive ? 'Online Match Live' : 'Match Sync Reconnecting')
+    : hostedRuntime
+      ? 'Hosted Solo Board'
+      : 'Local Play Sandbox';
+  const showHostedSoloBanner = hostedRuntime && !authoritativeMatchId;
+  const showHostedReconnectWarning = hostedRuntime && Boolean(authoritativeMatchId) && !authoritativeLive;
 
   // Card draw logic
   React.useEffect(() => {
@@ -4366,7 +4392,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           <span style={{ fontSize:'22px', fontWeight:800, letterSpacing:'1px', background:'linear-gradient(135deg, #ffd700 0%, #c8860a 50%, #fff8e0 100%)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', textShadow:'none' }}>CardChess</span>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'2px' }}>
-          {[['Play', hostedRuntime ? 'Practice' : 'Play'], ['Queue','Queue'], ['History','History'], ['Cards','Cards'], ['Rankings','Rankings'], ['Community','Community'], ['Status','Status'], ['Account','Account']].map(([pageKey, label], i) => (
+          {[['Play', playTabLabel], ['Queue','Queue'], ['History','History'], ['Cards','Cards'], ['Rankings','Rankings'], ['Community','Community'], ['Status','Status'], ['Account','Account']].map(([pageKey, label], i) => (
             <button key={pageKey} onClick={() => setActivePage(pageKey)} style={{
               padding:'8px 18px', fontSize:'13px', fontWeight: i===0?700:500,
               background: activePage===pageKey?'linear-gradient(180deg, rgba(200,134,10,0.35) 0%, rgba(139,94,10,0.4) 100%)':'transparent',
@@ -4698,10 +4724,10 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         </div>
 
         {/* ── Board column ── */}
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', flexShrink:0, justifyContent:'center', paddingLeft:'16px', paddingRight:'32px' }}>
-          {hostedRuntime && (
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', flexShrink:0, justifyContent:'center', paddingLeft:'16px', paddingRight:'32px' }}>
+          {showHostedSoloBanner && (
             <div style={{ marginBottom:'8px', padding:'8px 14px', background:'rgba(96,165,250,0.10)', border:'1px solid rgba(96,165,250,0.28)', borderRadius:'8px', color:'#93c5fd', fontSize:'11px', fontWeight:700, textAlign:'center' }}>
-              Practice board: for real online opponents, use the Queue tab.
+              Solo board: use the Queue tab to find a real online opponent.
             </div>
           )}
           {cardPending && (
@@ -4899,16 +4925,16 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px' }}>
               <div style={{ color: authoritativeLive ? '#4ade80' : (hostedRuntime ? '#f59e0b' : 'rgba(160,184,216,0.55)'), fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'1px' }}>
-                {authoritativeLive ? 'Online Match Live' : hostedRuntime ? 'Hosted Fallback Active' : 'Local Fallback Active'}
+                {boardStatusLabel}
               </div>
               <div style={{ color:'rgba(160,184,216,0.4)', fontSize:'8px' }}>
                 {authoritativeMatchIdRef.current ? `match ${authoritativeMatchIdRef.current.slice(-6)}` : 'no match'}
               </div>
             </div>
-            {hostedRuntime && !authoritativeLive && (
+            {showHostedReconnectWarning && (
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px', padding:'7px 9px', borderRadius:'8px', background:'rgba(245,158,11,0.10)', border:'1px solid rgba(245,158,11,0.28)' }}>
                 <div style={{ color:'#fcd34d', fontSize:'10px', lineHeight:1.35 }}>
-                  Backend sync is unavailable, so this session is running browser-side fallback instead of a real online match.
+                  Live match sync is reconnecting, so updates may briefly fall back to slower refreshes until the stream is back.
                 </div>
                 <button
                   onClick={() => { void bootstrapAuthoritativeMatch(); }}
