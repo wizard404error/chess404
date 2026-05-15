@@ -405,7 +405,9 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
               cursor: loading || restoringTickets || !profile ? 'not-allowed' : 'pointer',
             }}
           >
-            Join {queue}
+            {!profile
+              ? 'Preparing player...'
+              : `Join ${queue}`}
           </button>
         ) : ticket.status === 'queued' ? (
           <button

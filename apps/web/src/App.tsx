@@ -31,7 +31,7 @@ import {
   type MatchServiceRuntimeConfig,
   type StoredRoomMeta,
 } from './lib/match-service';
-import { finalizeAccountMatch, finalizeGuestMatch, type GuestProfile, type MatchSeatClaim } from './lib/platform-service';
+import { createGuestSession, finalizeAccountMatch, finalizeGuestMatch, type GuestProfile, type MatchSeatClaim } from './lib/platform-service';
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const AUTHORITATIVE_JOKER_MECHANICS = new Set<CardMechanic>([
@@ -600,6 +600,50 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   React.useEffect(() => {
     blackProfileRef.current = blackProfile;
   }, [blackProfile]);
+
+  React.useEffect(() => {
+    if (!guestProfilesReady) return;
+
+    let cancelled = false;
+
+    const ensureGuestSeat = async (side: 'white' | 'black') => {
+      const stored = readStoredGuestIdentity(side);
+      const session = await createGuestSession({
+        guestId: stored.guestId,
+        sessionSecret: stored.sessionSecret,
+        sessionToken: stored.sessionToken,
+      });
+      if (cancelled) return;
+      guestSessionSecretsRef.current[side] = session.sessionSecret;
+      writeStoredGuestIdentity(side, session.guest.guestId, session.sessionSecret, {
+        sessionToken: session.sessionToken ?? null,
+        sessionExpiresAt: session.expiresAt ?? null,
+      });
+      if (side === 'white') {
+        setWhiteProfile(session.guest);
+      } else {
+        setBlackProfile(session.guest);
+      }
+    };
+
+    const tasks: Promise<void>[] = [];
+    if (!whiteProfile) {
+      tasks.push(ensureGuestSeat('white'));
+    }
+    if (!hostedRuntime && !blackProfile) {
+      tasks.push(ensureGuestSeat('black'));
+    }
+    if (tasks.length === 0) {
+      return;
+    }
+    void Promise.all(tasks).catch(() => {
+      // Keep the UI usable; queue page will surface join failures if platform calls still fail.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [guestProfilesReady, hostedRuntime, whiteProfile, blackProfile]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
