@@ -556,7 +556,13 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    requestedMatchIdRef.current = new URLSearchParams(window.location.search).get('match') ?? readStoredActiveMatchId();
+    const hostname = window.location.hostname.toLowerCase();
+    const nextHosted = hostname !== 'localhost' && hostname !== '127.0.0.1';
+    const requestedMatchId = new URLSearchParams(window.location.search).get('match');
+    requestedMatchIdRef.current = requestedMatchId ?? (nextHosted ? null : readStoredActiveMatchId());
+    if (nextHosted && !requestedMatchId) {
+      writeStoredActiveMatchId(null);
+    }
 
     let cancelled = false;
 
@@ -930,6 +936,13 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     const bootstrapId = authoritativeBootstrapRef.current + 1;
     authoritativeBootstrapRef.current = bootstrapId;
     try {
+      if (hostedRuntime && !requestedMatchIdRef.current) {
+        authoritativeMatchIdRef.current = null;
+        setAuthoritativeMatchId(null);
+        setAuthoritativeLive(false);
+        writeStoredActiveMatchId(null);
+        return;
+      }
       const explicitMatchId = requestedMatchIdRef.current;
       const restoredMatchId = explicitMatchId ?? readStoredActiveMatchId();
       let roomMeta = restoredMatchId ? readStoredRoomMeta(restoredMatchId) : null;
@@ -1125,7 +1138,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       setCardMsg(`Backend sync failed: ${message}`);
       setTimeout(() => setCardMsg(''), 3000);
     }
-  }, [applyAuthoritativeSnapshot, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions]);
+  }, [applyAuthoritativeSnapshot, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, hostedRuntime]);
 
   const submitAuthoritativeIntent = React.useCallback(async (
     intent:
@@ -3739,14 +3752,18 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       authoritativeClaimExpiresAtRef.current = { white: null, black: null };
       authoritativeClaimTokensRef.current = { white: null, black: null };
       gatewayBootstrapClaimsRef.current = { matchId: null, whiteSecret: null, blackSecret: null, whiteToken: null, blackToken: null, whiteExpiresAt: null, blackExpiresAt: null };
-      requestedMatchIdRef.current = null;
-      finalizedResultRef.current = null;
+    requestedMatchIdRef.current = null;
+    finalizedResultRef.current = null;
     writeStoredActiveMatchId(null);
     clearRequestedMatchQuery();
     setGameKey(k => k + 1);
+    if (hostedRuntime) {
+      setActivePage('Queue');
+      return;
+    }
     setTimeout(() => startAbortCountdown(), 0);
     void bootstrapAuthoritativeMatch();
-  }, [stop, setTicking, startAbortCountdown, bootstrapAuthoritativeMatch]);
+  }, [stop, setTicking, startAbortCountdown, bootstrapAuthoritativeMatch, hostedRuntime]);
 
   // ── Review navigation ───────────────────────────────────────────────────────
   const goToSnap = React.useCallback((idx: number) => {
@@ -4452,6 +4469,66 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         <StatusPage />
       ) : activePage === 'Account' ? (
         <AccountPage whiteProfile={whiteProfile} blackProfile={blackProfile} />
+      ) : hostedRuntime && !authoritativeMatchId ? (
+        <div style={{ display:'flex', flex:1, minHeight:0, alignItems:'center', justifyContent:'center', padding:'28px' }}>
+          <div style={{
+            width:'min(720px, 100%)',
+            padding:'28px 30px',
+            borderRadius:'20px',
+            background:'linear-gradient(180deg, rgba(14,18,30,0.96) 0%, rgba(9,12,20,0.98) 100%)',
+            border:'1px solid rgba(255,165,40,0.18)',
+            boxShadow:'0 18px 60px rgba(0,0,0,0.35)',
+            textAlign:'center',
+          }}>
+            <div style={{ fontSize:'14px', fontWeight:800, letterSpacing:'1.5px', textTransform:'uppercase', color:'#ffcf72', marginBottom:'10px' }}>
+              No Active Online Match
+            </div>
+            <div style={{ color:'#f3e6bf', fontSize:'28px', fontWeight:800, marginBottom:'10px' }}>
+              Join queue before the board opens
+            </div>
+            <div style={{ color:'rgba(255,232,180,0.72)', fontSize:'14px', lineHeight:1.6, maxWidth:'560px', margin:'0 auto 20px' }}>
+              On the hosted site, one browser should behave like one player. You should only land on the match board after queue finds you a real opponent and opens a real assigned room.
+            </div>
+            <div style={{ display:'flex', gap:'12px', justifyContent:'center', flexWrap:'wrap' }}>
+              <button
+                onClick={() => setActivePage('Queue')}
+                style={{
+                  padding:'12px 22px',
+                  background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)',
+                  color:'#fff8e0',
+                  border:'1px solid rgba(255,180,60,0.45)',
+                  borderRadius:'10px',
+                  cursor:'pointer',
+                  fontSize:'13px',
+                  fontWeight:800,
+                  boxShadow:'0 6px 20px rgba(200,134,10,0.35)',
+                }}
+              >
+                Go To Queue
+              </button>
+              <button
+                onClick={() => {
+                  writeStoredActiveMatchId(null);
+                  clearRequestedMatchQuery();
+                  requestedMatchIdRef.current = null;
+                  setActivePage('Queue');
+                }}
+                style={{
+                  padding:'12px 22px',
+                  background:'rgba(255,255,255,0.03)',
+                  color:'rgba(255,232,180,0.82)',
+                  border:'1px solid rgba(255,255,255,0.10)',
+                  borderRadius:'10px',
+                  cursor:'pointer',
+                  fontSize:'13px',
+                  fontWeight:700,
+                }}
+              >
+                Clear Stale Match State
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
       <div style={{ display:'flex', alignItems:'stretch', flex:1, padding:'12px 28px', gap:'0', overflow:'hidden', minHeight:0 }}>
 
