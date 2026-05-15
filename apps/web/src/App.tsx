@@ -201,7 +201,11 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     const hostname = window.location.hostname.toLowerCase();
     return hostname !== 'localhost' && hostname !== '127.0.0.1';
   }, []);
-  const [activePage, setActivePage] = React.useState<string>('Play');
+  const [activePage, setActivePage] = React.useState<string>(() => {
+    if (typeof window === 'undefined') return 'Play';
+    const hostname = window.location.hostname.toLowerCase();
+    return hostname !== 'localhost' && hostname !== '127.0.0.1' ? 'Queue' : 'Play';
+  });
   const [communityFocusGuestId, setCommunityFocusGuestId] = React.useState<string | null>(null);
   const [historyFocusMatchId, setHistoryFocusMatchId] = React.useState<string | null>(null);
   const [historyFocusGuestId, setHistoryFocusGuestId] = React.useState<string | null>(null);
@@ -4360,18 +4364,18 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           <span style={{ fontSize:'22px', fontWeight:800, letterSpacing:'1px', background:'linear-gradient(135deg, #ffd700 0%, #c8860a 50%, #fff8e0 100%)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', textShadow:'none' }}>CardChess</span>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'2px' }}>
-          {['Play','Queue','History','Cards','Rankings','Community','Status','Account'].map((label, i) => (
-            <button key={label} onClick={() => setActivePage(label)} style={{
+          {[['Play', hostedRuntime ? 'Practice' : 'Play'], ['Queue','Queue'], ['History','History'], ['Cards','Cards'], ['Rankings','Rankings'], ['Community','Community'], ['Status','Status'], ['Account','Account']].map(([pageKey, label], i) => (
+            <button key={pageKey} onClick={() => setActivePage(pageKey)} style={{
               padding:'8px 18px', fontSize:'13px', fontWeight: i===0?700:500,
-              background: activePage===label?'linear-gradient(180deg, rgba(200,134,10,0.35) 0%, rgba(139,94,10,0.4) 100%)':'transparent',
-              color: activePage===label?'#ffd700':'rgba(200,185,140,0.8)',
-              border: activePage===label?'1px solid rgba(200,134,10,0.6)':'1px solid transparent',
+              background: activePage===pageKey?'linear-gradient(180deg, rgba(200,134,10,0.35) 0%, rgba(139,94,10,0.4) 100%)':'transparent',
+              color: activePage===pageKey?'#ffd700':'rgba(200,185,140,0.8)',
+              border: activePage===pageKey?'1px solid rgba(200,134,10,0.6)':'1px solid transparent',
               borderRadius:'6px', cursor:'pointer',
-              borderBottom: activePage===label?'2px solid #c8860a':'2px solid transparent',
+              borderBottom: activePage===pageKey?'2px solid #c8860a':'2px solid transparent',
               transition:'all 0.15s ease',
             }}
-              onMouseEnter={e => { if (activePage!==label) { (e.target as HTMLButtonElement).style.color='#ffd700'; }}}
-              onMouseLeave={e => { if (activePage!==label) (e.target as HTMLButtonElement).style.color='rgba(200,185,140,0.8)'; }}
+              onMouseEnter={e => { if (activePage!==pageKey) { (e.target as HTMLButtonElement).style.color='#ffd700'; }}}
+              onMouseLeave={e => { if (activePage!==pageKey) (e.target as HTMLButtonElement).style.color='rgba(200,185,140,0.8)'; }}
             >{label}</button>
           ))}
         </div>
@@ -4693,6 +4697,11 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
         {/* ── Board column ── */}
         <div style={{ display:'flex', flexDirection:'column', alignItems:'center', flexShrink:0, justifyContent:'center', paddingLeft:'16px', paddingRight:'32px' }}>
+          {hostedRuntime && (
+            <div style={{ marginBottom:'8px', padding:'8px 14px', background:'rgba(96,165,250,0.10)', border:'1px solid rgba(96,165,250,0.28)', borderRadius:'8px', color:'#93c5fd', fontSize:'11px', fontWeight:700, textAlign:'center' }}>
+              Practice board: for real online opponents, use the Queue tab.
+            </div>
+          )}
           {cardPending && (
             <div style={{ marginBottom:'6px', padding:'8px 18px', background:'rgba(245,158,11,0.15)', border:'1px solid rgba(245,158,11,0.5)', borderRadius:'8px', color:'#f59e0b', fontSize:'12px', fontWeight:700, textAlign:'center', animation:'pulse 1.5s ease infinite' }}>
               🃏 {cardMsg} &nbsp;<span onClick={cancelCard} style={{ cursor:'pointer', color:'#e74c3c', marginLeft:'8px' }}>✕ cancel</span>
