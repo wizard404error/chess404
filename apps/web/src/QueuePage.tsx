@@ -105,6 +105,11 @@ function formatDateTime(value: string): string {
 }
 
 export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps): React.ReactElement {
+  const hostedRuntime = React.useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const hostname = window.location.hostname.toLowerCase();
+    return hostname !== 'localhost' && hostname !== '127.0.0.1';
+  }, []);
   const [queue, setQueue] = React.useState<QueueName>(() => readStoredQueueSelection());
   const [whiteTicket, setWhiteTicket] = React.useState<QueueTicket | null>(null);
   const [blackTicket, setBlackTicket] = React.useState<QueueTicket | null>(null);
@@ -197,6 +202,14 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
   }, [blackTicket]);
 
   React.useEffect(() => {
+    if (!hostedRuntime) {
+      return;
+    }
+    clearStoredTicketRef('black');
+    setBlackTicket(null);
+  }, [hostedRuntime]);
+
+  React.useEffect(() => {
     if (restoringTickets) {
       return;
     }
@@ -286,13 +299,13 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
         ...existingRoomMeta,
         queue,
         whiteGuestId: existingRoomMeta?.whiteGuestId ?? whiteProfile?.guestId,
-        blackGuestId: existingRoomMeta?.blackGuestId ?? blackProfile?.guestId,
+        blackGuestId: existingRoomMeta?.blackGuestId ?? (hostedRuntime ? undefined : blackProfile?.guestId),
         whiteAccountId: existingRoomMeta?.whiteAccountId ?? readStoredAccountId('white') ?? undefined,
-        blackAccountId: existingRoomMeta?.blackAccountId ?? readStoredAccountId('black') ?? undefined,
+        blackAccountId: existingRoomMeta?.blackAccountId ?? (hostedRuntime ? undefined : readStoredAccountId('black') ?? undefined),
         whiteName: existingRoomMeta?.whiteName ?? whiteProfile?.displayName,
-        blackName: existingRoomMeta?.blackName ?? blackProfile?.displayName,
+        blackName: existingRoomMeta?.blackName ?? (hostedRuntime ? undefined : blackProfile?.displayName),
         whitePlayerSecret: resolveSeatSecret(existingRoomMeta?.whitePlayerSecret, readStoredGuestSessionSecret('white')),
-        blackPlayerSecret: resolveSeatSecret(existingRoomMeta?.blackPlayerSecret, readStoredGuestSessionSecret('black')),
+        blackPlayerSecret: resolveSeatSecret(existingRoomMeta?.blackPlayerSecret, hostedRuntime ? null : readStoredGuestSessionSecret('black')),
       };
       writeStoredRoomMeta(ticket.assignedRoom, roomMeta);
       await ensureMatch({
@@ -309,19 +322,22 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
         blackPlayerSecret: roomMeta.blackPlayerSecret,
       });
       clearStoredTicketRef('white');
-      clearStoredTicketRef('black');
+      if (!hostedRuntime) {
+        clearStoredTicketRef('black');
+      }
       window.location.href = `/?match=${encodeURIComponent(ticket.assignedRoom)}`;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to open matched room.');
     } finally {
       setLoading(false);
     }
-  }, [queue, whiteProfile, blackProfile]);
+  }, [queue, whiteProfile, blackProfile, hostedRuntime]);
 
   const queueCard = (
     side: 'white' | 'black',
     profile: GuestProfile | null,
-    ticket: QueueTicket | null
+    ticket: QueueTicket | null,
+    title?: string,
   ): React.ReactElement => (
     <div
       style={{
@@ -338,7 +354,7 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
         <div>
-          <div style={{ color: side === 'white' ? '#dcffe9' : '#eedcff', fontSize: '15px', fontWeight: 800 }}>{profile?.displayName ?? 'Loading...'}</div>
+          <div style={{ color: side === 'white' ? '#dcffe9' : '#eedcff', fontSize: '15px', fontWeight: 800 }}>{title ?? profile?.displayName ?? 'Loading...'}</div>
           <div style={{ color: side === 'white' ? '#7ce3aa' : '#c9a8ff', fontSize: '12px', marginTop: '4px' }}>♟ {profile?.rating ?? 1200}</div>
         </div>
         <div style={{
@@ -365,7 +381,7 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
             {ticket.assignedRoom && <div>Assigned room: {ticket.assignedRoom}</div>}
           </>
         ) : (
-          <div>Not in queue yet. Join the selected queue to create a local matchmaking ticket.</div>
+          <div>{hostedRuntime ? 'Not in queue yet. Join the selected queue to wait for another online player.' : 'Not in queue yet. Join the selected queue to create a local matchmaking ticket.'}</div>
         )}
       </div>
 
@@ -443,7 +459,9 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
         <div style={{ padding: '18px 18px 14px', borderBottom: '1px solid rgba(255,165,40,0.12)' }}>
           <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Queue Control</div>
           <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-            Local platform queue tickets with simple auto-match when a second player joins.
+            {hostedRuntime
+              ? 'Online queue control for this browser session. One browser now behaves like one player by default.'
+              : 'Local platform queue tickets with simple auto-match when a second player joins.'}
           </div>
           {restoringTickets && (
             <div style={{ color: 'rgba(255,232,180,0.62)', fontSize: '11px', marginTop: '8px' }}>
@@ -479,8 +497,8 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {queueCard('white', whiteProfile, whiteTicket)}
-          {queueCard('black', blackProfile, blackTicket)}
+          {queueCard('white', whiteProfile, whiteTicket, hostedRuntime ? 'Your player' : undefined)}
+          {!hostedRuntime && queueCard('black', blackProfile, blackTicket)}
           {error && (
             <div style={{
               padding: '12px 14px',
