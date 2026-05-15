@@ -154,6 +154,7 @@ export function connectToMatchStream(
 ): () => void {
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
+  let pollTimer: number | null = null;
   let disposed = false;
   let reconnectAttempt = 0;
 
@@ -162,6 +163,39 @@ export function connectToMatchStream(
       window.clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+  };
+
+  const clearPollTimer = () => {
+    if (pollTimer !== null) {
+      window.clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const schedulePoll = (delay = 2000) => {
+    if (disposed) {
+      return;
+    }
+    clearPollTimer();
+    pollTimer = window.setTimeout(async () => {
+      pollTimer = null;
+      if (disposed) {
+        return;
+      }
+      try {
+        const snapshot = await fetchMatch(matchId);
+        if (!disposed) {
+          handlers.onSnapshot(snapshot);
+          handlers.onStatusChange?.('connected');
+        }
+      } catch {
+        if (!disposed) {
+          handlers.onStatusChange?.('reconnecting');
+        }
+      } finally {
+        schedulePoll();
+      }
+    }, delay);
   };
 
   const scheduleReconnect = () => {
@@ -184,6 +218,11 @@ export function connectToMatchStream(
     }
     handlers.onStatusChange?.(reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
     const nextSocketUrl = resolveWebSocketBaseUrl();
+    if (!nextSocketUrl) {
+      handlers.onStatusChange?.('connected');
+      schedulePoll(reconnectAttempt > 0 ? 1000 : 0);
+      return;
+    }
     const nextSocket = new WebSocket(`${nextSocketUrl}/api/matches/${matchId}/ws`);
     socket = nextSocket;
 
@@ -222,6 +261,7 @@ export function connectToMatchStream(
   return () => {
     disposed = true;
     clearReconnectTimer();
+    clearPollTimer();
     handlers.onStatusChange?.('disconnected');
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       socket.close();
@@ -274,14 +314,29 @@ function normalizeBaseUrl(value?: string | null): string {
   return typeof value === 'string' ? value.trim().replace(/\/$/, '') : '';
 }
 
-function resolveWebSocketBaseUrl(): string {
+function resolveWebSocketBaseUrl(): string | null {
   if (wsBaseUrl) {
     return wsBaseUrl;
   }
 
-  if (typeof window !== 'undefined') {
-    throw new Error('Live match stream is unavailable until the match service WebSocket URL is configured.');
+  const derivedFromHttp = deriveWebSocketBaseUrlFromHttpBase(httpBaseUrl);
+  if (derivedFromHttp) {
+    return derivedFromHttp;
   }
 
-  throw new Error('Match service WebSocket URL is not configured.');
+  return null;
+}
+
+function deriveWebSocketBaseUrlFromHttpBase(input: string): string | null {
+  const normalized = normalizeBaseUrl(input);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.startsWith('https://')) {
+    return normalized.replace(/^https:\/\//i, 'wss://').replace(/\/api(?:\/realtime)?$/i, '');
+  }
+  if (normalized.startsWith('http://')) {
+    return normalized.replace(/^http:\/\//i, 'ws://').replace(/\/api(?:\/realtime)?$/i, '');
+  }
+  return null;
 }
