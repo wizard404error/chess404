@@ -8,7 +8,7 @@ import { makeBoard, cloneBoard, findKing, isAttacked, inB, legalMoves, gameStatu
 import { CARD_POOL, drawRandomCard, incrementCardSeq } from './cardPool';
 import { RARITY_STYLE, RARITY_WEIGHTS, OPP, FILES, RANKS, SQ, MAX_HAND_SIZE, CLOCK_START, ABORT_SECS, DRAW_FROM, DRAW_EVERY, INITIAL_DEAL_ROUND, PIECE_VALUE, UPGRADE, DOWNGRADE, TARGETING_CARDS, CARD_TARGET_MESSAGES } from './constants';
 import { GLOBAL_STYLES } from './styles';
-import { BoardCanvas, type TransformAnim, type SniperAnim, type TeleportAnim, type JumpAnim, type SacrificeAnim, type MindControlAnim, type FuseAnim } from './BoardCanvas';
+import { BoardCanvas, type TransformAnim, type SniperAnim, type TeleportAnim, type JumpAnim, type SacrificeAnim, type MindControlAnim, type FuseAnim, type BoardArrow } from './BoardCanvas';
 import { CardAnimOverlay } from './CardAnimOverlay';
 import CardsPage from './CardsPage';
 import HistoryPage from './HistoryPage';
@@ -196,6 +196,11 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     httpBaseUrl: runtimeConfig?.matchServiceHttpBase,
     wsBaseUrl: runtimeConfig?.matchServiceWsBase,
   } satisfies MatchServiceRuntimeConfig);
+  const hostedRuntime = React.useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const hostname = window.location.hostname.toLowerCase();
+    return hostname !== 'localhost' && hostname !== '127.0.0.1';
+  }, []);
   const [activePage, setActivePage] = React.useState<string>('Play');
   const [communityFocusGuestId, setCommunityFocusGuestId] = React.useState<string | null>(null);
   const [historyFocusMatchId, setHistoryFocusMatchId] = React.useState<string | null>(null);
@@ -230,6 +235,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   const [movHist,   setMovHist]   = React.useState<{ n: string; w?: string; b?: string }[]>([]);
   const [snapshots, setSnapshots] = React.useState<Snapshot[]>([]);
   const [reviewIdx, setReviewIdx] = React.useState<number>(-1);
+  const [analysisArrows, setAnalysisArrows] = React.useState<BoardArrow[]>([]);
 
   // Card state
   const [whiteHand,    setWhiteHand]    = React.useState<GameCard[]>([]);
@@ -1356,6 +1362,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     setBlackHand([]);
     lastDrawRound.current = 0;
     setDealPhase('done');
+    setAnalysisArrows([]);
     if (gameKey === 0) startAbortCountdown();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameKey]);
@@ -1367,6 +1374,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
   React.useEffect(() => {
     writeStoredActiveMatchId(authoritativeMatchId);
+    setAnalysisArrows([]);
   }, [authoritativeMatchId]);
 
   React.useEffect(() => {
@@ -3787,6 +3795,26 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     return true;
   }, []);
 
+  const toggleAnalysisArrow = React.useCallback((from: Sq, to: Sq) => {
+    setAnalysisArrows(current => {
+      const existingIndex = current.findIndex(
+        arrow =>
+          arrow.from.row === from.row &&
+          arrow.from.col === from.col &&
+          arrow.to.row === to.row &&
+          arrow.to.col === to.col,
+      );
+      if (existingIndex >= 0) {
+        return current.filter((_, index) => index !== existingIndex);
+      }
+      return [...current, { from, to }];
+    });
+  }, []);
+
+  const clearAnalysisArrows = React.useCallback(() => {
+    setAnalysisArrows(current => (current.length ? [] : current));
+  }, []);
+
   const clickSq = React.useCallback((r: number, c: number) => {
     if (cardPending) { handleCardClick(r, c); return; }
     if (isReviewing || over || promo) return;
@@ -4761,6 +4789,9 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                 fogZones={fogZones}
                 viewerColor={turn}
                 invisibleUnder={ghostPiece}
+                analysisArrows={analysisArrows}
+                onToggleAnalysisArrow={toggleAnalysisArrow}
+                onClearAnalysisArrows={clearAnalysisArrows}
               />
 
               {/* Promotion overlay */}
@@ -4856,13 +4887,26 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             borderRadius:'12px', flexShrink:0,
           }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'8px' }}>
-              <div style={{ color: authoritativeLive ? '#4ade80' : 'rgba(160,184,216,0.55)', fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'1px' }}>
-                {authoritativeLive ? 'Authoritative Sync Live' : 'Local Fallback Active'}
+              <div style={{ color: authoritativeLive ? '#4ade80' : (hostedRuntime ? '#f59e0b' : 'rgba(160,184,216,0.55)'), fontSize:'9px', fontWeight:700, textTransform:'uppercase', letterSpacing:'1px' }}>
+                {authoritativeLive ? 'Online Match Live' : hostedRuntime ? 'Hosted Fallback Active' : 'Local Fallback Active'}
               </div>
               <div style={{ color:'rgba(160,184,216,0.4)', fontSize:'8px' }}>
                 {authoritativeMatchIdRef.current ? `match ${authoritativeMatchIdRef.current.slice(-6)}` : 'no match'}
               </div>
             </div>
+            {hostedRuntime && !authoritativeLive && (
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:'10px', padding:'7px 9px', borderRadius:'8px', background:'rgba(245,158,11,0.10)', border:'1px solid rgba(245,158,11,0.28)' }}>
+                <div style={{ color:'#fcd34d', fontSize:'10px', lineHeight:1.35 }}>
+                  Backend sync is unavailable, so this session is running browser-side fallback instead of a real online match.
+                </div>
+                <button
+                  onClick={() => { void bootstrapAuthoritativeMatch(); }}
+                  style={{ padding:'6px 10px', background:'linear-gradient(180deg,#d97706,#92400e)', color:'#fff', border:'1px solid rgba(251,191,36,0.35)', borderRadius:'7px', cursor:'pointer', fontSize:'10px', fontWeight:800, whiteSpace:'nowrap' }}
+                >
+                  Retry Sync
+                </button>
+              </div>
+            )}
             <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
               <div style={{ flex:1 }}>
                 <div style={{ color:'#a0b8d8', fontSize:'9px', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.8px' }}>Round</div>
