@@ -1,13 +1,25 @@
 package matchmaking
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/chess404/realtime/internal/contracts"
 )
+
+type captureMatchCreator struct {
+	assignments []MatchAssignment
+}
+
+func (c *captureMatchCreator) CreateMatch(assignment MatchAssignment) error {
+	c.assignments = append(c.assignments, assignment)
+	return nil
+}
 
 func TestQueueMatchesSecondTicket(t *testing.T) {
 	service := NewService()
-	first, err := service.Enqueue(QueueCasual, "guest_a", 1200)
+	first, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
 	if err != nil {
 		t.Fatalf("enqueue first ticket: %v", err)
 	}
@@ -15,7 +27,7 @@ func TestQueueMatchesSecondTicket(t *testing.T) {
 		t.Fatalf("expected first ticket queued, got %s", first.Status)
 	}
 
-	second, err := service.Enqueue(QueueCasual, "guest_b", 1210)
+	second, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo")
 	if err != nil {
 		t.Fatalf("enqueue second ticket: %v", err)
 	}
@@ -33,11 +45,38 @@ func TestQueueMatchesSecondTicket(t *testing.T) {
 	if second.AssignedRoom == "" || second.AssignedRoom != reloadedFirst.AssignedRoom {
 		t.Fatalf("expected shared assigned room, got %#v and %#v", reloadedFirst, second)
 	}
+	if reloadedFirst.SeatColor != "white" || second.SeatColor != "black" {
+		t.Fatalf("expected white/black seat assignment, got %#v and %#v", reloadedFirst, second)
+	}
+	if reloadedFirst.OpponentName != "Bravo" || second.OpponentName != "Alpha" {
+		t.Fatalf("expected opponent names to be persisted, got %#v and %#v", reloadedFirst, second)
+	}
+}
+
+func TestQueueMatchAssignmentCarriesAccountIDs(t *testing.T) {
+	service := NewService()
+	creator := &captureMatchCreator{}
+	service.SetMatchCreator(creator)
+
+	if _, err := service.EnqueueWithAccount(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha", "acct_alpha"); err != nil {
+		t.Fatalf("enqueue first ticket: %v", err)
+	}
+	if _, err := service.EnqueueWithAccount(QueueRated, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo", "acct_bravo"); err != nil {
+		t.Fatalf("enqueue second ticket: %v", err)
+	}
+
+	if len(creator.assignments) != 1 {
+		t.Fatalf("expected one match assignment, got %#v", creator.assignments)
+	}
+	assignment := creator.assignments[0]
+	if assignment.WhiteAccountID != "acct_alpha" || assignment.BlackAccountID != "acct_bravo" {
+		t.Fatalf("expected account IDs to flow into match assignment, got %#v", assignment)
+	}
 }
 
 func TestQueueCancelQueuedTicket(t *testing.T) {
 	service := NewService()
-	ticket, err := service.Enqueue(QueueRated, "guest_a", 1300)
+	ticket, err := service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1300, "Alpha")
 	if err != nil {
 		t.Fatalf("enqueue ticket: %v", err)
 	}
@@ -51,9 +90,52 @@ func TestQueueCancelQueuedTicket(t *testing.T) {
 	if cancelled.Status != StatusCancelled {
 		t.Fatalf("expected cancelled status, got %s", cancelled.Status)
 	}
-	snapshot := service.Snapshot(QueueRated)
+	snapshot := service.Snapshot(QueueRated, contracts.MatchModeOpenCards)
 	if snapshot.CancelledCount != 1 {
 		t.Fatalf("expected cancelled count 1, got %#v", snapshot)
+	}
+}
+
+func TestQueueReturnsExistingActiveTicketForSameGuestAndQueue(t *testing.T) {
+	service := NewService()
+
+	first, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
+	if err != nil {
+		t.Fatalf("enqueue first ticket: %v", err)
+	}
+
+	second, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
+	if err != nil {
+		t.Fatalf("enqueue duplicate ticket: %v", err)
+	}
+
+	if second.TicketID != first.TicketID {
+		t.Fatalf("expected duplicate join to return the same ticket, got %#v and %#v", first, second)
+	}
+	if len(service.List(QueueCasual, contracts.MatchModeOpenCards)) != 1 {
+		t.Fatalf("expected only one active ticket in queue, got %#v", service.List(QueueCasual, contracts.MatchModeOpenCards))
+	}
+}
+
+func TestQueueRejectsSecondActiveTicketInDifferentQueue(t *testing.T) {
+	service := NewService()
+
+	first, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
+	if err != nil {
+		t.Fatalf("enqueue first ticket: %v", err)
+	}
+
+	_, err = service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
+	if err == nil {
+		t.Fatalf("expected second active queue join to fail")
+	}
+
+	var activeErr ActiveTicketError
+	if !errors.As(err, &activeErr) {
+		t.Fatalf("expected ActiveTicketError, got %T (%v)", err, err)
+	}
+	if activeErr.Ticket.TicketID != first.TicketID {
+		t.Fatalf("expected active ticket reference to match first ticket, got %#v and %#v", first, activeErr.Ticket)
 	}
 }
 
@@ -65,11 +147,11 @@ func TestQueueStorePersistsAcrossReload(t *testing.T) {
 		t.Fatalf("create persistent service: %v", err)
 	}
 
-	first, err := service.Enqueue(QueueCasual, "guest_a", 1200)
+	first, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
 	if err != nil {
 		t.Fatalf("enqueue first ticket: %v", err)
 	}
-	second, err := service.Enqueue(QueueCasual, "guest_b", 1210)
+	second, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo")
 	if err != nil {
 		t.Fatalf("enqueue second ticket: %v", err)
 	}
@@ -93,6 +175,9 @@ func TestQueueStorePersistsAcrossReload(t *testing.T) {
 	if firstReloaded.Status != StatusMatched || secondReloaded.Status != StatusMatched {
 		t.Fatalf("expected matched statuses after reload, got %#v and %#v", firstReloaded, secondReloaded)
 	}
+	if firstReloaded.ModeID != contracts.MatchModeOpenCards || secondReloaded.ModeID != contracts.MatchModeOpenCards {
+		t.Fatalf("expected mode metadata to survive reload, got %#v and %#v", firstReloaded, secondReloaded)
+	}
 }
 
 func TestSQLiteQueueStorePersistsAcrossReload(t *testing.T) {
@@ -104,11 +189,11 @@ func TestSQLiteQueueStorePersistsAcrossReload(t *testing.T) {
 	}
 	defer func() { _ = service.Close() }()
 
-	first, err := service.Enqueue(QueueCasual, "guest_a", 1200)
+	first, err := service.Enqueue(QueueCasual, contracts.MatchModeHiddenCards, "guest_a", 1200, "Alpha")
 	if err != nil {
 		t.Fatalf("enqueue first ticket: %v", err)
 	}
-	second, err := service.Enqueue(QueueCasual, "guest_b", 1210)
+	second, err := service.Enqueue(QueueCasual, contracts.MatchModeHiddenCards, "guest_b", 1210, "Bravo")
 	if err != nil {
 		t.Fatalf("enqueue second ticket: %v", err)
 	}
@@ -133,18 +218,58 @@ func TestSQLiteQueueStorePersistsAcrossReload(t *testing.T) {
 	if reloaded.Backend() != "sqlite" {
 		t.Fatalf("expected sqlite backend, got %s", reloaded.Backend())
 	}
+	if firstReloaded.ModeID != contracts.MatchModeHiddenCards || secondReloaded.ModeID != contracts.MatchModeHiddenCards {
+		t.Fatalf("expected sqlite reload to preserve mode metadata, got %#v and %#v", firstReloaded, secondReloaded)
+	}
+}
+
+func TestSQLiteQueueStorePersistsAccountIDsAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tickets-accounts.sqlite")
+
+	service, err := NewSQLitePersistentService(path)
+	if err != nil {
+		t.Fatalf("create sqlite persistent service: %v", err)
+	}
+	defer func() { _ = service.Close() }()
+
+	first, err := service.EnqueueWithAccount(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha", "acct_alpha")
+	if err != nil {
+		t.Fatalf("enqueue first ticket: %v", err)
+	}
+	second, err := service.EnqueueWithAccount(QueueRated, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo", "acct_bravo")
+	if err != nil {
+		t.Fatalf("enqueue second ticket: %v", err)
+	}
+
+	reloaded, err := NewSQLitePersistentService(path)
+	if err != nil {
+		t.Fatalf("reload sqlite persistent service: %v", err)
+	}
+	defer func() { _ = reloaded.Close() }()
+
+	firstReloaded, ok := reloaded.Get(first.TicketID)
+	if !ok {
+		t.Fatalf("expected first ticket after reload")
+	}
+	secondReloaded, ok := reloaded.Get(second.TicketID)
+	if !ok {
+		t.Fatalf("expected second ticket after reload")
+	}
+	if firstReloaded.AccountID != "acct_alpha" || secondReloaded.AccountID != "acct_bravo" {
+		t.Fatalf("expected sqlite reload to preserve account metadata, got %#v and %#v", firstReloaded, secondReloaded)
+	}
 }
 
 func TestQueueStatsReflectTicketState(t *testing.T) {
 	service := NewService()
-	first, err := service.Enqueue(QueueRated, "guest_a", 1200)
+	first, err := service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
 	if err != nil {
 		t.Fatalf("enqueue first rated ticket: %v", err)
 	}
-	if _, err := service.Enqueue(QueueRated, "guest_b", 1210); err != nil {
+	if _, err := service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo"); err != nil {
 		t.Fatalf("enqueue second rated ticket: %v", err)
 	}
-	casual, err := service.Enqueue(QueueCasual, "guest_c", 1190)
+	casual, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_c", 1190, "Charlie")
 	if err != nil {
 		t.Fatalf("enqueue casual ticket: %v", err)
 	}
@@ -164,5 +289,28 @@ func TestQueueStatsReflectTicketState(t *testing.T) {
 	}
 	if _, ok := service.Get(first.TicketID); !ok {
 		t.Fatalf("expected first rated ticket to remain present")
+	}
+}
+
+func TestQueueDoesNotCrossMatchOfficialModes(t *testing.T) {
+	service := NewService()
+
+	first, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
+	if err != nil {
+		t.Fatalf("enqueue first ticket: %v", err)
+	}
+	second, err := service.Enqueue(QueueCasual, contracts.MatchModeHiddenCards, "guest_b", 1210, "Bravo")
+	if err != nil {
+		t.Fatalf("enqueue second ticket in different mode: %v", err)
+	}
+
+	if first.Status != StatusQueued || second.Status != StatusQueued {
+		t.Fatalf("expected both tickets to stay queued in separate modes, got %#v and %#v", first, second)
+	}
+	if service.Snapshot(QueueCasual, contracts.MatchModeOpenCards).QueuedCount != 1 {
+		t.Fatalf("expected open-cards queue snapshot to remain isolated")
+	}
+	if service.Snapshot(QueueCasual, contracts.MatchModeHiddenCards).QueuedCount != 1 {
+		t.Fatalf("expected hidden-cards queue snapshot to remain isolated")
 	}
 }

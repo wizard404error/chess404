@@ -20,6 +20,7 @@ interface CommunityPageProps {
   focusGuestId?: string | null;
   onOpenMatch?: (matchId: string) => void;
   onOpenGuestHistory?: (guestId: string) => void;
+  onOpenAccount?: (handle: string) => void;
 }
 
 export default function CommunityPage({
@@ -28,6 +29,7 @@ export default function CommunityPage({
   focusGuestId = null,
   onOpenMatch,
   onOpenGuestHistory,
+  onOpenAccount,
 }: CommunityPageProps): React.ReactElement {
   const [guests, setGuests] = React.useState<GuestProfile[]>([]);
   const [accountsByGuestId, setAccountsByGuestId] = React.useState<Record<string, AccountProfile>>({});
@@ -366,6 +368,23 @@ export default function CommunityPage({
                   >
                     Full History
                   </button>
+                  {featuredAccount && (
+                    <button
+                      onClick={() => onOpenAccount?.(featuredAccount.handle)}
+                      style={{
+                        padding: '5px 9px',
+                        borderRadius: '999px',
+                        background: 'rgba(255,180,60,0.10)',
+                        border: '1px solid rgba(255,180,60,0.20)',
+                        color: '#ffe9b1',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        cursor: onOpenAccount ? 'pointer' : 'default',
+                      }}
+                    >
+                      Open Account Profile
+                    </button>
+                  )}
                 </div>
               </div>
 

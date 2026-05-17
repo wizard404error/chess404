@@ -3,6 +3,8 @@ package platform
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 func TestSQLiteAccountStoreClaimGuestPersistsAndReloads(t *testing.T) {
@@ -83,7 +85,7 @@ func TestSQLiteAccountStoreFinalizeMatchPersistsDirectStats(t *testing.T) {
 		t.Fatalf("expected black sqlite account sync to succeed, got %v", err)
 	}
 
-	white, black, changed, err := store.FinalizeMatch("sqlite_account_match", whiteSession.Account.AccountID, blackSession.Account.AccountID, "draw")
+	white, black, changed, err := store.FinalizeMatch("sqlite_account_match", whiteSession.Account.AccountID, blackSession.Account.AccountID, "draw", "casual", contracts.MatchModeHiddenCards)
 	if err != nil {
 		t.Fatalf("expected sqlite account finalization to succeed, got %v", err)
 	}
@@ -111,7 +113,44 @@ func TestSQLiteAccountStoreFinalizeMatchPersistsDirectStats(t *testing.T) {
 	if len(whiteReloaded.RatingHistory) != 1 || len(blackReloaded.RatingHistory) != 1 {
 		t.Fatalf("expected sqlite account history to persist, got %#v %#v", whiteReloaded.RatingHistory, blackReloaded.RatingHistory)
 	}
-	if whiteReloaded.RatingHistory[0].MatchID != "sqlite_account_match" || whiteReloaded.RatingHistory[0].Result != "draw" || whiteReloaded.RatingHistory[0].Delta != 0 {
+	if whiteReloaded.RatingHistory[0].MatchID != "sqlite_account_match" || whiteReloaded.RatingHistory[0].Result != "draw" || whiteReloaded.RatingHistory[0].Delta != 0 || whiteReloaded.RatingHistory[0].Queue != "casual" || whiteReloaded.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
 		t.Fatalf("unexpected persisted white sqlite history %#v", whiteReloaded.RatingHistory[0])
+	}
+}
+
+func TestSQLiteAccountStorePasswordLoginAndLogout(t *testing.T) {
+	tempDir := t.TempDir()
+	storePath := filepath.Join(tempDir, "accounts.sqlite")
+	store, err := NewSQLiteAccountStore(storePath)
+	if err != nil {
+		t.Fatalf("expected sqlite account store to initialize, got %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	claimed, err := store.ClaimGuest(GuestProfile{GuestID: "guest_auth"}, "aurora_auth")
+	if err != nil {
+		t.Fatalf("expected sqlite account claim to succeed, got %v", err)
+	}
+	enabled, err := store.EnablePasswordLogin(claimed.Account.AccountID, claimed.SessionToken, "aurora@example.com", "Swordfish88")
+	if err != nil {
+		t.Fatalf("expected sqlite password setup to succeed, got %v", err)
+	}
+	if enabled.Account.AccountID != claimed.Account.AccountID {
+		t.Fatalf("unexpected sqlite enabled session %#v", enabled)
+	}
+
+	loggedIn, err := store.LoginWithPassword("aurora@example.com", "Swordfish88")
+	if err != nil {
+		t.Fatalf("expected sqlite email login to succeed, got %v", err)
+	}
+	if loggedIn.Account.AccountID != claimed.Account.AccountID {
+		t.Fatalf("unexpected sqlite login session %#v", loggedIn)
+	}
+
+	if err := store.LogoutAccount(loggedIn.Account.AccountID, loggedIn.SessionToken); err != nil {
+		t.Fatalf("expected sqlite logout to succeed, got %v", err)
+	}
+	if _, err := store.ResumeAccount(loggedIn.Account.AccountID, loggedIn.SessionToken); err != ErrUnauthorizedAccountSession {
+		t.Fatalf("expected sqlite logged-out session to be invalid, got %v", err)
 	}
 }

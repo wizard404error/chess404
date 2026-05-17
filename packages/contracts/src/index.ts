@@ -1,6 +1,31 @@
 export type PieceType = 'king' | 'queen' | 'rook' | 'bishop' | 'knight' | 'pawn';
 export type PieceColor = 'white' | 'black';
 export type Rarity = 'trash' | 'common' | 'rare' | 'epic' | 'legendary';
+export type MatchModeId = 'open_cards' | 'hidden_cards';
+
+export interface MatchModeDefinition {
+  id: MatchModeId;
+  label: string;
+  shortLabel: string;
+  rulesSummary: string;
+}
+
+export const DEFAULT_MATCH_MODE_ID: MatchModeId = 'open_cards';
+
+export const OFFICIAL_MATCH_MODES: readonly MatchModeDefinition[] = [
+  {
+    id: 'open_cards',
+    label: 'Open Cards',
+    shortLabel: 'Open',
+    rulesSummary: 'Both players can see the public state and card information.',
+  },
+  {
+    id: 'hidden_cards',
+    label: 'Hidden Cards',
+    shortLabel: 'Hidden',
+    rulesSummary: 'Card plans stay concealed to create a bluff-heavy competitive mode.',
+  },
+] as const;
 
 export interface Piece {
   type: PieceType;
@@ -160,11 +185,24 @@ export interface ChatMessage {
   sentAt: string;
 }
 
+export type MatchFinishReason =
+  | 'checkmate'
+  | 'stalemate'
+  | 'insufficient_material'
+  | 'threefold_repetition'
+  | 'fifty_move_rule'
+  | 'timeout'
+  | 'abandon'
+  | 'resign'
+  | 'abort'
+  | 'draw_agreement';
+
 export interface MatchState {
   matchId: string;
   rulesVersion: string;
   rngSeed: number;
-  queue?: 'casual' | 'rated';
+  queue?: 'casual' | 'rated' | 'direct';
+  modeId?: MatchModeId;
   whiteGuestId?: string;
   blackGuestId?: string;
   whiteAccountId?: string;
@@ -192,10 +230,21 @@ export interface MatchState {
   moveHistory: string[];
   chatMessages: ChatMessage[];
   clock: MatchClock;
+  whiteConnected: boolean;
+  blackConnected: boolean;
+  disconnectGraceFor?: PieceColor | null;
+  disconnectGraceDeadline?: string | null;
   status: 'waiting' | 'active' | 'finished';
   winner: PieceColor | 'draw' | 'aborted' | null;
+  finishReason?: MatchFinishReason | null;
   drawOfferedBy?: PieceColor | null;
   pendingCard?: PendingCardState | null;
+}
+
+export interface MatchPresenceRequest {
+  playerId: string;
+  playerSecret?: string;
+  playerClaimToken?: string;
 }
 
 export interface ReplayFrame {
@@ -268,6 +317,7 @@ export interface IntentRejectedMessage {
 
 export interface QueueStatusMessage {
   queue: 'casual' | 'rated';
+  modeId?: MatchModeId;
   status: 'queued' | 'matched' | 'cancelled';
   ticketId?: string;
 }

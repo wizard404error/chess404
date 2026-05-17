@@ -1,6 +1,25 @@
 package contracts
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+type MatchModeID string
+
+const (
+	MatchModeOpenCards   MatchModeID = "open_cards"
+	MatchModeHiddenCards MatchModeID = "hidden_cards"
+)
+
+func NormalizeMatchModeID(value string) MatchModeID {
+	switch MatchModeID(strings.TrimSpace(value)) {
+	case MatchModeHiddenCards:
+		return MatchModeHiddenCards
+	default:
+		return MatchModeOpenCards
+	}
+}
 
 type Square struct {
 	Row int `json:"row"`
@@ -143,46 +162,52 @@ type ReplayFrame struct {
 }
 
 type MatchState struct {
-	MatchID           string               `json:"matchId"`
-	RulesVersion      string               `json:"rulesVersion"`
-	RNGSeed           int64                `json:"rngSeed"`
-	Queue             string               `json:"queue,omitempty"`
-	WhiteGuestID      string               `json:"whiteGuestId,omitempty"`
-	BlackGuestID      string               `json:"blackGuestId,omitempty"`
-	WhiteAccountID    string               `json:"whiteAccountId,omitempty"`
-	BlackAccountID    string               `json:"blackAccountId,omitempty"`
-	WhiteName         string               `json:"whiteName,omitempty"`
-	BlackName         string               `json:"blackName,omitempty"`
-	WhitePlayerSecret string               `json:"-"`
-	BlackPlayerSecret string               `json:"-"`
-	Board             [][]*Piece           `json:"board"`
-	LavaSquares       []LavaSquare         `json:"lavaSquares,omitempty"`
-	BombPieces        []BombPiece          `json:"bombPieces,omitempty"`
-	BlackHoles        []BlackHoleZone      `json:"blackHoles,omitempty"`
-	FogZones          []FogZone            `json:"fogZones,omitempty"`
-	FortressZones     []FortressZone       `json:"fortressZones,omitempty"`
-	InvisiblePiece    *InvisiblePieceState `json:"invisiblePiece,omitempty"`
-	CheaterState      *CheaterState        `json:"cheaterState,omitempty"`
-	RadarRevealFor    string               `json:"radarRevealFor,omitempty"`
-	DoubleMove        *DoubleMoveState     `json:"doubleMove,omitempty"`
-	UndoAgainst       string               `json:"undoAgainst,omitempty"`
-	Turn              string               `json:"turn"`
-	Moved             []string             `json:"moved"`
-	LastMove          *LastMove            `json:"lastMove,omitempty"`
-	HalfMoveClock     int                  `json:"halfMoveClock"`
-	FullMoveNum       int                  `json:"fullMoveNumber"`
-	WhiteHand         []GameCard           `json:"whiteHand"`
-	BlackHand         []GameCard           `json:"blackHand"`
-	MoveHistory       []string             `json:"moveHistory"`
-	ChatMessages      []ChatMessage        `json:"chatMessages"`
-	Clock             MatchClock           `json:"clock"`
-	Status            string               `json:"status"`
-	Winner            string               `json:"winner,omitempty"`
-	DrawOfferedBy     string               `json:"drawOfferedBy,omitempty"`
-	PendingCard       *PendingCardState    `json:"pendingCard,omitempty"`
-	CreatedAt         time.Time            `json:"createdAt"`
-	UpdatedAt         time.Time            `json:"updatedAt"`
-	History           []PositionState      `json:"-"`
+	MatchID                 string               `json:"matchId"`
+	RulesVersion            string               `json:"rulesVersion"`
+	RNGSeed                 int64                `json:"rngSeed"`
+	Queue                   string               `json:"queue,omitempty"`
+	ModeID                  MatchModeID          `json:"modeId,omitempty"`
+	WhiteGuestID            string               `json:"whiteGuestId,omitempty"`
+	BlackGuestID            string               `json:"blackGuestId,omitempty"`
+	WhiteAccountID          string               `json:"whiteAccountId,omitempty"`
+	BlackAccountID          string               `json:"blackAccountId,omitempty"`
+	WhiteName               string               `json:"whiteName,omitempty"`
+	BlackName               string               `json:"blackName,omitempty"`
+	WhitePlayerSecret       string               `json:"-"`
+	BlackPlayerSecret       string               `json:"-"`
+	Board                   [][]*Piece           `json:"board"`
+	LavaSquares             []LavaSquare         `json:"lavaSquares,omitempty"`
+	BombPieces              []BombPiece          `json:"bombPieces,omitempty"`
+	BlackHoles              []BlackHoleZone      `json:"blackHoles,omitempty"`
+	FogZones                []FogZone            `json:"fogZones,omitempty"`
+	FortressZones           []FortressZone       `json:"fortressZones,omitempty"`
+	InvisiblePiece          *InvisiblePieceState `json:"invisiblePiece,omitempty"`
+	CheaterState            *CheaterState        `json:"cheaterState,omitempty"`
+	RadarRevealFor          string               `json:"radarRevealFor,omitempty"`
+	DoubleMove              *DoubleMoveState     `json:"doubleMove,omitempty"`
+	UndoAgainst             string               `json:"undoAgainst,omitempty"`
+	Turn                    string               `json:"turn"`
+	Moved                   []string             `json:"moved"`
+	LastMove                *LastMove            `json:"lastMove,omitempty"`
+	HalfMoveClock           int                  `json:"halfMoveClock"`
+	FullMoveNum             int                  `json:"fullMoveNumber"`
+	WhiteHand               []GameCard           `json:"whiteHand"`
+	BlackHand               []GameCard           `json:"blackHand"`
+	MoveHistory             []string             `json:"moveHistory"`
+	ChatMessages            []ChatMessage        `json:"chatMessages"`
+	Clock                   MatchClock           `json:"clock"`
+	WhiteConnected          bool                 `json:"whiteConnected"`
+	BlackConnected          bool                 `json:"blackConnected"`
+	DisconnectGraceFor      string               `json:"disconnectGraceFor,omitempty"`
+	DisconnectGraceDeadline *time.Time           `json:"disconnectGraceDeadline,omitempty"`
+	Status                  string               `json:"status"`
+	Winner                  string               `json:"winner,omitempty"`
+	FinishReason            string               `json:"finishReason,omitempty"`
+	DrawOfferedBy           string               `json:"drawOfferedBy,omitempty"`
+	PendingCard             *PendingCardState    `json:"pendingCard,omitempty"`
+	CreatedAt               time.Time            `json:"createdAt"`
+	UpdatedAt               time.Time            `json:"updatedAt"`
+	History                 []PositionState      `json:"-"`
 }
 
 type PlayerIntent struct {
@@ -199,6 +224,12 @@ type PlayerIntent struct {
 	Target           *Square `json:"target,omitempty"`
 	SelectionID      string  `json:"selectionId,omitempty"`
 	Promotion        string  `json:"promotion,omitempty"`
+}
+
+type MatchPresenceRequest struct {
+	PlayerID         string `json:"playerId"`
+	PlayerSecret     string `json:"playerSecret,omitempty"`
+	PlayerClaimToken string `json:"playerClaimToken,omitempty"`
 }
 
 type ResolvedEvent struct {
@@ -218,19 +249,35 @@ type MatchSnapshotResponse struct {
 }
 
 type CreateMatchRequest struct {
-	MatchID           string `json:"matchId,omitempty"`
-	Seed              int64  `json:"seed,omitempty"`
-	ClockSeconds      int64  `json:"clockSeconds,omitempty"`
-	StarterHandMode   string `json:"starterHandMode,omitempty"`
-	Queue             string `json:"queue,omitempty"`
-	WhiteGuestID      string `json:"whiteGuestId,omitempty"`
-	BlackGuestID      string `json:"blackGuestId,omitempty"`
-	WhiteAccountID    string `json:"whiteAccountId,omitempty"`
-	BlackAccountID    string `json:"blackAccountId,omitempty"`
-	WhiteName         string `json:"whiteName,omitempty"`
-	BlackName         string `json:"blackName,omitempty"`
-	WhitePlayerSecret string `json:"whitePlayerSecret,omitempty"`
-	BlackPlayerSecret string `json:"blackPlayerSecret,omitempty"`
+	MatchID           string      `json:"matchId,omitempty"`
+	Seed              int64       `json:"seed,omitempty"`
+	ClockSeconds      int64       `json:"clockSeconds,omitempty"`
+	StarterHandMode   string      `json:"starterHandMode,omitempty"`
+	Queue             string      `json:"queue,omitempty"`
+	ModeID            MatchModeID `json:"modeId,omitempty"`
+	WhiteGuestID      string      `json:"whiteGuestId,omitempty"`
+	BlackGuestID      string      `json:"blackGuestId,omitempty"`
+	WhiteAccountID    string      `json:"whiteAccountId,omitempty"`
+	BlackAccountID    string      `json:"blackAccountId,omitempty"`
+	WhiteName         string      `json:"whiteName,omitempty"`
+	BlackName         string      `json:"blackName,omitempty"`
+	WhitePlayerSecret string      `json:"whitePlayerSecret,omitempty"`
+	BlackPlayerSecret string      `json:"blackPlayerSecret,omitempty"`
+}
+
+type JoinMatchSeatRequest struct {
+	GuestID       string `json:"guestId"`
+	AccountID     string `json:"accountId,omitempty"`
+	DisplayName   string `json:"displayName,omitempty"`
+	PlayerSecret  string `json:"playerSecret,omitempty"`
+	PreferredSeat string `json:"preferredSeat,omitempty"`
+}
+
+type JoinMatchSeatResponse struct {
+	Match              MatchSnapshotResponse `json:"match"`
+	SeatColor          string                `json:"seatColor"`
+	Joined             bool                  `json:"joined"`
+	WaitingForOpponent bool                  `json:"waitingForOpponent"`
 }
 
 type ApplyIntentRequest struct {

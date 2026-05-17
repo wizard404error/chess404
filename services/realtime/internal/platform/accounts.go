@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 var ErrInvalidAccountHandle = errors.New("invalid account handle")
@@ -35,18 +36,21 @@ type AccountProfile struct {
 	RatingHistory  []AccountRatingHistoryEntry `json:"ratingHistory,omitempty"`
 	CreatedAt      time.Time                   `json:"createdAt"`
 	LastSeenAt     time.Time                   `json:"lastSeenAt"`
+	LastActiveAt   time.Time                   `json:"lastActiveAt,omitempty"`
 }
 
 type AccountRatingHistoryEntry struct {
-	MatchID           string    `json:"matchId"`
-	OpponentAccountID string    `json:"opponentAccountId,omitempty"`
-	Result            string    `json:"result"`
-	Winner            string    `json:"winner"`
-	Delta             int       `json:"delta"`
-	RatingBefore      int       `json:"ratingBefore"`
-	RatingAfter       int       `json:"ratingAfter"`
-	MatchesPlayed     int       `json:"matchesPlayed"`
-	At                time.Time `json:"at"`
+	MatchID           string                `json:"matchId"`
+	OpponentAccountID string                `json:"opponentAccountId,omitempty"`
+	Queue             string                `json:"queue,omitempty"`
+	ModeID            contracts.MatchModeID `json:"modeId,omitempty"`
+	Result            string                `json:"result"`
+	Winner            string                `json:"winner"`
+	Delta             int                   `json:"delta"`
+	RatingBefore      int                   `json:"ratingBefore"`
+	RatingAfter       int                   `json:"ratingAfter"`
+	MatchesPlayed     int                   `json:"matchesPlayed"`
+	At                time.Time             `json:"at"`
 }
 
 type AccountSession struct {
@@ -56,8 +60,14 @@ type AccountSession struct {
 }
 
 type AccountPrivateState struct {
-	SessionToken string    `json:"sessionToken,omitempty"`
-	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
+	SessionToken       string                           `json:"sessionToken,omitempty"`
+	ExpiresAt          time.Time                        `json:"expiresAt,omitempty"`
+	Sessions           []AccountSessionRecord           `json:"sessions,omitempty"`
+	Email              string                           `json:"email,omitempty"`
+	PasswordHash       string                           `json:"passwordHash,omitempty"`
+	EmailVerifiedAt    time.Time                        `json:"emailVerifiedAt,omitempty"`
+	EmailVerifications []AccountEmailVerificationRecord `json:"emailVerifications,omitempty"`
+	PasswordResets     []AccountPasswordResetRecord     `json:"passwordResets,omitempty"`
 }
 
 type AccountStoreStats struct {
@@ -111,9 +121,7 @@ func (s *AccountStore) Stats() AccountStoreStats {
 	now := time.Now().UTC()
 	activeSessions := 0
 	for _, privateState := range s.private {
-		if !privateState.ExpiresAt.IsZero() && privateState.ExpiresAt.After(now) {
-			activeSessions++
-		}
+		activeSessions += countActiveAccountSessions(privateState, now)
 	}
 	return AccountStoreStats{
 		AccountCount:       len(s.accounts),
@@ -136,14 +144,14 @@ func (s *AccountStore) ClaimGuest(guest GuestProfile, handle string) (AccountSes
 			if err == nil && normalizedHandle != "" && normalizedHandle != account.Handle {
 				return AccountSession{}, ErrAccountHandleTaken
 			}
-			account.LastSeenAt = now
+			touchAccountPresence(&account, now)
 			s.accounts[accountID] = account
-			privateState := renewAccountPrivateState(s.private[accountID], now)
+			privateState, record := issueAccountPrivateSession(s.private[accountID], now)
 			s.private[accountID] = privateState
 			if err := s.persistLocked(); err != nil {
 				return AccountSession{}, err
 			}
-			return buildAccountSession(account, privateState), nil
+			return buildAccountSessionFromRecord(account, record), nil
 		}
 	}
 
@@ -168,15 +176,105 @@ func (s *AccountStore) ClaimGuest(guest GuestProfile, handle string) (AccountSes
 		LinkedGuestIDs: []string{guest.GuestID},
 		CreatedAt:      now,
 		LastSeenAt:     now,
+		LastActiveAt:   now,
 	}
-	privateState := renewAccountPrivateState(AccountPrivateState{}, now)
+	privateState, record := issueAccountPrivateSession(AccountPrivateState{}, now)
 	s.accounts[accountID] = account
 	s.guestLinks[guest.GuestID] = accountID
 	s.private[accountID] = privateState
 	if err := s.persistLocked(); err != nil {
 		return AccountSession{}, err
 	}
-	return buildAccountSession(account, privateState), nil
+	return buildAccountSessionFromRecord(account, record), nil
+}
+
+func (s *AccountStore) RegisterGuestAccount(guest GuestProfile, handle, email, password string) (AccountSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedGuestID := strings.TrimSpace(guest.GuestID)
+	if resolvedGuestID == "" {
+		return AccountSession{}, os.ErrInvalid
+	}
+
+	normalizedHandle, err := normalizeAccountHandle(handle)
+	if err != nil || normalizedHandle == "" {
+		if err == nil {
+			err = ErrInvalidAccountHandle
+		}
+		return AccountSession{}, err
+	}
+	normalizedEmail, err := normalizeAccountEmail(email)
+	if err != nil {
+		return AccountSession{}, err
+	}
+	passwordHash, err := hashAccountPassword(password)
+	if err != nil {
+		return AccountSession{}, err
+	}
+
+	now := time.Now().UTC()
+	if accountID, ok := s.guestLinks[resolvedGuestID]; ok {
+		account, ok := s.accounts[accountID]
+		if !ok {
+			delete(s.guestLinks, resolvedGuestID)
+		} else {
+			if normalizedHandle != account.Handle {
+				return AccountSession{}, ErrAccountHandleTaken
+			}
+			if existingAccountID, exists := s.lookupAccountIDByEmailLocked(normalizedEmail); exists && existingAccountID != accountID {
+				return AccountSession{}, ErrAccountEmailTaken
+			}
+			touchAccountPresence(&account, now)
+			privateState := s.private[accountID]
+			emailChanged := !strings.EqualFold(strings.TrimSpace(privateState.Email), normalizedEmail)
+			privateState.Email = normalizedEmail
+			privateState.PasswordHash = passwordHash
+			if emailChanged {
+				privateState.EmailVerifiedAt = time.Time{}
+				privateState.EmailVerifications = nil
+				privateState.PasswordResets = nil
+			}
+			privateState, record := issueAccountPrivateSession(privateState, now)
+			s.accounts[accountID] = account
+			s.private[accountID] = privateState
+			if err := s.persistLocked(); err != nil {
+				return AccountSession{}, err
+			}
+			return buildAccountSessionFromRecord(account, record), nil
+		}
+	}
+
+	for _, account := range s.accounts {
+		if account.Handle == normalizedHandle {
+			return AccountSession{}, ErrAccountHandleTaken
+		}
+	}
+	if existingAccountID, exists := s.lookupAccountIDByEmailLocked(normalizedEmail); exists && existingAccountID != "" {
+		return AccountSession{}, ErrAccountEmailTaken
+	}
+
+	accountID := "acct_" + randomToken(8)
+	account := AccountProfile{
+		AccountID:      accountID,
+		Handle:         normalizedHandle,
+		PrimaryGuestID: resolvedGuestID,
+		LinkedGuestIDs: []string{resolvedGuestID},
+		CreatedAt:      now,
+		LastSeenAt:     now,
+		LastActiveAt:   now,
+	}
+	privateState, record := issueAccountPrivateSession(AccountPrivateState{
+		Email:        normalizedEmail,
+		PasswordHash: passwordHash,
+	}, now)
+	s.accounts[accountID] = account
+	s.guestLinks[resolvedGuestID] = accountID
+	s.private[accountID] = privateState
+	if err := s.persistLocked(); err != nil {
+		return AccountSession{}, err
+	}
+	return buildAccountSessionFromRecord(account, record), nil
 }
 
 func (s *AccountStore) ResumeAccount(accountID, sessionToken string) (AccountSession, error) {
@@ -193,19 +291,359 @@ func (s *AccountStore) ResumeAccount(accountID, sessionToken string) (AccountSes
 		return AccountSession{}, os.ErrNotExist
 	}
 	privateState := s.private[accountID]
-	if !accountSessionTokenValid(privateState, sessionToken, time.Now().UTC()) {
+	privateState, record, ok := renewAccountPrivateSession(privateState, sessionToken, time.Now().UTC())
+	if !ok {
 		return AccountSession{}, ErrUnauthorizedAccountSession
 	}
 
 	now := time.Now().UTC()
-	account.LastSeenAt = now
+	touchAccountPresence(&account, now)
 	s.accounts[accountID] = account
-	privateState = renewAccountPrivateState(privateState, now)
 	s.private[accountID] = privateState
 	if err := s.persistLocked(); err != nil {
 		return AccountSession{}, err
 	}
-	return buildAccountSession(account, privateState), nil
+	return buildAccountSessionFromRecord(account, record), nil
+}
+
+func (s *AccountStore) TouchPresence(accountID, sessionToken string) (AccountSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return AccountSession{}, os.ErrInvalid
+	}
+
+	account, ok := s.accounts[resolvedAccountID]
+	if !ok {
+		return AccountSession{}, os.ErrNotExist
+	}
+	now := time.Now().UTC()
+	privateState, record, ok := renewAccountPrivateSession(s.private[resolvedAccountID], sessionToken, now)
+	if !ok {
+		return AccountSession{}, ErrUnauthorizedAccountSession
+	}
+
+	touchAccountPresence(&account, now)
+	s.accounts[resolvedAccountID] = account
+	s.private[resolvedAccountID] = privateState
+	if err := s.persistLocked(); err != nil {
+		return AccountSession{}, err
+	}
+	return buildAccountSessionFromRecord(account, record), nil
+}
+
+func (s *AccountStore) GetAccountAuthOverview(accountID, sessionToken string) (AccountAuthOverview, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return AccountAuthOverview{}, os.ErrInvalid
+	}
+	account, ok := s.accounts[resolvedAccountID]
+	if !ok {
+		return AccountAuthOverview{}, os.ErrNotExist
+	}
+	privateState, record, ok := renewAccountPrivateSession(s.private[resolvedAccountID], sessionToken, time.Now().UTC())
+	if !ok {
+		return AccountAuthOverview{}, ErrUnauthorizedAccountSession
+	}
+	s.private[resolvedAccountID] = privateState
+	s.accounts[resolvedAccountID] = account
+	if err := s.persistLocked(); err != nil {
+		return AccountAuthOverview{}, err
+	}
+	_ = record
+	return buildAccountAuthOverview(account, privateState, time.Now().UTC()), nil
+}
+
+func (s *AccountStore) StartEmailVerification(accountID, sessionToken string) (AccountEmailVerificationChallenge, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return AccountEmailVerificationChallenge{}, os.ErrInvalid
+	}
+	account, ok := s.accounts[resolvedAccountID]
+	if !ok {
+		return AccountEmailVerificationChallenge{}, os.ErrNotExist
+	}
+	now := time.Now().UTC()
+	privateState, _, ok := renewAccountPrivateSession(s.private[resolvedAccountID], sessionToken, now)
+	if !ok {
+		return AccountEmailVerificationChallenge{}, ErrUnauthorizedAccountSession
+	}
+	if strings.TrimSpace(privateState.Email) == "" || strings.TrimSpace(privateState.PasswordHash) == "" {
+		return AccountEmailVerificationChallenge{}, ErrAccountLoginUnavailable
+	}
+	if !privateState.EmailVerifiedAt.IsZero() {
+		return AccountEmailVerificationChallenge{}, ErrAccountEmailAlreadyVerified
+	}
+	privateState, record := issueAccountEmailVerification(privateState, privateState.Email, now)
+	s.private[resolvedAccountID] = privateState
+	s.accounts[resolvedAccountID] = account
+	if err := s.persistLocked(); err != nil {
+		return AccountEmailVerificationChallenge{}, err
+	}
+	return AccountEmailVerificationChallenge{
+		AccountID: resolvedAccountID,
+		Email:     record.Email,
+		Token:     record.Token,
+		ExpiresAt: record.ExpiresAt,
+		CreatedAt: record.CreatedAt,
+	}, nil
+}
+
+func (s *AccountStore) VerifyEmail(accountID, token string) (AccountAuthOverview, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return AccountAuthOverview{}, os.ErrInvalid
+	}
+	account, ok := s.accounts[resolvedAccountID]
+	if !ok {
+		return AccountAuthOverview{}, os.ErrNotExist
+	}
+	now := time.Now().UTC()
+	privateState, record, ok := consumeAccountEmailVerification(s.private[resolvedAccountID], token, now)
+	if !ok {
+		return AccountAuthOverview{}, ErrUnauthorizedAccountEmailVerification
+	}
+	privateState.Email = record.Email
+	privateState.PasswordResets = nil
+	s.private[resolvedAccountID] = privateState
+	s.accounts[resolvedAccountID] = account
+	if err := s.persistLocked(); err != nil {
+		return AccountAuthOverview{}, err
+	}
+	return buildAccountAuthOverview(account, privateState, now), nil
+}
+
+func (s *AccountStore) ListAccountSessions(accountID, sessionToken string) (AccountSessionOverview, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return AccountSessionOverview{}, os.ErrInvalid
+	}
+	account, ok := s.accounts[resolvedAccountID]
+	if !ok {
+		return AccountSessionOverview{}, os.ErrNotExist
+	}
+	if !accountSessionTokenValid(s.private[resolvedAccountID], sessionToken, time.Now().UTC()) {
+		return AccountSessionOverview{}, ErrUnauthorizedAccountSession
+	}
+	return buildAccountSessionOverview(account, activeAccountSessionRecords(s.private[resolvedAccountID], time.Now().UTC())), nil
+}
+
+func (s *AccountStore) RevokeAccountSession(accountID, sessionToken, revokeToken string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return os.ErrInvalid
+	}
+	if _, ok := s.accounts[resolvedAccountID]; !ok {
+		return os.ErrNotExist
+	}
+	if !accountSessionTokenValid(s.private[resolvedAccountID], sessionToken, time.Now().UTC()) {
+		return ErrUnauthorizedAccountSession
+	}
+	privateState, removed := removeAccountPrivateSession(s.private[resolvedAccountID], revokeToken)
+	if !removed {
+		return ErrUnauthorizedAccountSession
+	}
+	s.private[resolvedAccountID] = privateState
+	return s.persistLocked()
+}
+
+func (s *AccountStore) RevokeOtherAccountSessions(accountID, sessionToken string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return os.ErrInvalid
+	}
+	if _, ok := s.accounts[resolvedAccountID]; !ok {
+		return os.ErrNotExist
+	}
+	if !accountSessionTokenValid(s.private[resolvedAccountID], sessionToken, time.Now().UTC()) {
+		return ErrUnauthorizedAccountSession
+	}
+	privateState, found := retainOnlyAccountPrivateSession(s.private[resolvedAccountID], sessionToken)
+	if !found {
+		return ErrUnauthorizedAccountSession
+	}
+	s.private[resolvedAccountID] = privateState
+	return s.persistLocked()
+}
+
+func (s *AccountStore) EnablePasswordLogin(accountID, sessionToken, email, password string) (AccountSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return AccountSession{}, os.ErrInvalid
+	}
+	account, ok := s.accounts[resolvedAccountID]
+	if !ok {
+		return AccountSession{}, os.ErrNotExist
+	}
+	privateState := s.private[resolvedAccountID]
+	privateState, record, ok := renewAccountPrivateSession(privateState, sessionToken, time.Now().UTC())
+	if !ok {
+		return AccountSession{}, ErrUnauthorizedAccountSession
+	}
+
+	normalizedEmail, err := normalizeAccountEmail(email)
+	if err != nil {
+		return AccountSession{}, err
+	}
+	passwordHash, err := hashAccountPassword(password)
+	if err != nil {
+		return AccountSession{}, err
+	}
+	if existingAccountID, exists := s.lookupAccountIDByEmailLocked(normalizedEmail); exists && existingAccountID != resolvedAccountID {
+		return AccountSession{}, ErrAccountEmailTaken
+	}
+
+	now := time.Now().UTC()
+	touchAccountPresence(&account, now)
+	emailChanged := !strings.EqualFold(strings.TrimSpace(privateState.Email), normalizedEmail)
+	privateState.Email = normalizedEmail
+	privateState.PasswordHash = passwordHash
+	if emailChanged {
+		privateState.EmailVerifiedAt = time.Time{}
+		privateState.EmailVerifications = nil
+		privateState.PasswordResets = nil
+	}
+	s.accounts[resolvedAccountID] = account
+	s.private[resolvedAccountID] = privateState
+	if err := s.persistLocked(); err != nil {
+		return AccountSession{}, err
+	}
+	return buildAccountSessionFromRecord(account, record), nil
+}
+
+func (s *AccountStore) LoginWithPassword(identifier, password string) (AccountSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	accountID, privateState, ok := s.lookupAccountCredentialsLocked(identifier)
+	if !ok || !verifyAccountPassword(password, privateState.PasswordHash) {
+		return AccountSession{}, ErrUnauthorizedAccountCredentials
+	}
+
+	account, ok := s.accounts[accountID]
+	if !ok {
+		return AccountSession{}, os.ErrNotExist
+	}
+
+	now := time.Now().UTC()
+	touchAccountPresence(&account, now)
+	privateState, record := issueAccountPrivateSession(privateState, now)
+	s.accounts[accountID] = account
+	s.private[accountID] = privateState
+	if err := s.persistLocked(); err != nil {
+		return AccountSession{}, err
+	}
+	return buildAccountSessionFromRecord(account, record), nil
+}
+
+func (s *AccountStore) StartPasswordReset(identifier string) (AccountPasswordResetChallenge, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	accountID, privateState, ok := s.lookupAccountCredentialsLocked(identifier)
+	if !ok {
+		return AccountPasswordResetChallenge{Requested: true}, nil
+	}
+	if strings.TrimSpace(privateState.Email) == "" || strings.TrimSpace(privateState.PasswordHash) == "" || privateState.EmailVerifiedAt.IsZero() {
+		return AccountPasswordResetChallenge{Requested: true}, nil
+	}
+	now := time.Now().UTC()
+	privateState, record := issueAccountPasswordReset(privateState, now)
+	s.private[accountID] = privateState
+	if err := s.persistLocked(); err != nil {
+		return AccountPasswordResetChallenge{}, err
+	}
+	return AccountPasswordResetChallenge{
+		Requested: true,
+		AccountID: accountID,
+		Email:     privateState.Email,
+		Token:     record.Token,
+		ExpiresAt: record.ExpiresAt,
+		CreatedAt: record.CreatedAt,
+	}, nil
+}
+
+func (s *AccountStore) ResetPassword(accountID, token, password string) (AccountSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return AccountSession{}, os.ErrInvalid
+	}
+	account, ok := s.accounts[resolvedAccountID]
+	if !ok {
+		return AccountSession{}, os.ErrNotExist
+	}
+	passwordHash, err := hashAccountPassword(password)
+	if err != nil {
+		return AccountSession{}, err
+	}
+	now := time.Now().UTC()
+	privateState := s.private[resolvedAccountID]
+	if privateState.EmailVerifiedAt.IsZero() {
+		return AccountSession{}, ErrAccountEmailNotVerified
+	}
+	privateState, _, ok = consumeAccountPasswordReset(privateState, token, now)
+	if !ok {
+		return AccountSession{}, ErrUnauthorizedAccountPasswordReset
+	}
+	privateState.PasswordHash = passwordHash
+	privateState.PasswordResets = nil
+	touchAccountPresence(&account, now)
+	privateState, record := issueAccountPrivateSession(privateState, now)
+	s.private[resolvedAccountID] = privateState
+	s.accounts[resolvedAccountID] = account
+	if err := s.persistLocked(); err != nil {
+		return AccountSession{}, err
+	}
+	return buildAccountSessionFromRecord(account, record), nil
+}
+
+func (s *AccountStore) LogoutAccount(accountID, sessionToken string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resolvedAccountID := strings.TrimSpace(accountID)
+	if resolvedAccountID == "" {
+		return os.ErrInvalid
+	}
+	if _, ok := s.accounts[resolvedAccountID]; !ok {
+		return os.ErrNotExist
+	}
+	privateState := s.private[resolvedAccountID]
+	if !accountSessionTokenValid(privateState, sessionToken, time.Now().UTC()) {
+		return ErrUnauthorizedAccountSession
+	}
+	privateState, removed := removeAccountPrivateSession(privateState, sessionToken)
+	if !removed {
+		return ErrUnauthorizedAccountSession
+	}
+	s.private[resolvedAccountID] = privateState
+	return s.persistLocked()
 }
 
 func (s *AccountStore) SyncGuestStats(guest GuestProfile) (AccountProfile, bool, error) {
@@ -231,7 +669,7 @@ func (s *AccountStore) SyncGuestStats(guest GuestProfile) (AccountProfile, bool,
 	return seeded, true, nil
 }
 
-func (s *AccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccountID, winner string) (AccountProfile, AccountProfile, bool, error) {
+func (s *AccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccountID, winner, queue string, modeID contracts.MatchModeID) (AccountProfile, AccountProfile, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -279,10 +717,11 @@ func (s *AccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccountID, wi
 	}
 	white.MatchesPlayed++
 	black.MatchesPlayed++
-	white.LastSeenAt = now
-	black.LastSeenAt = now
-	white.RatingHistory = appendAccountRatingHistory(white.RatingHistory, buildAccountRatingHistoryEntry(matchID, black.AccountID, winner, whiteBefore, white.Rating, white.MatchesPlayed, "white", now))
-	black.RatingHistory = appendAccountRatingHistory(black.RatingHistory, buildAccountRatingHistoryEntry(matchID, white.AccountID, winner, blackBefore, black.Rating, black.MatchesPlayed, "black", now))
+	touchAccountPresence(&white, now)
+	touchAccountPresence(&black, now)
+	modeID = contracts.NormalizeMatchModeID(string(modeID))
+	white.RatingHistory = appendAccountRatingHistory(white.RatingHistory, buildAccountRatingHistoryEntry(matchID, black.AccountID, winner, queue, modeID, whiteBefore, white.Rating, white.MatchesPlayed, "white", now))
+	black.RatingHistory = appendAccountRatingHistory(black.RatingHistory, buildAccountRatingHistoryEntry(matchID, white.AccountID, winner, queue, modeID, blackBefore, black.Rating, black.MatchesPlayed, "black", now))
 
 	s.accounts[white.AccountID] = white
 	s.accounts[black.AccountID] = black
@@ -413,21 +852,35 @@ func seedAccountStatsFromGuestIfNeeded(account AccountProfile, guest GuestProfil
 	return account
 }
 
-func renewAccountPrivateState(state AccountPrivateState, now time.Time) AccountPrivateState {
-	state.SessionToken = strings.TrimSpace(state.SessionToken)
-	if state.SessionToken == "" {
-		state.SessionToken = "accttok_" + randomToken(18)
+func (s *AccountStore) lookupAccountIDByEmailLocked(email string) (string, bool) {
+	for accountID, privateState := range s.private {
+		if strings.EqualFold(strings.TrimSpace(privateState.Email), strings.TrimSpace(email)) {
+			return accountID, true
+		}
 	}
-	state.ExpiresAt = now.Add(defaultAccountSessionTTL).UTC()
-	return state
+	return "", false
 }
 
-func buildAccountSession(account AccountProfile, privateState AccountPrivateState) AccountSession {
-	return AccountSession{
-		Account:      account,
-		SessionToken: strings.TrimSpace(privateState.SessionToken),
-		ExpiresAt:    privateState.ExpiresAt.UTC(),
+func (s *AccountStore) lookupAccountCredentialsLocked(identifier string) (string, AccountPrivateState, bool) {
+	resolved := strings.ToLower(strings.TrimSpace(identifier))
+	if resolved == "" {
+		return "", AccountPrivateState{}, false
 	}
+	for accountID, privateState := range s.private {
+		if strings.EqualFold(strings.TrimSpace(privateState.Email), resolved) && strings.TrimSpace(privateState.PasswordHash) != "" {
+			return accountID, privateState, true
+		}
+	}
+	for accountID, account := range s.accounts {
+		if strings.EqualFold(strings.TrimSpace(account.Handle), resolved) {
+			privateState := s.private[accountID]
+			if strings.TrimSpace(privateState.PasswordHash) == "" {
+				return "", AccountPrivateState{}, false
+			}
+			return accountID, privateState, true
+		}
+	}
+	return "", AccountPrivateState{}, false
 }
 
 func appendAccountRatingHistory(history []AccountRatingHistoryEntry, entry AccountRatingHistoryEntry) []AccountRatingHistoryEntry {
@@ -438,7 +891,7 @@ func appendAccountRatingHistory(history []AccountRatingHistoryEntry, entry Accou
 	return append([]AccountRatingHistoryEntry{}, next[len(next)-maxAccountRatingHistoryEntries:]...)
 }
 
-func buildAccountRatingHistoryEntry(matchID, opponentAccountID, winner string, ratingBefore, ratingAfter, matchesPlayed int, perspective string, at time.Time) AccountRatingHistoryEntry {
+func buildAccountRatingHistoryEntry(matchID, opponentAccountID, winner, queue string, modeID contracts.MatchModeID, ratingBefore, ratingAfter, matchesPlayed int, perspective string, at time.Time) AccountRatingHistoryEntry {
 	result := "draw"
 	switch {
 	case winner == "draw":
@@ -452,6 +905,8 @@ func buildAccountRatingHistoryEntry(matchID, opponentAccountID, winner string, r
 	return AccountRatingHistoryEntry{
 		MatchID:           strings.TrimSpace(matchID),
 		OpponentAccountID: strings.TrimSpace(opponentAccountID),
+		Queue:             strings.TrimSpace(queue),
+		ModeID:            contracts.NormalizeMatchModeID(string(modeID)),
 		Result:            result,
 		Winner:            strings.TrimSpace(winner),
 		Delta:             ratingAfter - ratingBefore,
@@ -463,16 +918,10 @@ func buildAccountRatingHistoryEntry(matchID, opponentAccountID, winner string, r
 }
 
 func accountSessionTokenValid(state AccountPrivateState, sessionToken string, now time.Time) bool {
-	resolved := strings.TrimSpace(state.SessionToken)
-	requested := strings.TrimSpace(sessionToken)
-	if resolved == "" || requested == "" {
-		return false
+	for _, record := range activeAccountSessionRecords(state, now) {
+		if accountSessionTokenMatches(record.SessionToken, sessionToken) {
+			return true
+		}
 	}
-	if subtle.ConstantTimeCompare([]byte(resolved), []byte(requested)) != 1 {
-		return false
-	}
-	if state.ExpiresAt.IsZero() || !state.ExpiresAt.After(now) {
-		return false
-	}
-	return true
+	return false
 }

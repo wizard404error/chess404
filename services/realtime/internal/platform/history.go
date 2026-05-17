@@ -13,8 +13,10 @@ type MatchArchiveEntry struct {
 	MatchID            string                          `json:"matchId"`
 	Status             string                          `json:"status"`
 	Winner             string                          `json:"winner,omitempty"`
+	FinishReason       string                          `json:"finishReason,omitempty"`
 	RulesVersion       string                          `json:"rulesVersion"`
 	Queue              string                          `json:"queue,omitempty"`
+	ModeID             contracts.MatchModeID           `json:"modeId,omitempty"`
 	WhiteGuestID       string                          `json:"whiteGuestId,omitempty"`
 	BlackGuestID       string                          `json:"blackGuestId,omitempty"`
 	WhiteAccountID     string                          `json:"whiteAccountId,omitempty"`
@@ -119,8 +121,10 @@ func (s *MatchArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) err
 		MatchID:        match.MatchID,
 		Status:         match.Status,
 		Winner:         match.Winner,
+		FinishReason:   match.FinishReason,
 		RulesVersion:   match.RulesVersion,
 		Queue:          match.Queue,
+		ModeID:         match.ModeID,
 		WhiteGuestID:   match.WhiteGuestID,
 		BlackGuestID:   match.BlackGuestID,
 		WhiteAccountID: match.WhiteAccountID,

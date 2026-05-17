@@ -2,7 +2,10 @@ package platform
 
 import (
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 type AccountSeasonSummary struct {
@@ -25,6 +28,31 @@ type SeasonOption struct {
 	Label    string `json:"label"`
 }
 
+type AccountLeaderboardSpotlight struct {
+	AccountID     string `json:"accountId"`
+	Handle        string `json:"handle"`
+	DisplayName   string `json:"displayName"`
+	Rating        int    `json:"rating"`
+	PeakRating    int    `json:"peakRating"`
+	NetDelta      int    `json:"netDelta"`
+	MatchesPlayed int    `json:"matchesPlayed"`
+	Wins          int    `json:"wins"`
+	Losses        int    `json:"losses"`
+	Draws         int    `json:"draws"`
+}
+
+type AccountLeaderboardSummary struct {
+	ModeID         contracts.MatchModeID        `json:"modeId,omitempty"`
+	SeasonID       string                       `json:"seasonId,omitempty"`
+	SeasonLabel    string                       `json:"seasonLabel,omitempty"`
+	PlayerCount    int                          `json:"playerCount"`
+	MatchCount     int                          `json:"matchCount"`
+	Leader         *AccountLeaderboardSpotlight `json:"leader,omitempty"`
+	BiggestClimber *AccountLeaderboardSpotlight `json:"biggestClimber,omitempty"`
+	HighestPeak    *AccountLeaderboardSpotlight `json:"highestPeak,omitempty"`
+	MostActive     *AccountLeaderboardSpotlight `json:"mostActive,omitempty"`
+}
+
 type PublicAccountProfile struct {
 	AccountID      string                `json:"accountId"`
 	Handle         string                `json:"handle"`
@@ -32,6 +60,10 @@ type PublicAccountProfile struct {
 	LinkedGuestIDs []string              `json:"linkedGuestIds"`
 	CreatedAt      time.Time             `json:"createdAt"`
 	LastSeenAt     time.Time             `json:"lastSeenAt"`
+	LastActiveAt   time.Time             `json:"lastActiveAt,omitempty"`
+	PresenceStatus AccountPresenceStatus `json:"presenceStatus,omitempty"`
+	Online         bool                  `json:"online"`
+	RecentlyActive bool                  `json:"recentlyActive"`
 	DisplayName    string                `json:"displayName,omitempty"`
 	Rating         int                   `json:"rating"`
 	MatchesPlayed  int                   `json:"matchesPlayed"`
@@ -50,10 +82,15 @@ type DetailedPublicAccountProfile struct {
 }
 
 func BuildPublicAccountProfile(account AccountProfile, guests GuestDirectory) PublicAccountProfile {
-	return BuildPublicAccountProfileForSeason(account, guests, "")
+	return BuildPublicAccountProfileForSeasonAndMode(account, guests, "", "")
 }
 
 func BuildPublicAccountProfileForSeason(account AccountProfile, guests GuestDirectory, seasonID string) PublicAccountProfile {
+	return BuildPublicAccountProfileForSeasonAndMode(account, guests, seasonID, "")
+}
+
+func BuildPublicAccountProfileForSeasonAndMode(account AccountProfile, guests GuestDirectory, seasonID string, modeID contracts.MatchModeID) PublicAccountProfile {
+	modeID = normalizeOptionalMatchModeID(modeID)
 	public := PublicAccountProfile{
 		AccountID:      account.AccountID,
 		Handle:         account.Handle,
@@ -61,6 +98,7 @@ func BuildPublicAccountProfileForSeason(account AccountProfile, guests GuestDire
 		LinkedGuestIDs: append([]string{}, account.LinkedGuestIDs...),
 		CreatedAt:      account.CreatedAt,
 		LastSeenAt:     account.LastSeenAt,
+		LastActiveAt:   resolveAccountLastActiveAt(account),
 		DisplayName:    account.Handle,
 		Rating:         account.Rating,
 		MatchesPlayed:  account.MatchesPlayed,
@@ -124,7 +162,41 @@ func BuildPublicAccountProfileForSeason(account AccountProfile, guests GuestDire
 		public.Rating = 1200
 	}
 
-	if seasons := BuildAccountSeasonHistory(account); len(seasons) > 0 {
+	presence := buildPublicAccountPresenceAt(account, time.Now().UTC())
+	public.PresenceStatus = presence.Status
+	public.Online = presence.Online
+	public.RecentlyActive = presence.RecentlyActive
+	if public.LastActiveAt.IsZero() {
+		public.LastActiveAt = presence.LastActiveAt
+	}
+
+	if modeID != "" {
+		filteredHistory := filterAccountRatingHistoryByMode(account.RatingHistory, modeID)
+		if len(filteredHistory) > 0 {
+			public.MatchesPlayed = len(filteredHistory)
+			public.Wins = 0
+			public.Losses = 0
+			public.Draws = 0
+			for _, entry := range filteredHistory {
+				switch entry.Result {
+				case "win":
+					public.Wins++
+				case "loss":
+					public.Losses++
+				default:
+					public.Draws++
+				}
+			}
+			public.Rating = filteredHistory[len(filteredHistory)-1].RatingAfter
+		} else {
+			public.MatchesPlayed = 0
+			public.Wins = 0
+			public.Losses = 0
+			public.Draws = 0
+		}
+	}
+
+	if seasons := BuildAccountSeasonHistoryForMode(account, modeID); len(seasons) > 0 {
 		current := seasons[0]
 		public.CurrentSeason = &current
 		if seasonID != "" {
@@ -146,34 +218,113 @@ func BuildPublicAccountProfiles(accounts []AccountProfile, guests GuestDirectory
 }
 
 func BuildDetailedPublicAccountProfile(account AccountProfile, guests GuestDirectory) DetailedPublicAccountProfile {
-	return BuildDetailedPublicAccountProfileForSeason(account, guests, "")
+	return BuildDetailedPublicAccountProfileForSeasonAndMode(account, guests, "", "")
 }
 
 func BuildDetailedPublicAccountProfileForSeason(account AccountProfile, guests GuestDirectory, seasonID string) DetailedPublicAccountProfile {
+	return BuildDetailedPublicAccountProfileForSeasonAndMode(account, guests, seasonID, "")
+}
+
+func BuildDetailedPublicAccountProfileForSeasonAndMode(account AccountProfile, guests GuestDirectory, seasonID string, modeID contracts.MatchModeID) DetailedPublicAccountProfile {
+	modeID = normalizeOptionalMatchModeID(modeID)
 	detailed := DetailedPublicAccountProfile{
-		PublicAccountProfile: BuildPublicAccountProfileForSeason(account, guests, seasonID),
+		PublicAccountProfile: BuildPublicAccountProfileForSeasonAndMode(account, guests, seasonID, modeID),
 	}
-	if len(account.RatingHistory) > 0 {
-		detailed.RatingHistory = append([]AccountRatingHistoryEntry{}, account.RatingHistory...)
+	filteredHistory := filterAccountRatingHistoryByMode(account.RatingHistory, modeID)
+	if len(filteredHistory) > 0 {
+		detailed.RatingHistory = filteredHistory
 	}
-	if seasons := BuildAccountSeasonHistory(account); len(seasons) > 0 {
+	if seasons := BuildAccountSeasonHistoryForMode(account, modeID); len(seasons) > 0 {
 		detailed.SeasonHistory = seasons
 	}
 	return detailed
 }
 
+func BuildAccountLeaderboardSummary(items []PublicAccountProfile, seasonID string, modeID contracts.MatchModeID) *AccountLeaderboardSummary {
+	if len(items) == 0 {
+		return nil
+	}
+	summary := &AccountLeaderboardSummary{
+		ModeID:      normalizeOptionalMatchModeID(modeID),
+		PlayerCount: len(items),
+	}
+	seasonLabels := make(map[string]string)
+	mixedSeasonIDs := make(map[string]struct{})
+
+	for _, item := range items {
+		season := item.SelectedSeason
+		if season == nil {
+			season = item.CurrentSeason
+		}
+		spotlight := buildAccountLeaderboardSpotlight(item, season)
+		if season != nil {
+			summary.MatchCount += season.MatchesPlayed
+			if season.SeasonID != "" {
+				seasonLabels[season.SeasonID] = season.Label
+				mixedSeasonIDs[season.SeasonID] = struct{}{}
+			}
+		} else {
+			summary.MatchCount += item.MatchesPlayed
+		}
+
+		if summary.Leader == nil || spotlight.Rating > summary.Leader.Rating || (spotlight.Rating == summary.Leader.Rating && spotlight.MatchesPlayed > summary.Leader.MatchesPlayed) {
+			candidate := spotlight
+			summary.Leader = &candidate
+		}
+		if summary.BiggestClimber == nil || spotlight.NetDelta > summary.BiggestClimber.NetDelta || (spotlight.NetDelta == summary.BiggestClimber.NetDelta && spotlight.Rating > summary.BiggestClimber.Rating) {
+			candidate := spotlight
+			summary.BiggestClimber = &candidate
+		}
+		if summary.HighestPeak == nil || spotlight.PeakRating > summary.HighestPeak.PeakRating || (spotlight.PeakRating == summary.HighestPeak.PeakRating && spotlight.Rating > summary.HighestPeak.Rating) {
+			candidate := spotlight
+			summary.HighestPeak = &candidate
+		}
+		if summary.MostActive == nil || spotlight.MatchesPlayed > summary.MostActive.MatchesPlayed || (spotlight.MatchesPlayed == summary.MostActive.MatchesPlayed && spotlight.Rating > summary.MostActive.Rating) {
+			candidate := spotlight
+			summary.MostActive = &candidate
+		}
+	}
+
+	if seasonID != "" {
+		summary.SeasonID = seasonID
+		if label, ok := seasonLabels[seasonID]; ok {
+			summary.SeasonLabel = label
+		} else {
+			summary.SeasonLabel = seasonID
+		}
+	} else if len(mixedSeasonIDs) == 1 {
+		for id := range mixedSeasonIDs {
+			summary.SeasonID = id
+			summary.SeasonLabel = seasonLabels[id]
+		}
+	} else {
+		summary.SeasonLabel = "Current ladder"
+	}
+
+	return summary
+}
+
 func AccountHasSeason(account AccountProfile, seasonID string) bool {
+	return AccountHasSeasonForMode(account, seasonID, "")
+}
+
+func AccountHasSeasonForMode(account AccountProfile, seasonID string, modeID contracts.MatchModeID) bool {
 	if seasonID == "" {
 		return true
 	}
-	_, ok := findAccountSeasonSummary(BuildAccountSeasonHistory(account), seasonID)
+	_, ok := findAccountSeasonSummary(BuildAccountSeasonHistoryForMode(account, modeID), seasonID)
 	return ok
 }
 
 func BuildAvailableSeasonOptions(accounts []AccountProfile) []SeasonOption {
+	return BuildAvailableSeasonOptionsForMode(accounts, "")
+}
+
+func BuildAvailableSeasonOptionsForMode(accounts []AccountProfile, modeID contracts.MatchModeID) []SeasonOption {
+	modeID = normalizeOptionalMatchModeID(modeID)
 	seen := make(map[string]SeasonOption)
 	for _, account := range accounts {
-		for _, season := range BuildAccountSeasonHistory(account) {
+		for _, season := range BuildAccountSeasonHistoryForMode(account, modeID) {
 			if _, ok := seen[season.SeasonID]; ok {
 				continue
 			}
@@ -195,11 +346,14 @@ func BuildAvailableSeasonOptions(accounts []AccountProfile) []SeasonOption {
 }
 
 func BuildAccountSeasonHistory(account AccountProfile) []AccountSeasonSummary {
-	if len(account.RatingHistory) == 0 {
+	return BuildAccountSeasonHistoryForMode(account, "")
+}
+
+func BuildAccountSeasonHistoryForMode(account AccountProfile, modeID contracts.MatchModeID) []AccountSeasonSummary {
+	entries := filterAccountRatingHistoryByMode(account.RatingHistory, normalizeOptionalMatchModeID(modeID))
+	if len(entries) == 0 {
 		return nil
 	}
-
-	entries := append([]AccountRatingHistoryEntry{}, account.RatingHistory...)
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].At.Equal(entries[j].At) {
 			return entries[i].MatchID < entries[j].MatchID
@@ -259,6 +413,31 @@ func BuildAccountSeasonHistory(account AccountProfile) []AccountSeasonSummary {
 	return summaries
 }
 
+func filterAccountRatingHistoryByMode(history []AccountRatingHistoryEntry, modeID contracts.MatchModeID) []AccountRatingHistoryEntry {
+	if len(history) == 0 {
+		return nil
+	}
+	normalizedModeID := normalizeOptionalMatchModeID(modeID)
+	if normalizedModeID == "" {
+		return append([]AccountRatingHistoryEntry{}, history...)
+	}
+	filtered := make([]AccountRatingHistoryEntry, 0, len(history))
+	for _, entry := range history {
+		if contracts.NormalizeMatchModeID(string(entry.ModeID)) != normalizedModeID {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+func normalizeOptionalMatchModeID(modeID contracts.MatchModeID) contracts.MatchModeID {
+	if strings.TrimSpace(string(modeID)) == "" {
+		return ""
+	}
+	return contracts.NormalizeMatchModeID(string(modeID))
+}
+
 func SortPublicAccountsByRating(items []PublicAccountProfile) {
 	sort.Slice(items, func(i, j int) bool {
 		return sortPublicAccountFallback(items[i], items[j])
@@ -316,4 +495,29 @@ func sortPublicAccountFallback(left, right PublicAccountProfile) bool {
 		return left.MatchesPlayed > right.MatchesPlayed
 	}
 	return left.Rating > right.Rating
+}
+
+func buildAccountLeaderboardSpotlight(item PublicAccountProfile, season *AccountSeasonSummary) AccountLeaderboardSpotlight {
+	spotlight := AccountLeaderboardSpotlight{
+		AccountID:     item.AccountID,
+		Handle:        item.Handle,
+		DisplayName:   item.DisplayName,
+		Rating:        item.Rating,
+		PeakRating:    item.Rating,
+		NetDelta:      0,
+		MatchesPlayed: item.MatchesPlayed,
+		Wins:          item.Wins,
+		Losses:        item.Losses,
+		Draws:         item.Draws,
+	}
+	if season != nil {
+		spotlight.Rating = season.RatingEnd
+		spotlight.PeakRating = season.PeakRating
+		spotlight.NetDelta = season.NetDelta
+		spotlight.MatchesPlayed = season.MatchesPlayed
+		spotlight.Wins = season.Wins
+		spotlight.Losses = season.Losses
+		spotlight.Draws = season.Draws
+	}
+	return spotlight
 }

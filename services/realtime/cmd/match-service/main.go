@@ -99,6 +99,21 @@ func main() {
 			return
 		}
 
+		if len(parts) == 2 && parts[1] == "join" && r.Method == http.MethodPost {
+			var req contracts.JoinMatchSeatRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			resp, err := service.JoinMatchSeat(matchID, req, nowUTC())
+			if err != nil {
+				writeMatchError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
 		if len(parts) == 2 && parts[1] == "intents" && r.Method == http.MethodPost {
 			var req contracts.ApplyIntentRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -112,6 +127,20 @@ func main() {
 				return
 			}
 			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "presence" && r.Method == http.MethodPost {
+			var req contracts.MatchPresenceRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			if err := service.HeartbeatPresence(matchID, req, nowUTC()); err != nil {
+				writeMatchError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
@@ -197,6 +226,10 @@ func writeMatchError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, match.ErrMatchNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, match.ErrMatchSeatFull):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, match.ErrMatchJoinFinished):
+		writeError(w, http.StatusConflict, err.Error())
 	default:
 		writeError(w, http.StatusBadRequest, err.Error())
 	}

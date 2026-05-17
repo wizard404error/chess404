@@ -4,6 +4,7 @@ type GuestDirectory interface {
 	Backend() string
 	Close() error
 	EnsureGuest(guestID, sessionSecret string) (GuestSession, error)
+	IssueGuestSession(guestID string) (GuestSession, error)
 	ResumeGuest(guestID, sessionSecret string) (GuestSession, error)
 	ResumeGuestByToken(guestID, sessionToken string) (GuestSession, error)
 	FinalizeMatch(matchID, whiteGuestID, blackGuestID, winner string) (GuestProfile, GuestProfile, bool, error)

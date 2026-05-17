@@ -1,9 +1,12 @@
 import React from 'react';
-import type { AccountProfile, AccountSeasonSummary, SeasonOption } from './lib/platform-service';
+import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
+import type { MatchModeId } from '@chess404/contracts';
+import type { AccountLeaderboardSummary, AccountLeaderboardSpotlight, AccountProfile, AccountSeasonSummary, SeasonOption } from './lib/platform-service';
 import { fetchAccountLeaderboard } from './lib/platform-service';
 
 interface RankingsPageProps {
   onViewGuest?: (guestId: string) => void;
+  onViewAccount?: (handle: string) => void;
 }
 
 function formatDateTime(value: string): string {
@@ -29,20 +32,46 @@ function describeSeason(summary?: AccountSeasonSummary): string {
   return `${summary.label}: ${summary.matchesPlayed} matches, ${formatRatingDelta(summary.netDelta)}`;
 }
 
-export default function RankingsPage({ onViewGuest }: RankingsPageProps): React.ReactElement {
+function parseModeFilterValue(value: string): MatchModeId | '' {
+  return OFFICIAL_MATCH_MODES.some((mode) => mode.id === value as MatchModeId) ? (value as MatchModeId) : '';
+}
+
+function formatWinRate(spotlight?: AccountLeaderboardSpotlight): string {
+  if (!spotlight || spotlight.matchesPlayed <= 0) {
+    return '--';
+  }
+  const winRate = Math.round((spotlight.wins / spotlight.matchesPlayed) * 100);
+  return `${winRate}%`;
+}
+
+function renderSpotlightLabel(summary: AccountLeaderboardSummary | undefined, selectedModeId: MatchModeId | ''): string {
+  if (summary?.seasonLabel?.trim()) {
+    return summary.seasonLabel;
+  }
+  if (selectedModeId) {
+    return `${OFFICIAL_MATCH_MODES.find((mode) => mode.id === selectedModeId)?.label ?? 'Mode'} ladder`;
+  }
+  return 'Current ladder';
+}
+
+export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPageProps): React.ReactElement {
   const [accounts, setAccounts] = React.useState<AccountProfile[]>([]);
   const [seasons, setSeasons] = React.useState<SeasonOption[]>([]);
+  const [summary, setSummary] = React.useState<AccountLeaderboardSummary | undefined>(undefined);
   const [selectedSeasonId, setSelectedSeasonId] = React.useState('');
+  const [selectedModeId, setSelectedModeId] = React.useState<MatchModeId | ''>('');
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
 
-  const loadRankings = React.useCallback(async (seasonId?: string) => {
+  const loadRankings = React.useCallback(async (seasonId?: string, modeId?: MatchModeId) => {
     setLoading(true);
     setError('');
+    setSummary(undefined);
     try {
-      const payload = await fetchAccountLeaderboard(50, 'rating', seasonId);
+      const payload = await fetchAccountLeaderboard(50, 'rating', seasonId, modeId);
       setAccounts(payload.accounts);
       setSeasons(payload.seasons);
+      setSummary(payload.summary);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load rankings.');
     } finally {
@@ -51,8 +80,8 @@ export default function RankingsPage({ onViewGuest }: RankingsPageProps): React.
   }, []);
 
   React.useEffect(() => {
-    void loadRankings(selectedSeasonId || undefined);
-  }, [loadRankings, selectedSeasonId]);
+    void loadRankings(selectedSeasonId || undefined, selectedModeId || undefined);
+  }, [loadRankings, selectedModeId, selectedSeasonId]);
 
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, padding: '22px 28px 26px', gap: '18px' }}>
@@ -75,10 +104,30 @@ export default function RankingsPage({ onViewGuest }: RankingsPageProps): React.
             <div>
               <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Account Rankings</div>
               <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-                Claimed account leaderboard with current ladder totals and season-aware momentum filters.
+                Claimed account leaderboard with official-mode lanes and season-aware momentum filters.
               </div>
             </div>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                value={selectedModeId}
+                onChange={(event) => setSelectedModeId(parseModeFilterValue(event.target.value))}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,180,60,0.24)',
+                  background: 'rgba(255,255,255,0.04)',
+                  color: '#fff2c8',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                }}
+              >
+                <option value="">All official modes</option>
+                {OFFICIAL_MATCH_MODES.map((mode) => (
+                  <option key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
               <select
                 value={selectedSeasonId}
                 onChange={(event) => setSelectedSeasonId(event.target.value)}
@@ -100,7 +149,7 @@ export default function RankingsPage({ onViewGuest }: RankingsPageProps): React.
                 ))}
               </select>
               <button
-                onClick={() => void loadRankings(selectedSeasonId || undefined)}
+                onClick={() => void loadRankings(selectedSeasonId || undefined, selectedModeId || undefined)}
                 style={{
                   padding: '8px 12px',
                   borderRadius: '8px',
@@ -119,6 +168,43 @@ export default function RankingsPage({ onViewGuest }: RankingsPageProps): React.
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px' }}>
+          {!loading && summary && accounts.length > 0 && (
+            <div style={{ display: 'grid', gap: '12px', marginBottom: '18px' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ padding: '14px 16px', borderRadius: '12px', background: 'rgba(255,180,60,0.08)', border: '1px solid rgba(255,180,60,0.16)' }}>
+                  <div style={{ color: '#ffcf72', fontSize: '11px', fontWeight: 800, letterSpacing: '0.9px', textTransform: 'uppercase' }}>{renderSpotlightLabel(summary, selectedModeId)}</div>
+                  <div style={{ color: '#fff4d2', fontSize: '20px', fontWeight: 900, marginTop: '8px' }}>{summary.playerCount}</div>
+                  <div style={{ color: 'rgba(255,232,180,0.6)', fontSize: '11px', marginTop: '4px' }}>
+                    players in this lane · {summary.matchCount} rated results tracked
+                  </div>
+                </div>
+                {[
+                  { label: 'Leader', spotlight: summary.leader, value: summary.leader ? `${summary.leader.rating}` : '--', detail: summary.leader ? `${summary.leader.matchesPlayed} matches · ${formatWinRate(summary.leader)} win rate` : 'No leader yet' },
+                  { label: 'Biggest climb', spotlight: summary.biggestClimber, value: summary.biggestClimber ? formatRatingDelta(summary.biggestClimber.netDelta) : '--', detail: summary.biggestClimber ? `${summary.biggestClimber.matchesPlayed} matches · rating ${summary.biggestClimber.rating}` : 'No climb data yet' },
+                  { label: 'Peak holder', spotlight: summary.highestPeak, value: summary.highestPeak ? `${summary.highestPeak.peakRating}` : '--', detail: summary.highestPeak ? `${summary.highestPeak.matchesPlayed} matches · ${summary.highestPeak.displayName}` : 'No peak yet' },
+                  { label: 'Most active', spotlight: summary.mostActive, value: summary.mostActive ? `${summary.mostActive.matchesPlayed}` : '--', detail: summary.mostActive ? `${summary.mostActive.displayName} · ${formatWinRate(summary.mostActive)} win rate` : 'No volume yet' },
+                ].map((card) => (
+                  <div key={card.label} style={{ padding: '14px 16px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.1)' }}>
+                    <div style={{ color: '#ffcf72', fontSize: '11px', fontWeight: 800, letterSpacing: '0.9px', textTransform: 'uppercase' }}>{card.label}</div>
+                    <div style={{ color: '#fff4d2', fontSize: '18px', fontWeight: 900, marginTop: '8px' }}>{card.value}</div>
+                    <div style={{ color: '#ffd98f', fontSize: '12px', fontWeight: 700, marginTop: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {card.spotlight ? `@${card.spotlight.handle}` : 'Waiting for results'}
+                    </div>
+                    <div style={{ color: 'rgba(255,232,180,0.58)', fontSize: '11px', marginTop: '4px', lineHeight: 1.45 }}>
+                      {card.detail}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {error && (
             <div style={{
               marginBottom: '16px',
@@ -138,8 +224,8 @@ export default function RankingsPage({ onViewGuest }: RankingsPageProps): React.
             <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>Loading rankings...</div>
           ) : accounts.length === 0 ? (
             <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>
-              {selectedSeasonId
-                ? 'No accounts have season activity for that filter yet.'
+              {selectedSeasonId || selectedModeId
+                ? 'No accounts have ladder activity for that mode and season filter yet.'
                 : 'No claimed accounts yet. Open the Account tab to claim a handle and start building the account ladder.'}
             </div>
           ) : (
@@ -189,7 +275,13 @@ export default function RankingsPage({ onViewGuest }: RankingsPageProps): React.
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                       <button
-                        onClick={() => onViewGuest?.(account.primaryGuestId)}
+                        onClick={() => {
+                          if (onViewAccount) {
+                            onViewAccount(account.handle);
+                            return;
+                          }
+                          onViewGuest?.(account.primaryGuestId);
+                        }}
                         style={{
                           padding: '7px 10px',
                           borderRadius: '8px',

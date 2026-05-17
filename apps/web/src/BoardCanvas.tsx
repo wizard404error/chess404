@@ -105,7 +105,7 @@ export interface BoardCanvasProps {
   fuseAnim: FuseAnim | null;
   fuseSelectedSq: { row: number; col: number } | null; // step-1 selected square highlight
   fogZones: { centerRow: number; centerCol: number; ownerColor: PieceColor }[];
-  viewerColor: PieceColor;
+  viewerColor: PieceColor | null;
   invisibleUnder?: { row: number; col: number; piece: Piece; ownerColor: PieceColor } | null;
   analysisArrows: BoardArrow[];
   onToggleAnalysisArrow: (from: Sq, to: Sq) => void;
@@ -3485,7 +3485,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     if (cardPending || isReviewing) return;
     onClearAnalysisArrows();
     const p = displayBoard[sq.row]?.[sq.col];
-    if (p?.color === turn) {
+    if (viewerColor && viewerColor === turn && p?.color === viewerColor) {
       setLocalDrag(sq);
       setLocalDragPos({ x: e.clientX - canvasRef.current!.getBoundingClientRect().left, y: e.clientY - canvasRef.current!.getBoundingClientRect().top });
       onDragStart(e, sq.row, sq.col);

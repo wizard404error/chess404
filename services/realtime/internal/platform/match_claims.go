@@ -5,24 +5,27 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 const defaultMatchClaimTTL = 12 * time.Hour
 
 type MatchSeatClaim struct {
-	MatchID      string    `json:"matchId"`
-	GuestID      string    `json:"guestId"`
-	SeatColor    string    `json:"seatColor"`
-	PlayerID     string    `json:"playerId"`
-	PlayerSecret string    `json:"playerSecret"`
-	ClaimToken   string    `json:"claimToken,omitempty"`
-	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
-	Queue        string    `json:"queue,omitempty"`
-	WhiteGuestID string    `json:"whiteGuestId,omitempty"`
-	BlackGuestID string    `json:"blackGuestId,omitempty"`
-	WhiteName    string    `json:"whiteName,omitempty"`
-	BlackName    string    `json:"blackName,omitempty"`
-	Status       string    `json:"status,omitempty"`
+	MatchID      string                `json:"matchId"`
+	GuestID      string                `json:"guestId"`
+	SeatColor    string                `json:"seatColor"`
+	PlayerID     string                `json:"playerId"`
+	PlayerSecret string                `json:"playerSecret"`
+	ClaimToken   string                `json:"claimToken,omitempty"`
+	ExpiresAt    time.Time             `json:"expiresAt,omitempty"`
+	Queue        string                `json:"queue,omitempty"`
+	ModeID       contracts.MatchModeID `json:"modeId,omitempty"`
+	WhiteGuestID string                `json:"whiteGuestId,omitempty"`
+	BlackGuestID string                `json:"blackGuestId,omitempty"`
+	WhiteName    string                `json:"whiteName,omitempty"`
+	BlackName    string                `json:"blackName,omitempty"`
+	Status       string                `json:"status,omitempty"`
 }
 
 type MatchClaimStats struct {

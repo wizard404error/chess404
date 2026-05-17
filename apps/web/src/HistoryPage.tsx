@@ -1,4 +1,6 @@
 import React from 'react';
+import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
+import type { MatchFinishReason, MatchModeId } from '@chess404/contracts';
 import type { MatchArchiveEntry } from './lib/platform-service';
 import { fetchArchivedMatch, fetchArchivedMatches, fetchGuestArchivedMatches } from './lib/platform-service';
 
@@ -12,14 +14,48 @@ function formatDateTime(value: string): string {
   return date.toLocaleString();
 }
 
+function finishReasonLabel(reason?: MatchFinishReason): string | null {
+  switch (reason) {
+    case 'checkmate':
+      return 'checkmate';
+    case 'stalemate':
+      return 'stalemate';
+    case 'insufficient_material':
+      return 'insufficient material';
+    case 'threefold_repetition':
+      return 'threefold repetition';
+    case 'fifty_move_rule':
+      return '50-move rule';
+    case 'timeout':
+      return 'timeout';
+    case 'abandon':
+      return 'abandonment';
+    case 'resign':
+      return 'resignation';
+    case 'abort':
+      return 'early abort';
+    case 'draw_agreement':
+      return 'mutual agreement';
+    default:
+      return null;
+  }
+}
+
 function resultLabel(entry: MatchArchiveEntry): string {
   if (entry.status !== 'finished') {
     return entry.status;
   }
-  if (!entry.winner) {
-    return 'finished';
+  const finishLabel = finishReasonLabel(entry.finishReason);
+  if (entry.winner === 'aborted') {
+    return finishLabel ? `aborted - ${finishLabel}` : 'aborted';
   }
-  return entry.winner === 'draw' ? 'draw' : `${entry.winner} won`;
+  if (!entry.winner) {
+    return finishLabel ? `finished - ${finishLabel}` : 'finished';
+  }
+  if (entry.winner === 'draw') {
+    return finishLabel ? `draw - ${finishLabel}` : 'draw';
+  }
+  return finishLabel ? `${entry.winner} won - ${finishLabel}` : `${entry.winner} won`;
 }
 
 function playerIdentityLabel(
@@ -46,6 +82,19 @@ function queueLabel(entry: MatchArchiveEntry): string {
     return 'casual';
   }
   return 'direct';
+}
+
+function modeLabel(modeId?: string): string {
+  const normalizedModeId = modeId === 'hidden_cards' ? 'hidden_cards' : DEFAULT_MATCH_MODE_ID;
+  return OFFICIAL_MATCH_MODES.find(mode => mode.id === normalizedModeId)?.label ?? 'Open Cards';
+}
+
+function formatLabel(entry: MatchArchiveEntry): string {
+  return `${queueLabel(entry)} - ${modeLabel(entry.modeId)}`;
+}
+
+function parseModeFilterValue(value: string): MatchModeId | '' {
+  return OFFICIAL_MATCH_MODES.some((mode) => mode.id === value as MatchModeId) ? (value as MatchModeId) : '';
 }
 
 function formatClock(ms: number): string {
@@ -91,6 +140,50 @@ function replayButtonStyle(disabled: boolean): React.CSSProperties {
     fontWeight: 800,
     cursor: disabled ? 'not-allowed' : 'pointer',
   };
+}
+
+function buildReplayUrl(matchId: string, guestId?: string | null): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const normalizedMatchId = matchId.trim();
+  if (!normalizedMatchId) {
+    return null;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.delete('match');
+  url.searchParams.delete('profile');
+  url.searchParams.set('replay', normalizedMatchId);
+  if (guestId?.trim()) {
+    url.searchParams.set('guest', guestId.trim());
+  } else {
+    url.searchParams.delete('guest');
+  }
+  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+}
+
+function buildGuestHistoryUrl(guestId: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const normalizedGuestId = guestId.trim();
+  if (!normalizedGuestId) {
+    return null;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.delete('match');
+  url.searchParams.delete('profile');
+  url.searchParams.delete('replay');
+  url.searchParams.set('guest', normalizedGuestId);
+  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+}
+
+async function copyTextToClipboard(value: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+  return false;
 }
 
 function renderBoardPreview(board: MatchArchiveEntry['snapshot']['match']['board']): React.ReactElement {
@@ -154,31 +247,37 @@ function renderBoardPreview(board: MatchArchiveEntry['snapshot']['match']['board
 interface HistoryPageProps {
   focusMatchId?: string | null;
   focusGuestId?: string | null;
+  onSelectMatchId?: (matchId: string | null) => void;
   onOpenGuest?: (guestId: string) => void;
   onClearGuestFocus?: () => void;
+  onWatchLiveMatch?: (matchId: string) => void;
 }
 
 export default function HistoryPage({
   focusMatchId = null,
   focusGuestId = null,
+  onSelectMatchId,
   onOpenGuest,
   onClearGuestFocus,
+  onWatchLiveMatch,
 }: HistoryPageProps): React.ReactElement {
   const [matches, setMatches] = React.useState<MatchArchiveEntry[]>([]);
   const [selectedMatchId, setSelectedMatchId] = React.useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = React.useState<MatchArchiveEntry | null>(null);
   const [selectedReplayIndex, setSelectedReplayIndex] = React.useState(0);
+  const [selectedModeId, setSelectedModeId] = React.useState<MatchModeId | ''>('');
   const [loadingList, setLoadingList] = React.useState(true);
   const [loadingDetail, setLoadingDetail] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [notice, setNotice] = React.useState('');
 
   const loadMatches = React.useCallback(async (preserveSelection = true) => {
     setLoadingList(true);
     setError('');
     try {
       const nextMatches = focusGuestId
-        ? await fetchGuestArchivedMatches(focusGuestId, 40)
-        : await fetchArchivedMatches(40);
+        ? await fetchGuestArchivedMatches(focusGuestId, 40, selectedModeId || undefined)
+        : await fetchArchivedMatches(40, selectedModeId || undefined);
       setMatches(nextMatches);
       setSelectedMatchId(currentSelected => {
         if (preserveSelection && currentSelected && nextMatches.some(match => match.matchId === currentSelected)) {
@@ -191,7 +290,7 @@ export default function HistoryPage({
     } finally {
       setLoadingList(false);
     }
-  }, [focusGuestId]);
+  }, [focusGuestId, selectedModeId]);
 
   React.useEffect(() => {
     void loadMatches(false);
@@ -202,6 +301,14 @@ export default function HistoryPage({
       setSelectedMatchId(focusMatchId);
     }
   }, [focusMatchId]);
+
+  React.useEffect(() => {
+    onSelectMatchId?.(selectedMatchId);
+  }, [onSelectMatchId, selectedMatchId]);
+
+  React.useEffect(() => {
+    setNotice('');
+  }, [focusGuestId, selectedMatchId]);
 
   React.useEffect(() => {
     if (!selectedMatchId) {
@@ -249,6 +356,37 @@ export default function HistoryPage({
     : null;
   const recentEvents = selectedMatch?.snapshot.events ?? [];
   const activeEffects = snapshot ? collectActiveEffects(snapshot) : [];
+  const shareReplayLink = React.useCallback(async () => {
+    if (!selectedMatch) {
+      return;
+    }
+    const replayUrl = buildReplayUrl(selectedMatch.matchId, focusGuestId);
+    if (!replayUrl) {
+      return;
+    }
+    try {
+      const copied = await copyTextToClipboard(replayUrl);
+      setNotice(copied ? 'Replay link copied.' : replayUrl);
+    } catch {
+      setNotice(replayUrl);
+    }
+  }, [focusGuestId, selectedMatch]);
+
+  const shareGuestHistoryLink = React.useCallback(async () => {
+    if (!focusGuestId) {
+      return;
+    }
+    const guestUrl = buildGuestHistoryUrl(focusGuestId);
+    if (!guestUrl) {
+      return;
+    }
+    try {
+      const copied = await copyTextToClipboard(guestUrl);
+      setNotice(copied ? 'Guest history link copied.' : guestUrl);
+    } catch {
+      setNotice(guestUrl);
+    }
+  }, [focusGuestId]);
 
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, padding: '22px 28px 26px', gap: '18px' }}>
@@ -271,10 +409,30 @@ export default function HistoryPage({
             <div>
               <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Match History</div>
               <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-                {focusGuestId ? `Archived matches for ${focusGuestId}.` : 'Archived matches from the local platform store.'}
+                {focusGuestId ? `Archived matches for ${focusGuestId}.` : 'Archived matches from the platform archive, grouped by official mode.'}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <select
+                value={selectedModeId}
+                onChange={(event) => setSelectedModeId(parseModeFilterValue(event.target.value))}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,180,60,0.24)',
+                  background: 'rgba(255,255,255,0.04)',
+                  color: '#fff2c8',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                }}
+              >
+                <option value="">All official modes</option>
+                {OFFICIAL_MATCH_MODES.map((mode) => (
+                  <option key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
               {focusGuestId && onClearGuestFocus && (
                 <button
                   onClick={onClearGuestFocus}
@@ -315,7 +473,11 @@ export default function HistoryPage({
           {loadingList ? (
             <div style={{ padding: '16px', color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>Loading archived matches...</div>
           ) : matches.length === 0 ? (
-            <div style={{ padding: '16px', color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>No archived matches yet. Start a game and make a move to populate history.</div>
+            <div style={{ padding: '16px', color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>
+              {focusGuestId
+                ? 'No archived matches exist for this guest in the selected mode yet.'
+                : 'No archived matches yet for the selected mode. Start a game and make a move to populate history.'}
+            </div>
           ) : (
             matches.map(match => {
               const selected = match.matchId === selectedMatchId;
@@ -357,7 +519,7 @@ export default function HistoryPage({
                   <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(255,232,180,0.7)' }}>
                     {match.moveCount} moves
                     {match.lastMove ? ` · last ${match.lastMove}` : ''}
-                    {` · ${queueLabel(match)}`}
+                    {` · ${formatLabel(match)}`}
                   </div>
                   <div style={{ marginTop: '5px', fontSize: '11px', color: 'rgba(210,220,255,0.62)' }}>
                     {playersLabel(match)}
@@ -389,7 +551,7 @@ export default function HistoryPage({
         <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid rgba(255,165,40,0.12)' }}>
           <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Match Detail</div>
           <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-            Snapshot-backed detail from the platform archive. This is the first persistence layer before Postgres and Redis.
+            Canonical replay destination for archived Chess404 games. Shared replay links and guest archive links resolve through this surface instead of ephemeral list state.
           </div>
         </div>
 
@@ -428,6 +590,62 @@ export default function HistoryPage({
                 >
                   <div style={{ fontSize: '15px', fontWeight: 800, color: '#fff2c8' }}>{selectedMatch.matchId}</div>
                   <div style={{ marginTop: '6px', fontSize: '12px', color: 'rgba(210,220,255,0.72)' }}>{playersLabel(selectedMatch)}</div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
+                    <button
+                      onClick={() => void shareReplayLink()}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(255,180,60,0.24)',
+                        background: 'rgba(255,180,60,0.08)',
+                        color: '#fff0c6',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Copy replay link
+                    </button>
+                    {focusGuestId && (
+                      <button
+                        onClick={() => void shareGuestHistoryLink()}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '10px',
+                          border: '1px solid rgba(110,170,255,0.22)',
+                          background: 'rgba(54,102,184,0.12)',
+                          color: '#dcecff',
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Copy guest archive link
+                      </button>
+                    )}
+                    {selectedMatch.status === 'active' && onWatchLiveMatch && (
+                      <button
+                        onClick={() => onWatchLiveMatch(selectedMatch.matchId)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '10px',
+                          border: '1px solid rgba(110,170,255,0.28)',
+                          background: 'linear-gradient(180deg, rgba(54,102,184,0.24) 0%, rgba(24,40,82,0.34) 100%)',
+                          color: '#e5f0ff',
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Watch live board
+                      </button>
+                    )}
+                  </div>
+                  {notice && (
+                    <div style={{ marginTop: '10px', color: '#9ee6b8', fontSize: '11px', fontWeight: 700 }}>
+                      {notice}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
                     {selectedMatch.whiteGuestId && (
                       <button
@@ -467,7 +685,8 @@ export default function HistoryPage({
                   <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px 14px', fontSize: '12px' }}>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Status:</span> <span style={{ color: '#fff4d0' }}>{snapshot.status}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Winner:</span> <span style={{ color: '#fff4d0' }}>{snapshot.winner ?? 'none'}</span></div>
-                    <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Queue:</span> <span style={{ color: '#fff4d0' }}>{queueLabel(selectedMatch)}</span></div>
+                    <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Finish:</span> <span style={{ color: '#fff4d0' }}>{finishReasonLabel(selectedMatch.finishReason) ?? 'unspecified'}</span></div>
+                    <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Format:</span> <span style={{ color: '#fff4d0' }}>{formatLabel(selectedMatch)}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Turn:</span> <span style={{ color: '#fff4d0' }}>{activeReplayFrame?.turn ?? snapshot.turn}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>White account:</span> <span style={{ color: '#fff4d0' }}>{selectedMatch.whiteAccountHandle ? `@${selectedMatch.whiteAccountHandle}` : selectedMatch.whiteAccountId ?? 'guest-only'}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Black account:</span> <span style={{ color: '#fff4d0' }}>{selectedMatch.blackAccountHandle ? `@${selectedMatch.blackAccountHandle}` : selectedMatch.blackAccountId ?? 'guest-only'}</span></div>

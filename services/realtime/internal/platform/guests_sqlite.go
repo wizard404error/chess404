@@ -121,6 +121,35 @@ func (s *SQLiteGuestStore) EnsureGuest(guestID, sessionSecret string) (GuestSess
 	return session, nil
 }
 
+func (s *SQLiteGuestStore) IssueGuestSession(guestID string) (GuestSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	guestID = strings.TrimSpace(guestID)
+	if guestID == "" {
+		return GuestSession{}, os.ErrInvalid
+	}
+
+	session, ok, err := lookupGuestSessionDB(s.db, guestID)
+	if err != nil {
+		return GuestSession{}, err
+	}
+	if !ok {
+		return GuestSession{}, os.ErrNotExist
+	}
+
+	now := time.Now().UTC()
+	session.Guest.LastSeenAt = now
+	session.SessionSecret = firstNonEmpty(strings.TrimSpace(session.SessionSecret), "guestsess_"+randomToken(12))
+	session.SessionToken = firstNonEmpty(strings.TrimSpace(session.SessionToken), "guesttok_"+randomToken(18))
+	session.ExpiresAt = now.Add(defaultGuestSessionTTL)
+	if _, err := s.db.Exec(`update guests set last_seen_at = ?, session_secret = ?, session_token = ?, session_expires_at = ? where guest_id = ?`, timeString(now), session.SessionSecret, session.SessionToken, timeString(session.ExpiresAt), guestID); err != nil {
+		return GuestSession{}, err
+	}
+
+	return session, nil
+}
+
 func (s *SQLiteGuestStore) ResumeGuest(guestID, sessionSecret string) (GuestSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

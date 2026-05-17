@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import type { MatchSnapshotMessage, MatchState as AuthoritativeMatchState, PlayerIntent } from '@chess404/contracts';
+import type { MatchFinishReason, MatchModeId, MatchSnapshotMessage, MatchState as AuthoritativeMatchState, PlayerIntent } from '@chess404/contracts';
+import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import { useStockfish } from './usestockfish';
 import type { Board, PieceType, PieceColor, Piece, Sq, GameCard, CardMechanic, CardPendingState, DoubleMove, BombPiece, LavaSquare, Snapshot, Rarity, CardAnimType } from './types';
 import { makeBoard, cloneBoard, findKing, isAttacked, inB, legalMoves, gameStatus, insuffMat, positionKey, threefold, toFEN, moveNotation, uciToSan } from './chessEngine';
@@ -10,14 +11,23 @@ import { RARITY_STYLE, RARITY_WEIGHTS, OPP, FILES, RANKS, SQ, MAX_HAND_SIZE, CLO
 import { GLOBAL_STYLES } from './styles';
 import { BoardCanvas, type TransformAnim, type SniperAnim, type TeleportAnim, type JumpAnim, type SacrificeAnim, type MindControlAnim, type FuseAnim, type BoardArrow } from './BoardCanvas';
 import { CardAnimOverlay } from './CardAnimOverlay';
+import AdminModerationPage from './AdminModerationPage';
+import AuthPage from './AuthPage';
 import CardsPage from './CardsPage';
+import FriendsPage from './FriendsPage';
 import HistoryPage from './HistoryPage';
+import InboxPage from './InboxPage';
+import LobbiesPage from './LobbiesPage';
+import ModesPage from './ModesPage';
+import ProfilesPage from './ProfilesPage';
 import QueuePage from './QueuePage';
+import WatchPage from './WatchPage';
 import RankingsPage from './RankingsPage';
 import CommunityPage from './CommunityPage';
 import StatusPage from './StatusPage';
 import AccountPage from './AccountPage';
 import { fetchGatewayBootstrap } from './lib/system-service';
+import { joinPrivateMatch, rematchPrivateMatch } from './lib/private-match-service';
 import {
   applyIntent,
   configureMatchServiceRuntime,
@@ -27,11 +37,32 @@ import {
   fetchMatch,
   readStoredRoomMeta,
   resolveSeatSecret,
+  sendMatchPresenceHeartbeat,
   writeStoredRoomMeta,
   type MatchServiceRuntimeConfig,
   type StoredRoomMeta,
 } from './lib/match-service';
-import { createGuestSession, finalizeAccountMatch, finalizeGuestMatch, type GuestProfile, type MatchSeatClaim } from './lib/platform-service';
+import {
+  connectAccountNotificationStream,
+  createGuestSession,
+  formatAccountRestrictionNotice,
+  fetchDirectChallengeOverview,
+  fetchFriendOverview,
+  finalizeAccountMatch,
+  finalizeGuestMatch,
+  fetchAccountNotificationOverview,
+  isAccountRestrictionError,
+  parseAccountRestrictionMessage,
+  type AccountNotificationView,
+  type AccountSession as PlatformAccountSession,
+  type DirectChallengeOverview,
+  type FriendOverview,
+  type GuestProfile,
+  type GuestSession as PlatformGuestSession,
+  type MatchSeatClaim,
+  touchAccountPresence,
+} from './lib/platform-service';
+import type { QueueName } from './lib/matchmaking-service';
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const AUTHORITATIVE_JOKER_MECHANICS = new Set<CardMechanic>([
@@ -45,6 +76,7 @@ const AUTHORITATIVE_JOKER_MECHANICS = new Set<CardMechanic>([
 
 const ACTIVE_MATCH_STORAGE_KEY = 'chess404.activeMatchId';
 const STREAM_RECONNECT_MESSAGE = 'Reconnecting to live match stream...';
+const PRESENCE_RETRY_MESSAGE = 'Live match presence sync is delayed.';
 const WHITE_GUEST_ID_STORAGE_KEY = 'chess404.guest.white';
 const BLACK_GUEST_ID_STORAGE_KEY = 'chess404.guest.black';
 const WHITE_GUEST_SECRET_STORAGE_KEY = 'chess404.guest.white.secret';
@@ -61,6 +93,7 @@ const WHITE_ACCOUNT_EXPIRY_STORAGE_KEY = 'chess404.account.white.expiresAt';
 const BLACK_ACCOUNT_EXPIRY_STORAGE_KEY = 'chess404.account.black.expiresAt';
 const CLAIM_REFRESH_CHECK_INTERVAL_MS = 30_000;
 const CLAIM_REFRESH_LEAD_MS = 5 * 60 * 1000;
+const MATCH_PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 
 function readStoredActiveMatchId(): string | null {
   if (typeof window === 'undefined') {
@@ -92,6 +125,92 @@ function clearRequestedMatchQuery(): void {
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
+function syncRequestedProfileQuery(handle: string | null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (handle && handle.trim()) {
+    url.searchParams.set('profile', handle.trim().toLowerCase());
+  } else {
+    url.searchParams.delete('profile');
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function syncRequestedHistoryQuery(matchId: string | null, guestId: string | null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (matchId && matchId.trim()) {
+    url.searchParams.set('replay', matchId.trim());
+  } else {
+    url.searchParams.delete('replay');
+  }
+  if (guestId && guestId.trim()) {
+    url.searchParams.set('guest', guestId.trim());
+  } else {
+    url.searchParams.delete('guest');
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function syncRequestedMatchQuery(matchId: string | null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (matchId && matchId.trim()) {
+    url.searchParams.set('match', matchId.trim());
+    url.searchParams.delete('replay');
+    url.searchParams.delete('guest');
+  } else {
+    url.searchParams.delete('match');
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function buildLiveMatchUrl(matchId: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const normalizedMatchId = matchId.trim();
+  if (!normalizedMatchId) {
+    return null;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set('match', normalizedMatchId);
+  url.searchParams.delete('replay');
+  url.searchParams.delete('guest');
+  url.searchParams.delete('profile');
+  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+}
+
+function buildReplayPageUrl(matchId: string): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const normalizedMatchId = matchId.trim();
+  if (!normalizedMatchId) {
+    return null;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set('replay', normalizedMatchId);
+  url.searchParams.delete('match');
+  url.searchParams.delete('guest');
+  url.searchParams.delete('profile');
+  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+}
+
+async function copyTextToClipboard(value: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+  return false;
+}
+
 function buildStoredRoomMeta(
   base: StoredRoomMeta | null | undefined,
   whiteProfile: GuestProfile | null,
@@ -102,6 +221,7 @@ function buildStoredRoomMeta(
 ): StoredRoomMeta {
   return {
     ...base,
+    modeId: base?.modeId ?? DEFAULT_MATCH_MODE_ID,
     whiteGuestId: base?.whiteGuestId ?? whiteProfile?.guestId,
     blackGuestId: base?.blackGuestId ?? blackProfile?.guestId,
     whiteAccountId: base?.whiteAccountId ?? readStoredAccountIdentity('white').accountId,
@@ -155,6 +275,16 @@ function writeStoredGuestIdentity(
   }
 }
 
+function clearStoredGuestIdentity(side: 'white' | 'black'): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.removeItem(side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY);
+  window.localStorage.removeItem(side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY);
+  window.localStorage.removeItem(side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY);
+  window.localStorage.removeItem(side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY);
+}
+
 function readStoredAccountIdentity(side: 'white' | 'black'): { accountId?: string; sessionToken?: string; expiresAt?: string } {
   if (typeof window === 'undefined') {
     return {};
@@ -191,6 +321,109 @@ function writeStoredAccountIdentity(
   }
 }
 
+function clearStoredAccountIdentity(side: 'white' | 'black'): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.removeItem(side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY);
+  window.localStorage.removeItem(side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY);
+  window.localStorage.removeItem(side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY);
+}
+
+function modeLabel(modeId?: MatchModeId): string {
+  return OFFICIAL_MATCH_MODES.find((mode) => mode.id === (modeId ?? DEFAULT_MATCH_MODE_ID))?.label ?? 'Open Cards';
+}
+
+function queueLabel(queue?: QueueName | 'direct'): string {
+  if (queue === 'rated') {
+    return 'Rated';
+  }
+  if (queue === 'casual') {
+    return 'Casual';
+  }
+  return 'Direct';
+}
+
+function finishReasonLabel(reason?: MatchFinishReason | null): string | null {
+  switch (reason) {
+    case 'checkmate':
+      return 'Checkmate';
+    case 'stalemate':
+      return 'Stalemate';
+    case 'insufficient_material':
+      return 'Insufficient Material';
+    case 'threefold_repetition':
+      return 'Threefold Repetition';
+    case 'fifty_move_rule':
+      return '50-Move Rule';
+    case 'timeout':
+      return 'Timeout';
+    case 'abandon':
+      return 'Abandonment';
+    case 'resign':
+      return 'Resignation';
+    case 'abort':
+      return 'Early Abort';
+    case 'draw_agreement':
+      return 'Mutual Agreement';
+    default:
+      return null;
+  }
+}
+
+type SocialAlert = {
+  id: string;
+  title: string;
+  detail: string;
+  actionLabel: string;
+  action: 'friends' | 'match';
+  matchId?: string;
+};
+
+function buildSocialAlert(notification: AccountNotificationView): SocialAlert | null {
+  const handle = `@${notification.actor.handle}`;
+  switch (notification.kind) {
+    case 'direct_challenge_accepted':
+      if (!notification.matchId) {
+        return null;
+      }
+      return {
+        id: notification.notificationId,
+        title: `${handle} accepted your challenge`,
+        detail: `${modeLabel(notification.modeId)} is ready to play now.`,
+        actionLabel: 'Open Match',
+        action: 'match',
+        matchId: notification.matchId,
+      };
+    case 'direct_challenge_received':
+      return {
+        id: notification.notificationId,
+        title: `${handle} challenged you to ${modeLabel(notification.modeId)}`,
+        detail: 'Open Friends to accept or decline the invite.',
+        actionLabel: 'Open Friends',
+        action: 'friends',
+      };
+    case 'friend_request_received':
+      return {
+        id: notification.notificationId,
+        title: `${handle} sent you a friend request`,
+        detail: 'Open Friends to accept or decline it.',
+        actionLabel: 'Open Friends',
+        action: 'friends',
+      };
+    case 'friend_request_accepted':
+      return {
+        id: notification.notificationId,
+        title: `${handle} accepted your friend request`,
+        detail: 'You can challenge them directly from your friends list now.',
+        actionLabel: 'Open Friends',
+        action: 'friends',
+      };
+    default:
+      return null;
+  }
+}
+
 export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceHttpBase?: string; matchServiceWsBase?: string } }) {
   configureMatchServiceRuntime({
     httpBaseUrl: runtimeConfig?.matchServiceHttpBase,
@@ -198,12 +431,31 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   } satisfies MatchServiceRuntimeConfig);
   const [hostedRuntime, setHostedRuntime] = React.useState(false);
   const [activePage, setActivePage] = React.useState<string>('Play');
+  const [friendsAttentionCount, setFriendsAttentionCount] = React.useState(0);
+  const [inboxUnreadCount, setInboxUnreadCount] = React.useState(0);
+  const [socialAlert, setSocialAlert] = React.useState<SocialAlert | null>(null);
+  const [socialLiveToken, setSocialLiveToken] = React.useState(0);
+  const [profileFocusHandle, setProfileFocusHandle] = React.useState<string | null>(null);
+  const [profileQueryReady, setProfileQueryReady] = React.useState(false);
+  const [historyQueryReady, setHistoryQueryReady] = React.useState(false);
+  const [matchQueryReady, setMatchQueryReady] = React.useState(false);
+  const [accountActionQueryDetected, setAccountActionQueryDetected] = React.useState(false);
+  const [matchDestinationNotice, setMatchDestinationNotice] = React.useState('');
+  const [queueLaunchIntent, setQueueLaunchIntent] = React.useState<{ modeId: MatchModeId; queue: QueueName } | null>(null);
   const openedBoardMatchRef = React.useRef<string | null>(null);
   const [communityFocusGuestId, setCommunityFocusGuestId] = React.useState<string | null>(null);
   const [historyFocusMatchId, setHistoryFocusMatchId] = React.useState<string | null>(null);
   const [historyFocusGuestId, setHistoryFocusGuestId] = React.useState<string | null>(null);
+  const [authoritativeRematchBusy, setAuthoritativeRematchBusy] = React.useState(false);
   const [whiteProfile, setWhiteProfile] = React.useState<GuestProfile | null>(null);
   const [blackProfile, setBlackProfile] = React.useState<GuestProfile | null>(null);
+  const [viewerSeat, setViewerSeat] = React.useState<PieceColor | null>(null);
+  const [matchSeatMeta, setMatchSeatMeta] = React.useState<{
+    whiteGuestId?: string;
+    blackGuestId?: string;
+    whiteName?: string;
+    blackName?: string;
+  } | null>(null);
   const [guestProfilesReady, setGuestProfilesReady] = React.useState(false);
   const [board,     setBoard]     = React.useState<Board>(makeBoard);
   const [turn,      setTurn]      = React.useState<PieceColor>('white');
@@ -229,10 +481,142 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   const [drawOffer, setDrawOffer] = React.useState<PieceColor | null>(null);
   const [over,      setOver]      = React.useState(false);
   const [winner,    setWinner]    = React.useState<PieceColor | 'draw' | 'aborted' | null>(null);
+  const [authoritativeFinishReason, setAuthoritativeFinishReason] = React.useState<MatchFinishReason | null>(null);
   const [movHist,   setMovHist]   = React.useState<{ n: string; w?: string; b?: string }[]>([]);
   const [snapshots, setSnapshots] = React.useState<Snapshot[]>([]);
   const [reviewIdx, setReviewIdx] = React.useState<number>(-1);
   const [analysisArrows, setAnalysisArrows] = React.useState<BoardArrow[]>([]);
+
+  const openProfileHandle = React.useCallback((handle: string) => {
+    const normalized = handle.trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+    setProfileFocusHandle(normalized);
+    setActivePage('Profiles');
+  }, []);
+
+  const openReplayMatch = React.useCallback((matchId: string, guestId: string | null = null) => {
+    const normalizedMatchId = matchId.trim();
+    if (!normalizedMatchId) {
+      return;
+    }
+    setHistoryFocusMatchId(normalizedMatchId);
+    setHistoryFocusGuestId(guestId);
+    setActivePage('History');
+  }, []);
+
+  const openGuestHistory = React.useCallback((guestId: string) => {
+    const normalizedGuestId = guestId.trim();
+    if (!normalizedGuestId) {
+      return;
+    }
+    setHistoryFocusGuestId(normalizedGuestId);
+    setHistoryFocusMatchId(null);
+    setActivePage('History');
+  }, []);
+
+  const openLiveMatch = React.useCallback((matchId: string) => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const normalizedMatchId = matchId.trim();
+    if (!normalizedMatchId) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set('match', normalizedMatchId);
+    url.searchParams.delete('replay');
+    url.searchParams.delete('guest');
+    url.searchParams.delete('profile');
+    window.location.href = `${url.pathname}${url.search}${url.hash}`;
+  }, []);
+
+  const copyLiveMatchLink = React.useCallback(async (matchId: string) => {
+    const matchUrl = buildLiveMatchUrl(matchId);
+    if (!matchUrl) {
+      return;
+    }
+    try {
+      const copied = await copyTextToClipboard(matchUrl);
+      setMatchDestinationNotice(copied ? 'Live match link copied.' : matchUrl);
+    } catch {
+      setMatchDestinationNotice(matchUrl);
+    }
+  }, []);
+
+  const copyReplayPageLink = React.useCallback(async (matchId: string) => {
+    const replayUrl = buildReplayPageUrl(matchId);
+    if (!replayUrl) {
+      return;
+    }
+    try {
+      const copied = await copyTextToClipboard(replayUrl);
+      setMatchDestinationNotice(copied ? 'Replay page link copied.' : replayUrl);
+    } catch {
+      setMatchDestinationNotice(replayUrl);
+    }
+  }, []);
+
+  const dismissedSocialAlertIdsRef = React.useRef<Set<string>>(new Set());
+  const [primaryAccountIdentity, setPrimaryAccountIdentity] = React.useState(() => readStoredAccountIdentity('white'));
+  const [shellAccountNotice, setShellAccountNotice] = React.useState('');
+
+  const syncPrimaryAccountIdentity = React.useCallback(() => {
+    React.startTransition(() => {
+      setPrimaryAccountIdentity(readStoredAccountIdentity('white'));
+    });
+  }, []);
+
+  const clearPrimaryAccountRestriction = React.useCallback((message: string) => {
+    clearStoredAccountIdentity('white');
+    React.startTransition(() => {
+      setPrimaryAccountIdentity({});
+      setShellAccountNotice(message);
+      setFriendsAttentionCount(0);
+      setInboxUnreadCount(0);
+      setSocialAlert(null);
+      if (hostedRuntime) {
+        setActivePage('Account');
+      }
+    });
+  }, [hostedRuntime]);
+
+  const pulseSocialLive = React.useCallback(() => {
+    React.startTransition(() => {
+      setSocialLiveToken((current) => current + 1);
+    });
+  }, []);
+
+  const handleSeatAuthenticated = React.useCallback((side: 'white' | 'black', guestSession: PlatformGuestSession, accountSession: PlatformAccountSession) => {
+    guestSessionSecretsRef.current[side] = guestSession.sessionSecret;
+    writeStoredGuestIdentity(side, guestSession.guest.guestId, guestSession.sessionSecret, {
+      sessionToken: guestSession.sessionToken ?? null,
+      sessionExpiresAt: guestSession.expiresAt ?? null,
+    });
+    writeStoredAccountIdentity(side, { accountId: accountSession.account.accountId }, {
+      sessionToken: accountSession.sessionToken,
+      expiresAt: accountSession.expiresAt,
+    });
+    if (side === 'white') {
+      syncPrimaryAccountIdentity();
+      setShellAccountNotice('');
+    }
+    if (side === 'white') {
+      setWhiteProfile(guestSession.guest);
+      if (hostedRuntime) {
+        setViewerSeat('white');
+      }
+    } else {
+      setBlackProfile(guestSession.guest);
+    }
+    setGuestProfilesReady(true);
+  }, [hostedRuntime, syncPrimaryAccountIdentity]);
+
+  const handlePrimaryShellAuthenticated = React.useCallback((guestSession: PlatformGuestSession, accountSession: PlatformAccountSession) => {
+    handleSeatAuthenticated('white', guestSession, accountSession);
+    setActivePage(hostedRuntime ? 'Queue' : 'Play');
+  }, [handleSeatAuthenticated, hostedRuntime]);
 
   // Card state
   const [whiteHand,    setWhiteHand]    = React.useState<GameCard[]>([]);
@@ -403,6 +787,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   const abortRef       = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const whiteProfileRef = React.useRef<GuestProfile | null>(null);
   const blackProfileRef = React.useRef<GuestProfile | null>(null);
+  const viewerSeatRef = React.useRef<PieceColor | null>(null);
   const guestSessionSecretsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
   const authoritativeSeatIdsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
   const authoritativeSeatSecretsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
@@ -439,14 +824,18 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       setWhiteProfile(guestSessions.white.guest);
     }
     if (guestSessions?.black) {
-      guestSessionSecretsRef.current.black = guestSessions.black.sessionSecret;
-      writeStoredGuestIdentity('black', guestSessions.black.guest.guestId, guestSessions.black.sessionSecret, {
-        sessionToken: guestSessions.black.sessionToken ?? null,
-        sessionExpiresAt: guestSessions.black.expiresAt ?? null,
-      });
-      setBlackProfile(guestSessions.black.guest);
+      if (hostedRuntime) {
+        setBlackProfile(current => current ?? guestSessions.black?.guest ?? null);
+      } else {
+        guestSessionSecretsRef.current.black = guestSessions.black.sessionSecret;
+        writeStoredGuestIdentity('black', guestSessions.black.guest.guestId, guestSessions.black.sessionSecret, {
+          sessionToken: guestSessions.black.sessionToken ?? null,
+          sessionExpiresAt: guestSessions.black.expiresAt ?? null,
+        });
+        setBlackProfile(guestSessions.black.guest);
+      }
     }
-  }, []);
+  }, [hostedRuntime]);
 
   const applyGatewayAccountSessions = React.useCallback((accountSessions?: {
     white?: { account: { accountId: string }; sessionToken: string; expiresAt?: string };
@@ -457,14 +846,26 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         sessionToken: accountSessions.white.sessionToken,
         expiresAt: accountSessions.white.expiresAt ?? null,
       });
+      setShellAccountNotice('');
+      syncPrimaryAccountIdentity();
     }
     if (accountSessions?.black) {
-      writeStoredAccountIdentity('black', accountSessions.black.account, {
-        sessionToken: accountSessions.black.sessionToken,
-        expiresAt: accountSessions.black.expiresAt ?? null,
-      });
+      if (!hostedRuntime) {
+        writeStoredAccountIdentity('black', accountSessions.black.account, {
+          sessionToken: accountSessions.black.sessionToken,
+          expiresAt: accountSessions.black.expiresAt ?? null,
+        });
+      }
     }
-  }, []);
+  }, [hostedRuntime, syncPrimaryAccountIdentity]);
+
+  const buildGatewayBootstrapRequest = React.useCallback((matchId?: string | null) => ({
+    matchId: matchId ?? undefined,
+    white: readStoredGuestIdentity('white'),
+    black: hostedRuntime ? undefined : readStoredGuestIdentity('black'),
+    whiteAccount: readStoredAccountIdentity('white'),
+    blackAccount: hostedRuntime ? undefined : readStoredAccountIdentity('black'),
+  }), [hostedRuntime]);
 
   const applyGatewayMatchClaims = React.useCallback((matchId: string | null | undefined, matchClaims?: {
     white?: MatchSeatClaim;
@@ -475,38 +876,41 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     }
 
     const storedRoomMeta = readStoredRoomMeta(matchId);
+    const whiteClaim = [matchClaims.white, matchClaims.black].find(claim => claim?.seatColor === 'white');
+    const blackClaim = [matchClaims.white, matchClaims.black].find(claim => claim?.seatColor === 'black');
+    const ownedClaim = whiteClaim ?? blackClaim ?? null;
     const isCurrentMatch = authoritativeMatchIdRef.current === matchId;
     const currentBootstrapClaims = gatewayBootstrapClaimsRef.current.matchId === matchId
       ? gatewayBootstrapClaimsRef.current
       : null;
 
     const nextWhiteSecret =
-      matchClaims.white?.playerSecret ??
+      whiteClaim?.playerSecret ??
       storedRoomMeta?.whitePlayerSecret ??
       currentBootstrapClaims?.whiteSecret ??
       (isCurrentMatch ? authoritativeSeatSecretsRef.current.white : null);
     const nextBlackSecret =
-      matchClaims.black?.playerSecret ??
+      blackClaim?.playerSecret ??
       storedRoomMeta?.blackPlayerSecret ??
       currentBootstrapClaims?.blackSecret ??
       (isCurrentMatch ? authoritativeSeatSecretsRef.current.black : null);
     const nextWhiteToken =
-      matchClaims.white?.claimToken ??
+      whiteClaim?.claimToken ??
       storedRoomMeta?.whiteClaimToken ??
       currentBootstrapClaims?.whiteToken ??
       (isCurrentMatch ? authoritativeClaimTokensRef.current.white : null);
     const nextBlackToken =
-      matchClaims.black?.claimToken ??
+      blackClaim?.claimToken ??
       storedRoomMeta?.blackClaimToken ??
       currentBootstrapClaims?.blackToken ??
       (isCurrentMatch ? authoritativeClaimTokensRef.current.black : null);
     const nextWhiteExpiresAt =
-      matchClaims.white?.expiresAt ??
+      whiteClaim?.expiresAt ??
       storedRoomMeta?.whiteClaimExpiresAt ??
       currentBootstrapClaims?.whiteExpiresAt ??
       (isCurrentMatch ? authoritativeClaimExpiresAtRef.current.white : null);
     const nextBlackExpiresAt =
-      matchClaims.black?.expiresAt ??
+      blackClaim?.expiresAt ??
       storedRoomMeta?.blackClaimExpiresAt ??
       currentBootstrapClaims?.blackExpiresAt ??
       (isCurrentMatch ? authoritativeClaimExpiresAtRef.current.black : null);
@@ -532,17 +936,37 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       whiteExpiresAt: nextWhiteExpiresAt ?? null,
       blackExpiresAt: nextBlackExpiresAt ?? null,
     };
+    if (ownedClaim?.seatColor) {
+      setViewerSeat(ownedClaim.seatColor);
+    }
 
-    writeStoredRoomMeta(matchId, {
+    const nextRoomMeta: StoredRoomMeta = {
       ...storedRoomMeta,
-      whitePlayerSecret: nextWhiteSecret ?? storedRoomMeta?.whitePlayerSecret,
-      blackPlayerSecret: nextBlackSecret ?? storedRoomMeta?.blackPlayerSecret,
-      whiteClaimToken: nextWhiteToken ?? storedRoomMeta?.whiteClaimToken,
-      blackClaimToken: nextBlackToken ?? storedRoomMeta?.blackClaimToken,
-      whiteClaimExpiresAt: nextWhiteExpiresAt ?? storedRoomMeta?.whiteClaimExpiresAt,
-      blackClaimExpiresAt: nextBlackExpiresAt ?? storedRoomMeta?.blackClaimExpiresAt,
-    });
-  }, []);
+      viewerSeat: ownedClaim?.seatColor ?? storedRoomMeta?.viewerSeat ?? null,
+    };
+
+    if (!hostedRuntime || (ownedClaim?.seatColor ?? storedRoomMeta?.viewerSeat) === 'white') {
+      nextRoomMeta.whitePlayerSecret = nextWhiteSecret ?? storedRoomMeta?.whitePlayerSecret;
+      nextRoomMeta.whiteClaimToken = nextWhiteToken ?? storedRoomMeta?.whiteClaimToken;
+      nextRoomMeta.whiteClaimExpiresAt = nextWhiteExpiresAt ?? storedRoomMeta?.whiteClaimExpiresAt;
+    } else {
+      delete nextRoomMeta.whitePlayerSecret;
+      delete nextRoomMeta.whiteClaimToken;
+      delete nextRoomMeta.whiteClaimExpiresAt;
+    }
+
+    if (!hostedRuntime || (ownedClaim?.seatColor ?? storedRoomMeta?.viewerSeat) === 'black') {
+      nextRoomMeta.blackPlayerSecret = nextBlackSecret ?? storedRoomMeta?.blackPlayerSecret;
+      nextRoomMeta.blackClaimToken = nextBlackToken ?? storedRoomMeta?.blackClaimToken;
+      nextRoomMeta.blackClaimExpiresAt = nextBlackExpiresAt ?? storedRoomMeta?.blackClaimExpiresAt;
+    } else {
+      delete nextRoomMeta.blackPlayerSecret;
+      delete nextRoomMeta.blackClaimToken;
+      delete nextRoomMeta.blackClaimExpiresAt;
+    }
+
+    writeStoredRoomMeta(matchId, nextRoomMeta);
+  }, [hostedRuntime]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -550,31 +974,264 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     const nextHosted = hostname !== 'localhost' && hostname !== '127.0.0.1';
     setHostedRuntime(nextHosted);
     if (nextHosted) {
-      setActivePage(current => current === 'Play' ? 'Queue' : current);
+      setActivePage(current => {
+        if (current !== 'Play') {
+          return current;
+        }
+        const identity = readStoredAccountIdentity('white');
+        return identity.accountId && identity.sessionToken ? 'Queue' : 'Account';
+      });
     }
   }, []);
+
+  React.useEffect(() => {
+    if (!hostedRuntime) {
+      return;
+    }
+    clearStoredGuestIdentity('black');
+    clearStoredAccountIdentity('black');
+    guestSessionSecretsRef.current.black = null;
+    authoritativeSeatSecretsRef.current.black = null;
+    authoritativeClaimTokensRef.current.black = null;
+    authoritativeClaimExpiresAtRef.current.black = null;
+    setBlackProfile(null);
+  }, [hostedRuntime]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let cancelled = false;
+
+    const emitRefresh = () => {
+      if (cancelled || document.visibilityState === 'hidden') {
+        return;
+      }
+      pulseSocialLive();
+    };
+
+    const handleWake = () => {
+      if (document.visibilityState === 'visible') {
+        emitRefresh();
+      }
+    };
+
+    emitRefresh();
+    const intervalId = window.setInterval(() => {
+      emitRefresh();
+    }, activePage === 'Friends' || activePage === 'Inbox' ? 15_000 : 45_000);
+
+    window.addEventListener('focus', handleWake);
+    document.addEventListener('visibilitychange', handleWake);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleWake);
+      document.removeEventListener('visibilitychange', handleWake);
+    };
+  }, [activePage, pulseSocialLive]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!primaryAccountIdentity.accountId || !primaryAccountIdentity.sessionToken) {
+      return;
+    }
+
+    return connectAccountNotificationStream({
+      accountId: primaryAccountIdentity.accountId,
+      sessionToken: primaryAccountIdentity.sessionToken,
+      onEvent: () => {
+        pulseSocialLive();
+      },
+    });
+  }, [primaryAccountIdentity.accountId, primaryAccountIdentity.sessionToken, pulseSocialLive]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let cancelled = false;
+    let heartbeatInFlight = false;
+
+    const sendPresenceHeartbeat = async () => {
+      if (cancelled || heartbeatInFlight || document.visibilityState === 'hidden') {
+        return;
+      }
+      const identity = readStoredAccountIdentity('white');
+      if (!identity.accountId || !identity.sessionToken) {
+        return;
+      }
+
+      heartbeatInFlight = true;
+      try {
+        const session = await touchAccountPresence({
+          accountId: identity.accountId,
+          sessionToken: identity.sessionToken,
+        });
+        if (cancelled) {
+          return;
+        }
+        writeStoredAccountIdentity('white', session.account, {
+          sessionToken: session.sessionToken,
+          expiresAt: session.expiresAt,
+        });
+        syncPrimaryAccountIdentity();
+      } catch (err) {
+        if (isAccountRestrictionError(err)) {
+          clearPrimaryAccountRestriction(formatAccountRestrictionNotice(err.restriction));
+        }
+      } finally {
+        heartbeatInFlight = false;
+      }
+    };
+
+    const handleWake = () => {
+      void sendPresenceHeartbeat();
+    };
+
+    void sendPresenceHeartbeat();
+    const intervalId = window.setInterval(() => {
+      void sendPresenceHeartbeat();
+    }, 45_000);
+    window.addEventListener('focus', handleWake);
+    document.addEventListener('visibilitychange', handleWake);
+
+    return () => {
+      cancelled = true;
+      heartbeatInFlight = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleWake);
+      document.removeEventListener('visibilitychange', handleWake);
+    };
+  }, [clearPrimaryAccountRestriction, syncPrimaryAccountIdentity]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let cancelled = false;
+
+    const refreshSocialSignals = async () => {
+      if (cancelled || document.visibilityState === 'hidden') {
+        return;
+      }
+      const identity = readStoredAccountIdentity('white');
+      if (!identity.accountId || !identity.sessionToken) {
+        setFriendsAttentionCount(0);
+        setInboxUnreadCount(0);
+        setSocialAlert(null);
+        return;
+      }
+
+      try {
+        const [notificationOverview, friendOverview, challengeOverview]: [
+          Awaited<ReturnType<typeof fetchAccountNotificationOverview>>,
+          FriendOverview,
+          DirectChallengeOverview,
+        ] = await Promise.all([
+          fetchAccountNotificationOverview({
+            accountId: identity.accountId,
+            sessionToken: identity.sessionToken,
+            limit: 12,
+          }),
+          fetchFriendOverview({
+            accountId: identity.accountId,
+            sessionToken: identity.sessionToken,
+          }),
+          fetchDirectChallengeOverview({
+            accountId: identity.accountId,
+            sessionToken: identity.sessionToken,
+          }),
+        ]);
+        if (!cancelled) {
+          setInboxUnreadCount(notificationOverview.unreadCount);
+          setFriendsAttentionCount(friendOverview.incoming.length + challengeOverview.incoming.length);
+          const nextAlert = notificationOverview.notifications
+            .filter((notification) => !notification.readAt)
+            .map(buildSocialAlert)
+            .find((candidate) => {
+              if (!candidate) {
+                return false;
+              }
+              if (dismissedSocialAlertIdsRef.current.has(candidate.id)) {
+                return false;
+              }
+              if (candidate.action === 'match' && candidate.matchId && candidate.matchId === authoritativeMatchIdRef.current) {
+                return false;
+              }
+              return true;
+            }) ?? null;
+          setSocialAlert(nextAlert);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setFriendsAttentionCount(0);
+          setInboxUnreadCount(0);
+          setSocialAlert(null);
+          if (isAccountRestrictionError(err)) {
+            clearPrimaryAccountRestriction(formatAccountRestrictionNotice(err.restriction));
+          }
+        }
+      }
+    };
+
+    void refreshSocialSignals();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clearPrimaryAccountRestriction, socialLiveToken]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const hostname = window.location.hostname.toLowerCase();
     const nextHosted = hostname !== 'localhost' && hostname !== '127.0.0.1';
-    const requestedMatchId = new URLSearchParams(window.location.search).get('match');
+    const query = new URLSearchParams(window.location.search);
+    const requestedMatchId = query.get('match');
+    const requestedReplayMatchId = query.get('replay');
+    const requestedGuestId = query.get('guest');
+    const requestedProfileHandle = query.get('profile');
+    const requestedAuthAction = query.get('auth');
+    const requestedAuthToken = query.get('token');
+    const requestedAuthLink =
+      (requestedAuthAction === 'verify-email' || requestedAuthAction === 'reset-password') &&
+      (requestedAuthToken?.trim() ?? '') !== '';
+    setAccountActionQueryDetected(requestedAuthLink);
     requestedMatchIdRef.current = requestedMatchId ?? (nextHosted ? null : readStoredActiveMatchId());
     if (nextHosted && !requestedMatchId) {
       writeStoredActiveMatchId(null);
     }
+    if (requestedAuthLink) {
+      setActivePage('Account');
+    } else if (!requestedMatchId && ((requestedReplayMatchId?.trim() ?? '') || (requestedGuestId?.trim() ?? ''))) {
+      setHistoryFocusMatchId(requestedReplayMatchId?.trim() ? requestedReplayMatchId.trim() : null);
+      setHistoryFocusGuestId(requestedGuestId?.trim() ? requestedGuestId.trim() : null);
+      setActivePage('History');
+    } else if (!requestedMatchId && requestedProfileHandle?.trim()) {
+      setProfileFocusHandle(requestedProfileHandle.trim().toLowerCase());
+      setActivePage('Profiles');
+    } else if (!requestedMatchId && nextHosted) {
+      const identity = readStoredAccountIdentity('white');
+      setActivePage(identity.accountId && identity.sessionToken ? 'Queue' : 'Account');
+    }
+    setProfileQueryReady(true);
+    setHistoryQueryReady(true);
+    setMatchQueryReady(true);
 
     let cancelled = false;
 
     void fetchGatewayBootstrap({
       matchId: requestedMatchIdRef.current ?? undefined,
       white: readStoredGuestIdentity('white'),
-      black: readStoredGuestIdentity('black'),
+      black: nextHosted ? undefined : readStoredGuestIdentity('black'),
       whiteAccount: readStoredAccountIdentity('white'),
-      blackAccount: readStoredAccountIdentity('black'),
+      blackAccount: nextHosted ? undefined : readStoredAccountIdentity('black'),
     })
       .then(bootstrap => {
         if (cancelled) return;
+        const bootstrapRestriction = parseAccountRestrictionMessage(bootstrap.accountErrors?.white);
+        if (nextHosted && bootstrapRestriction) {
+          clearPrimaryAccountRestriction(formatAccountRestrictionNotice(bootstrapRestriction));
+          return;
+        }
         applyGatewayGuestSessions(bootstrap.guestSessions);
         applyGatewayMatchClaims(bootstrap.requestedMatchId ?? requestedMatchIdRef.current, bootstrap.matchClaims);
         applyGatewayAccountSessions(bootstrap.accountSessions);
@@ -591,7 +1248,24 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     return () => {
       cancelled = true;
     };
-  }, [applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions]);
+  }, [applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, clearPrimaryAccountRestriction]);
+
+  React.useEffect(() => {
+    if (!profileQueryReady) {
+      return;
+    }
+    syncRequestedProfileQuery(activePage === 'Profiles' ? profileFocusHandle : null);
+  }, [activePage, profileFocusHandle, profileQueryReady]);
+
+  React.useEffect(() => {
+    if (!historyQueryReady) {
+      return;
+    }
+    syncRequestedHistoryQuery(
+      activePage === 'History' ? historyFocusMatchId : null,
+      activePage === 'History' ? historyFocusGuestId : null,
+    );
+  }, [activePage, historyFocusGuestId, historyFocusMatchId, historyQueryReady]);
 
   React.useEffect(() => {
     whiteProfileRef.current = whiteProfile;
@@ -600,6 +1274,10 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   React.useEffect(() => {
     blackProfileRef.current = blackProfile;
   }, [blackProfile]);
+
+  React.useEffect(() => {
+    viewerSeatRef.current = viewerSeat;
+  }, [viewerSeat]);
 
   React.useEffect(() => {
     if (!guestProfilesReady) return;
@@ -675,10 +1353,16 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           applyFinalizedGuestProfiles(result);
           return;
         } catch (error) {
+          if (hostedRuntime) {
+            throw error;
+          }
           if (!roomMeta.whiteGuestId || !roomMeta.blackGuestId) {
             throw error;
           }
         }
+      }
+      if (hostedRuntime) {
+        throw new Error('Rated result could not be finalized because the hosted match is missing linked account seat data. Reload the match before leaving this page.');
       }
       if (roomMeta.whiteGuestId && roomMeta.blackGuestId) {
         const result = await finalizeGuestMatch({
@@ -693,16 +1377,85 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       throw new Error('Missing rated room seat metadata');
     };
 
-    void finalizeRatedResult().catch(() => {
+    void finalizeRatedResult().catch((error) => {
+      if (hostedRuntime) {
+        setMatchDestinationNotice(error instanceof Error ? error.message : 'Failed to finalize rated result.');
+      }
       finalizedResultRef.current = null;
     });
-  }, [over, winner]);
+  }, [over, winner, hostedRuntime]);
   const blackMovedRef  = React.useRef(false);
 
   const [reviewBoard, setReviewBoard] = React.useState<Board | null>(null);
   const [engineOn,    setEngineOn]    = React.useState(false);
   const [authoritativeLive, setAuthoritativeLive] = React.useState(false);
   const [authoritativeMatchId, setAuthoritativeMatchId] = React.useState<string | null>(null);
+  const [authoritativeStatus, setAuthoritativeStatus] = React.useState<'waiting' | 'active' | 'finished' | null>(null);
+  const [authoritativeWhiteConnected, setAuthoritativeWhiteConnected] = React.useState(false);
+  const [authoritativeBlackConnected, setAuthoritativeBlackConnected] = React.useState(false);
+  const [authoritativeDisconnectGraceFor, setAuthoritativeDisconnectGraceFor] = React.useState<PieceColor | null>(null);
+  const [authoritativeDisconnectGraceDeadline, setAuthoritativeDisconnectGraceDeadline] = React.useState<string | null>(null);
+  const createAuthoritativeRematchRoom = React.useCallback(async () => {
+    if (!authoritativeMatchId) {
+      return;
+    }
+    const roomMeta = readStoredRoomMeta(authoritativeMatchId);
+    if (roomMeta?.queue !== 'direct') {
+      return;
+    }
+    const guestIdentity = readStoredGuestIdentity('white');
+    if (!guestIdentity.guestId) {
+      setMatchDestinationNotice('Hosted player session is still loading, so rematch room creation is not ready yet.');
+      return;
+    }
+
+    setAuthoritativeRematchBusy(true);
+    setMatchDestinationNotice('');
+    try {
+      const result = await rematchPrivateMatch({
+        matchId: authoritativeMatchId,
+        identity: {
+          guestId: guestIdentity.guestId,
+          sessionSecret: guestIdentity.sessionSecret,
+          sessionToken: guestIdentity.sessionToken,
+          accountId: primaryAccountIdentity.accountId,
+          accountSessionToken: primaryAccountIdentity.sessionToken,
+        },
+        clockSeconds: roomMeta?.clockSeconds ?? 600,
+      });
+      writeStoredRoomMeta(result.matchId, {
+        queue: 'direct',
+        modeId: result.snapshot.match.modeId ?? roomMeta?.modeId,
+        clockSeconds: roomMeta?.clockSeconds ?? 600,
+        viewerSeat: result.seatColor,
+        whiteGuestId: result.snapshot.match.whiteGuestId,
+        blackGuestId: result.snapshot.match.blackGuestId,
+        whiteAccountId: result.snapshot.match.whiteAccountId,
+        blackAccountId: result.snapshot.match.blackAccountId,
+        whiteName: result.snapshot.match.whiteName,
+        blackName: result.snapshot.match.blackName,
+        whitePlayerSecret: result.seatColor === 'white' ? result.claim?.playerSecret : undefined,
+        blackPlayerSecret: result.seatColor === 'black' ? result.claim?.playerSecret : undefined,
+        whiteClaimToken: result.seatColor === 'white' ? result.claim?.claimToken : undefined,
+        blackClaimToken: result.seatColor === 'black' ? result.claim?.claimToken : undefined,
+        whiteClaimExpiresAt: result.seatColor === 'white' ? result.claim?.expiresAt : undefined,
+        blackClaimExpiresAt: result.seatColor === 'black' ? result.claim?.expiresAt : undefined,
+      });
+      writeStoredActiveMatchId(result.matchId);
+      setMatchDestinationNotice('Rematch room created. Opening it now...');
+      openLiveMatch(result.matchId);
+    } catch (err) {
+      setMatchDestinationNotice(err instanceof Error ? err.message : 'Failed to create private rematch room.');
+    } finally {
+      setAuthoritativeRematchBusy(false);
+    }
+  }, [authoritativeMatchId, openLiveMatch, primaryAccountIdentity.accountId, primaryAccountIdentity.sessionToken]);
+  React.useEffect(() => {
+    if (!matchQueryReady) {
+      return;
+    }
+    syncRequestedMatchQuery(activePage === 'Play' ? authoritativeMatchId : null);
+  }, [activePage, authoritativeMatchId, matchQueryReady]);
   const [cheaterTurnsLeft, setCheaterTurnsLeft] = React.useState(0);
   const [cheaterColor,     setCheaterColor]     = React.useState<PieceColor | null>(null);
   const cheaterColorRef = React.useRef<PieceColor | null>(null);
@@ -854,6 +1607,17 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       white: match.whiteGuestId ?? null,
       black: match.blackGuestId ?? null,
     };
+    const hostedGuestId = hostedRuntime
+      ? (whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId ?? null)
+      : null;
+    const derivedViewerSeat: PieceColor | null = hostedRuntime
+      ? (
+          hostedGuestId && match.whiteGuestId === hostedGuestId ? 'white'
+          : hostedGuestId && match.blackGuestId === hostedGuestId ? 'black'
+          : storedRoomMeta?.viewerSeat ?? null
+        )
+      : null;
+    setViewerSeat(derivedViewerSeat);
     authoritativeSeatSecretsRef.current = {
       white: storedRoomMeta?.whitePlayerSecret ?? authoritativeSeatSecretsRef.current.white,
       black: storedRoomMeta?.blackPlayerSecret ?? authoritativeSeatSecretsRef.current.black,
@@ -866,11 +1630,15 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       white: storedRoomMeta?.whiteClaimExpiresAt ?? authoritativeClaimExpiresAtRef.current.white,
       black: storedRoomMeta?.blackClaimExpiresAt ?? authoritativeClaimExpiresAtRef.current.black,
     };
-    writeStoredRoomMeta(match.matchId, {
+    const nextRoomMeta: StoredRoomMeta = {
       ...storedRoomMeta,
       queue: match.queue ?? storedRoomMeta?.queue,
+      modeId: match.modeId ?? storedRoomMeta?.modeId ?? DEFAULT_MATCH_MODE_ID,
+      viewerSeat: derivedViewerSeat ?? storedRoomMeta?.viewerSeat ?? null,
       whiteGuestId: match.whiteGuestId ?? storedRoomMeta?.whiteGuestId,
       blackGuestId: match.blackGuestId ?? storedRoomMeta?.blackGuestId,
+      whiteAccountId: match.whiteAccountId ?? storedRoomMeta?.whiteAccountId,
+      blackAccountId: match.blackAccountId ?? storedRoomMeta?.blackAccountId,
       whiteName: match.whiteName ?? storedRoomMeta?.whiteName ?? whiteProfileRef.current?.displayName,
       blackName: match.blackName ?? storedRoomMeta?.blackName ?? blackProfileRef.current?.displayName,
       whitePlayerSecret: authoritativeSeatSecretsRef.current.white ?? storedRoomMeta?.whitePlayerSecret,
@@ -879,9 +1647,31 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       blackClaimToken: authoritativeClaimTokensRef.current.black ?? storedRoomMeta?.blackClaimToken,
       whiteClaimExpiresAt: authoritativeClaimExpiresAtRef.current.white ?? storedRoomMeta?.whiteClaimExpiresAt,
       blackClaimExpiresAt: authoritativeClaimExpiresAtRef.current.black ?? storedRoomMeta?.blackClaimExpiresAt,
+    };
+    if (hostedRuntime && derivedViewerSeat === 'white') {
+      delete nextRoomMeta.blackPlayerSecret;
+      delete nextRoomMeta.blackClaimToken;
+      delete nextRoomMeta.blackClaimExpiresAt;
+    } else if (hostedRuntime && derivedViewerSeat === 'black') {
+      delete nextRoomMeta.whitePlayerSecret;
+      delete nextRoomMeta.whiteClaimToken;
+      delete nextRoomMeta.whiteClaimExpiresAt;
+    }
+    writeStoredRoomMeta(match.matchId, nextRoomMeta);
+    setMatchSeatMeta({
+      whiteGuestId: match.whiteGuestId ?? nextRoomMeta.whiteGuestId,
+      blackGuestId: match.blackGuestId ?? nextRoomMeta.blackGuestId,
+      whiteName: match.whiteName ?? nextRoomMeta.whiteName,
+      blackName: match.blackName ?? nextRoomMeta.blackName,
     });
     setAuthoritativeMatchId(match.matchId);
     setAuthoritativeLive(true);
+    setAuthoritativeStatus(match.status);
+    setAuthoritativeFinishReason((match.finishReason as MatchFinishReason | undefined) ?? null);
+    setAuthoritativeWhiteConnected(Boolean(match.whiteConnected));
+    setAuthoritativeBlackConnected(Boolean(match.blackConnected));
+    setAuthoritativeDisconnectGraceFor((match.disconnectGraceFor as PieceColor | undefined) ?? null);
+    setAuthoritativeDisconnectGraceDeadline(match.disconnectGraceDeadline ?? null);
     setWhiteHand(match.whiteHand as GameCard[]);
     setBlackHand(match.blackHand as GameCard[]);
     const latestRoundDrawEvent = [...(snapshot.events ?? [])].reverse().find(event => {
@@ -984,6 +1774,12 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         authoritativeMatchIdRef.current = null;
         setAuthoritativeMatchId(null);
         setAuthoritativeLive(false);
+        setAuthoritativeStatus(null);
+        setAuthoritativeFinishReason(null);
+        setAuthoritativeWhiteConnected(false);
+        setAuthoritativeBlackConnected(false);
+        setAuthoritativeDisconnectGraceFor(null);
+        setAuthoritativeDisconnectGraceDeadline(null);
         writeStoredActiveMatchId(null);
         return;
       }
@@ -998,8 +1794,59 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       if (restoredMatchId) {
         try {
           snapshot = await fetchMatch(restoredMatchId);
+          if (hostedRuntime && explicitMatchId && snapshot.match.status === 'waiting') {
+            const hostedIdentity = readStoredGuestIdentity('white');
+            const hostedAccountIdentity = readStoredAccountIdentity('white');
+            const hostedGuestId = whiteProfileRef.current?.guestId ?? hostedIdentity.guestId ?? null;
+            const alreadyOwnsSeat = Boolean(
+              hostedGuestId && (
+                snapshot.match.whiteGuestId === hostedGuestId ||
+                snapshot.match.blackGuestId === hostedGuestId
+              )
+            );
+            const openSeat: PieceColor | null =
+              snapshot.match.whiteGuestId ? (snapshot.match.blackGuestId ? null : 'black') : 'white';
+            if (!alreadyOwnsSeat && openSeat && hostedIdentity.guestId) {
+              const joined = await joinPrivateMatch({
+                matchId: restoredMatchId,
+                identity: {
+                  guestId: hostedIdentity.guestId,
+                  sessionSecret: hostedIdentity.sessionSecret,
+                  sessionToken: hostedIdentity.sessionToken,
+                  accountId: hostedAccountIdentity.accountId,
+                  accountSessionToken: hostedAccountIdentity.sessionToken,
+                },
+                preferredSeat: openSeat,
+              });
+              applyGatewayMatchClaims(restoredMatchId, joined.claim
+                ? {
+                    white: joined.claim.seatColor === 'white' ? joined.claim : undefined,
+                    black: joined.claim.seatColor === 'black' ? joined.claim : undefined,
+                  }
+                : null);
+              snapshot = joined.snapshot;
+            }
+          }
         } catch (err) {
           if ((explicitMatchId || roomMeta) && err instanceof Error && /404|not found/i.test(err.message)) {
+            if (hostedRuntime) {
+              writeStoredActiveMatchId(null);
+              clearRequestedMatchQuery();
+              requestedMatchIdRef.current = null;
+              authoritativeMatchIdRef.current = null;
+              setAuthoritativeMatchId(null);
+              setAuthoritativeLive(false);
+              setAuthoritativeStatus(null);
+              setAuthoritativeFinishReason(null);
+              setAuthoritativeWhiteConnected(false);
+              setAuthoritativeBlackConnected(false);
+              setAuthoritativeDisconnectGraceFor(null);
+              setAuthoritativeDisconnectGraceDeadline(null);
+              setViewerSeat(null);
+              setMatchSeatMeta(null);
+              setActivePage('Queue');
+              return;
+            }
             roomMeta = buildStoredRoomMeta(
               roomMeta,
               whiteProfileRef.current,
@@ -1017,6 +1864,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
               clockSeconds: CLOCK_START,
               starterHandMode: 'starter_three',
               queue: roomMeta.queue,
+              modeId: roomMeta.modeId,
               whiteGuestId: roomMeta.whiteGuestId,
               blackGuestId: roomMeta.blackGuestId,
               whiteName: roomMeta.whiteName,
@@ -1026,6 +1874,21 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             });
           } else if (!explicitMatchId && err instanceof Error && /404|not found/i.test(err.message)) {
             writeStoredActiveMatchId(null);
+            if (hostedRuntime) {
+              authoritativeMatchIdRef.current = null;
+              setAuthoritativeMatchId(null);
+              setAuthoritativeLive(false);
+              setAuthoritativeStatus(null);
+              setAuthoritativeFinishReason(null);
+              setAuthoritativeWhiteConnected(false);
+              setAuthoritativeBlackConnected(false);
+              setAuthoritativeDisconnectGraceFor(null);
+              setAuthoritativeDisconnectGraceDeadline(null);
+              setViewerSeat(null);
+              setMatchSeatMeta(null);
+              setActivePage('Queue');
+              return;
+            }
             roomMeta = buildStoredRoomMeta(
               null,
               whiteProfileRef.current,
@@ -1042,6 +1905,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
               clockSeconds: CLOCK_START,
               starterHandMode: 'starter_three',
               queue: roomMeta.queue,
+              modeId: roomMeta.modeId,
               whiteGuestId: roomMeta.whiteGuestId,
               blackGuestId: roomMeta.blackGuestId,
               whiteAccountId: roomMeta.whiteAccountId,
@@ -1075,6 +1939,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           clockSeconds: CLOCK_START,
           starterHandMode: 'starter_three',
           queue: roomMeta.queue,
+          modeId: roomMeta.modeId,
           whiteGuestId: roomMeta.whiteGuestId,
           blackGuestId: roomMeta.blackGuestId,
           whiteAccountId: roomMeta.whiteAccountId,
@@ -1107,6 +1972,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           clockSeconds: CLOCK_START,
           starterHandMode: 'starter_three',
           queue: roomMeta.queue,
+          modeId: roomMeta.modeId,
           whiteGuestId: roomMeta.whiteGuestId,
           blackGuestId: roomMeta.blackGuestId,
           whiteAccountId: roomMeta.whiteAccountId,
@@ -1133,13 +1999,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         };
       }
       if (snapshot.match.matchId && (!nextSeatSecrets.white || !nextSeatSecrets.black)) {
-        const bootstrap = await fetchGatewayBootstrap({
-          matchId: snapshot.match.matchId,
-          white: readStoredGuestIdentity('white'),
-          black: readStoredGuestIdentity('black'),
-          whiteAccount: readStoredAccountIdentity('white'),
-          blackAccount: readStoredAccountIdentity('black'),
-        }).catch(() => null);
+        const bootstrap = await fetchGatewayBootstrap(buildGatewayBootstrapRequest(snapshot.match.matchId)).catch(() => null);
         if (authoritativeBootstrapRef.current !== bootstrapId) return;
         if (bootstrap) {
           applyGatewayGuestSessions(bootstrap.guestSessions);
@@ -1152,6 +2012,9 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         }
       }
       const resolveSessionSecretForGuest = (guestId?: string | null): string | null => {
+        if (hostedRuntime) {
+          return null;
+        }
         if (!guestId) return null;
         if (whiteProfileRef.current?.guestId === guestId) {
           return guestSessionSecretsRef.current.white;
@@ -1179,10 +2042,16 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       if (authoritativeBootstrapRef.current !== bootstrapId) return;
       const message = err instanceof Error ? err.message : 'Failed to create backend match';
       setAuthoritativeLive(false);
+      setAuthoritativeStatus(null);
+      setAuthoritativeFinishReason(null);
+      setAuthoritativeWhiteConnected(false);
+      setAuthoritativeBlackConnected(false);
+      setAuthoritativeDisconnectGraceFor(null);
+      setAuthoritativeDisconnectGraceDeadline(null);
       setCardMsg(`Backend sync failed: ${message}`);
       setTimeout(() => setCardMsg(''), 3000);
     }
-  }, [applyAuthoritativeSnapshot, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, hostedRuntime]);
+  }, [applyAuthoritativeSnapshot, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, hostedRuntime, buildGatewayBootstrapRequest]);
 
   const submitAuthoritativeIntent = React.useCallback(async (
     intent:
@@ -1194,6 +2063,11 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   ) => {
     const matchId = authoritativeMatchIdRef.current;
     if (!matchId) return false;
+    if (hostedRuntime && !viewerSeatRef.current) {
+      setCardMsg('Spectators cannot control this hosted match.');
+      setTimeout(() => setCardMsg(''), 2500);
+      return false;
+    }
 
     try {
       const snapshot = await applyIntent(matchId, intent);
@@ -1205,7 +2079,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       setTimeout(() => setCardMsg(''), 2500);
       return false;
     }
-  }, [applyAuthoritativeSnapshot]);
+  }, [applyAuthoritativeSnapshot, hostedRuntime]);
   const authoritativePlayerIdForColor = React.useCallback((color: PieceColor): string => {
     const seatId = authoritativeSeatIdsRef.current[color];
     if (seatId) {
@@ -1252,14 +2126,15 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     return token;
   }, []);
   const authoritativeActorForColor = React.useCallback((color: PieceColor): { playerId: string; playerSecret?: string; playerClaimToken?: string } => {
-    const playerId = authoritativePlayerIdForColor(color);
-    const playerSecret = authoritativePlayerSecretForColor(color);
-    const playerClaimToken = authoritativePlayerClaimTokenForColor(color);
+    const effectiveColor = hostedRuntime ? (viewerSeatRef.current ?? color) : color;
+    const playerId = authoritativePlayerIdForColor(effectiveColor);
+    const playerSecret = authoritativePlayerSecretForColor(effectiveColor);
+    const playerClaimToken = authoritativePlayerClaimTokenForColor(effectiveColor);
     if (playerClaimToken) {
       return { playerId, playerClaimToken };
     }
     return playerSecret ? { playerId, playerSecret } : { playerId };
-  }, [authoritativePlayerIdForColor, authoritativePlayerSecretForColor, authoritativePlayerClaimTokenForColor]);
+  }, [authoritativePlayerIdForColor, authoritativePlayerSecretForColor, authoritativePlayerClaimTokenForColor, hostedRuntime]);
 
   // ── NEW: Bomb explosion logic ──────────────────────────────────────────────
   // Called at start of each turn.
@@ -1456,6 +2331,12 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   React.useEffect(() => {
     if (!authoritativeMatchId) {
       setAuthoritativeLive(false);
+      setAuthoritativeWhiteConnected(false);
+      setAuthoritativeBlackConnected(false);
+      setAuthoritativeDisconnectGraceFor(null);
+      setAuthoritativeDisconnectGraceDeadline(null);
+      setViewerSeat(null);
+      setMatchSeatMeta(null);
       return;
     }
 
@@ -1485,6 +2366,48 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       disconnect();
     };
   }, [authoritativeMatchId, applyAuthoritativeSnapshot, stopAbortCountdown]);
+
+  React.useEffect(() => {
+    if (!hostedRuntime || !authoritativeMatchId || !viewerSeat || over) {
+      return;
+    }
+
+    let cancelled = false;
+    const sendHeartbeat = async () => {
+      try {
+        await sendMatchPresenceHeartbeat(authoritativeMatchId, authoritativeActorForColor(viewerSeat));
+        if (!cancelled) {
+          setCardMsg(prev => prev === PRESENCE_RETRY_MESSAGE ? '' : prev);
+        }
+      } catch {
+        if (!cancelled) {
+          setCardMsg(prev => prev || PRESENCE_RETRY_MESSAGE);
+        }
+      }
+    };
+
+    void sendHeartbeat();
+    const interval = window.setInterval(() => {
+      void sendHeartbeat();
+    }, MATCH_PRESENCE_HEARTBEAT_INTERVAL_MS);
+    const handleFocus = () => {
+      void sendHeartbeat();
+    };
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        void sendHeartbeat();
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [authoritativeActorForColor, authoritativeMatchId, hostedRuntime, over, viewerSeat]);
 
   React.useEffect(() => {
     if (!authoritativeMatchId || over) {
@@ -1548,13 +2471,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
       refreshInFlight = true;
       try {
-        const bootstrap = await fetchGatewayBootstrap({
-          matchId: authoritativeMatchId,
-          white: storedWhite,
-          black: storedBlack,
-          whiteAccount: readStoredAccountIdentity('white'),
-          blackAccount: readStoredAccountIdentity('black'),
-        });
+        const bootstrap = await fetchGatewayBootstrap(buildGatewayBootstrapRequest(authoritativeMatchId));
         if (cancelled || authoritativeMatchIdRef.current !== authoritativeMatchId) {
           return;
         }
@@ -1577,7 +2494,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [authoritativeMatchId, over, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions]);
+  }, [authoritativeMatchId, over, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, buildGatewayBootstrapRequest]);
 
   const playTabLabel = authoritativeMatchId
     ? 'Match'
@@ -1585,12 +2502,172 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       ? 'Board'
       : 'Play';
   const boardStatusLabel = authoritativeMatchId
-    ? (authoritativeLive ? 'Online Match Live' : 'Match Sync Reconnecting')
+    ? authoritativeStatus === 'waiting'
+      ? 'Private Match Waiting Room'
+      : hostedRuntime && !viewerSeat
+        ? (authoritativeLive ? 'Spectating Live Match' : 'Spectator Sync Reconnecting')
+        : (authoritativeLive ? 'Online Match Live' : 'Match Sync Reconnecting')
     : hostedRuntime
       ? 'Hosted Solo Board'
       : 'Local Play Sandbox';
+  const hasPrimaryAccountSession = Boolean((primaryAccountIdentity.accountId ?? '').trim() && (primaryAccountIdentity.sessionToken ?? '').trim());
+  const showSocialNav = hasPrimaryAccountSession || activePage === 'Friends' || activePage === 'Inbox';
+  const showAdminNav = hasPrimaryAccountSession;
+  const navItems: Array<{ key: string; label: string; badge?: number | null }> = [
+    { key: 'Play', label: playTabLabel },
+    { key: 'Modes', label: 'Modes' },
+    { key: 'Queue', label: 'Queue' },
+    { key: 'Lobbies', label: 'Lobbies' },
+    ...(showSocialNav ? [
+      { key: 'Friends', label: 'Friends', badge: friendsAttentionCount > 0 ? friendsAttentionCount : null },
+      { key: 'Inbox', label: 'Inbox', badge: inboxUnreadCount > 0 ? inboxUnreadCount : null },
+    ] : []),
+    { key: 'Profiles', label: 'Profiles' },
+    { key: 'Watch', label: 'Watch' },
+    { key: 'History', label: 'History' },
+    { key: 'Cards', label: 'Cards' },
+    { key: 'Rankings', label: 'Rankings' },
+    { key: 'Community', label: 'Community' },
+    ...(showAdminNav || activePage === 'Admin' ? [{ key: 'Admin', label: 'Admin' }] : []),
+    { key: 'Status', label: 'Status' },
+    { key: 'Account', label: hasPrimaryAccountSession ? 'Account' : 'Sign In' },
+  ];
+  const controlledSeat = hostedRuntime ? viewerSeat : null;
+  const topSeat: PieceColor = controlledSeat === 'black' ? 'white' : 'black';
+  const bottomSeat: PieceColor = controlledSeat === 'black' ? 'black' : 'white';
+  const topHand = topSeat === 'white' ? whiteHand : blackHand;
+  const bottomHand = bottomSeat === 'white' ? whiteHand : blackHand;
+  const whiteSeatBadge = hostedRuntime
+    ? viewerSeat === 'white'
+      ? 'You'
+      : viewerSeat === 'black'
+        ? 'Opponent'
+        : 'Spectator'
+    : null;
+  const blackSeatBadge = hostedRuntime
+    ? viewerSeat === 'black'
+      ? 'You'
+      : viewerSeat === 'white'
+        ? 'Opponent'
+        : 'Spectator'
+    : null;
   const showHostedSoloBanner = hostedRuntime && !authoritativeMatchId;
   const showHostedReconnectWarning = hostedRuntime && Boolean(authoritativeMatchId) && !authoritativeLive;
+  const activeDisconnectGraceFor = authoritativeStatus === 'active' ? authoritativeDisconnectGraceFor : null;
+  const disconnectGraceDeadlineLabel = authoritativeDisconnectGraceDeadline
+    ? new Date(authoritativeDisconnectGraceDeadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : null;
+  const whitePresenceLabel = authoritativeMatchId ? (authoritativeWhiteConnected ? 'Online' : 'Disconnected') : null;
+  const blackPresenceLabel = authoritativeMatchId ? (authoritativeBlackConnected ? 'Online' : 'Disconnected') : null;
+  const activeFinishReason = over
+    ? authoritativeFinishReason
+      ?? (winner === 'aborted'
+        ? 'abort'
+        : winner === 'draw'
+          ? (hmc >= 100 ? 'fifty_move_rule' : stale ? 'stalemate' : insuf ? 'insufficient_material' : null)
+          : mate
+            ? 'checkmate'
+            : null)
+    : null;
+  const activeFinishReasonLabel = finishReasonLabel(activeFinishReason);
+  const displayedWhiteName = hostedRuntime && authoritativeMatchId
+    ? (matchSeatMeta?.whiteName ?? (viewerSeat === 'white' ? whiteProfile?.displayName : undefined) ?? 'White')
+    : (whiteProfile?.displayName ?? 'Player');
+  const displayedBlackName = hostedRuntime && authoritativeMatchId
+    ? (matchSeatMeta?.blackName ?? (viewerSeat === 'black' ? whiteProfile?.displayName : undefined) ?? 'Black')
+    : (blackProfile?.displayName ?? 'Opponent');
+  const disconnectGraceBanner = activeDisconnectGraceFor
+    ? viewerSeat === activeDisconnectGraceFor
+      ? `Your seat is in reconnect grace. Rejoin before ${disconnectGraceDeadlineLabel ?? 'the timer expires'} or the match will be forfeited.`
+      : `${activeDisconnectGraceFor === 'white' ? displayedWhiteName : displayedBlackName} disconnected. The match will forfeit if they do not return by ${disconnectGraceDeadlineLabel ?? 'the end of the grace window'}.`
+    : null;
+  const displayedWhiteRating = hostedRuntime && authoritativeMatchId
+    ? ((viewerSeat === 'white' ? whiteProfile?.rating : blackProfile?.rating) ?? 1200)
+    : (whiteProfile?.rating ?? 1200);
+  const displayedBlackRating = hostedRuntime && authoritativeMatchId
+    ? ((viewerSeat === 'black' ? whiteProfile?.rating : blackProfile?.rating) ?? 1200)
+    : (blackProfile?.rating ?? 1200);
+  const activeMatchRoomMeta = authoritativeMatchId ? readStoredRoomMeta(authoritativeMatchId) : null;
+  const activeMatchModeLabel = modeLabel(activeMatchRoomMeta?.modeId);
+  const activeMatchQueueLabel = queueLabel(activeMatchRoomMeta?.queue);
+  const canCreateDirectRematch = Boolean(authoritativeMatchId && activeMatchRoomMeta?.queue === 'direct');
+  const canQueueSameLane = Boolean(
+    authoritativeMatchId &&
+    hostedRuntime &&
+    (activeMatchRoomMeta?.queue === 'casual' || activeMatchRoomMeta?.queue === 'rated'),
+  );
+  const activeMatchRoleLabel = !authoritativeMatchId
+    ? null
+    : authoritativeStatus === 'waiting'
+      ? 'Reserved seat waiting for the second player'
+      : !hostedRuntime
+        ? 'Local operator view'
+        : viewerSeat === 'white'
+          ? 'Playing as White'
+          : viewerSeat === 'black'
+            ? 'Playing as Black'
+            : 'Spectating read-only';
+  const activeMatchRouteLabel = authoritativeStatus === 'finished' || over ? 'Replay page' : 'Archive detail';
+  const finishedPrimaryActionLabel = canCreateDirectRematch
+    ? (authoritativeRematchBusy ? 'Creating...' : '🔄 Rematch Room')
+    : canQueueSameLane
+      ? '↩ Play Same Lane'
+      : authoritativeMatchId
+        ? (hostedRuntime ? '↩ Queue' : '♟ New Game')
+        : '🔄 Rematch';
+  const finishedSecondaryActionLabel = hostedRuntime
+    ? '↩ Queue'
+    : '♟ New Game';
+  const activeLiveMatchUrl = authoritativeMatchId ? buildLiveMatchUrl(authoritativeMatchId) : null;
+  const activeReplayPageUrl = authoritativeMatchId ? buildReplayPageUrl(authoritativeMatchId) : null;
+  const topSeatBadge = topSeat === 'white' ? whiteSeatBadge : blackSeatBadge;
+  const bottomSeatBadge = bottomSeat === 'white' ? whiteSeatBadge : blackSeatBadge;
+  const topPlayerName = topSeat === 'white' ? displayedWhiteName : displayedBlackName;
+  const bottomPlayerName = bottomSeat === 'white' ? displayedWhiteName : displayedBlackName;
+  const topPlayerRating = topSeat === 'white' ? displayedWhiteRating : displayedBlackRating;
+  const bottomPlayerRating = bottomSeat === 'white' ? displayedWhiteRating : displayedBlackRating;
+  const topPlayerClock = topSeat === 'white' ? timeW : timeB;
+  const bottomPlayerClock = bottomSeat === 'white' ? timeW : timeB;
+  const topClockTicking = tickingState === topSeat && clockActive && !over;
+  const bottomClockTicking = tickingState === bottomSeat && clockActive && !over;
+  React.useEffect(() => {
+    setMatchDestinationNotice('');
+  }, [activePage, authoritativeMatchId, authoritativeStatus, viewerSeat]);
+  const actorSeatForHostedControls: PieceColor | null = hostedRuntime ? viewerSeat : turn;
+  const actorSeatPlainLabel = actorSeatForHostedControls
+    ? (actorSeatForHostedControls === 'white' ? 'White' : 'Black')
+    : 'Spectator';
+  const controlSender: PieceColor = actorSeatForHostedControls ?? turn;
+  const hostedActionLocked = hostedRuntime && !viewerSeat;
+  const canRespondToDrawOffer = !hostedRuntime || (!!viewerSeat && viewerSeat === turn);
+  const actorSeatLabel = actorSeatForHostedControls
+    ? (actorSeatForHostedControls === 'white' ? '⚪ White' : '⚫ Black')
+    : 'Spectator';
+  const hostedSpectator = hostedRuntime && !viewerSeat;
+  const visibleSocialAlert = socialAlert && !(socialAlert.action === 'friends' && (activePage === 'Friends' || activePage === 'Inbox'))
+    ? socialAlert
+    : null;
+
+  const dismissSocialAlert = React.useCallback(() => {
+    if (!socialAlert) {
+      return;
+    }
+    dismissedSocialAlertIdsRef.current.add(socialAlert.id);
+    setSocialAlert(null);
+  }, [socialAlert]);
+
+  const handleSocialAlertAction = React.useCallback(() => {
+    if (!socialAlert) {
+      return;
+    }
+    dismissedSocialAlertIdsRef.current.add(socialAlert.id);
+    if (socialAlert.action === 'match' && socialAlert.matchId && typeof window !== 'undefined') {
+      openLiveMatch(socialAlert.matchId);
+      return;
+    }
+    setActivePage('Friends');
+    setSocialAlert(null);
+  }, [openLiveMatch, socialAlert]);
 
   // Card draw logic
   React.useEffect(() => {
@@ -1838,10 +2915,14 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     const piece = boardRef.current[fr]?.[fc];
     const target = boardRef.current[tr]?.[tc];
     if (!piece) return false;
+    if (hostedRuntime) {
+      if (viewerSeatRef.current !== piece.color) return false;
+      if (turnRef.current !== piece.color) return false;
+    }
     if (piece.fusedWith || piece.invisible || piece.shielded || piece.frozen) return false;
     if (target?.fusedWith || target?.shielded || target?.invisible) return false;
     return true;
-    }, [cardPending, selectedCard, promo, promoPicker, cardPromo, jokerPicker]);
+    }, [cardPending, selectedCard, promo, promoPicker, cardPromo, jokerPicker, hostedRuntime]);
 
   // ── doMove ─────────────────────────────────────────────────────────────────
   const doMove = React.useCallback((fr: number, fc: number, tr: number, tc: number, forcePromo?: PieceType) => {
@@ -1856,7 +2937,13 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       livePiece.type === 'pawn' &&
       (tr === 0 || tr === 7);
 
-    if (matchId && liveGhost && liveGhost.ownerColor === turnRef.current && liveGhost.row === fr && liveGhost.col === fc) {
+    if (
+      matchId &&
+      liveGhost &&
+      liveGhost.row === fr &&
+      liveGhost.col === fc &&
+      (!hostedRuntime || (viewerSeatRef.current === liveGhost.ownerColor && turnRef.current === liveGhost.ownerColor))
+    ) {
       const backendMoveIntent: Omit<Extract<PlayerIntent, { type: 'make_move' }>, 'matchId'> = {
         type: 'make_move',
         ...authoritativeActorForColor(turnRef.current),
@@ -2203,7 +3290,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     setTurn(next);
     checkEndGame(nb, next, newMv, newLm, newHmc, newPh, posKey, fen, t);
     setDrawOffer(null);
-  }, [resetCardUsed, startAbortCountdown, stopAbortCountdown, setTicking, checkEndGame, handleLavaLanding, canSubmitAuthoritativeMove, applyAuthoritativeSnapshot, authoritativeActorForColor]);
+  }, [resetCardUsed, startAbortCountdown, stopAbortCountdown, setTicking, checkEndGame, handleLavaLanding, canSubmitAuthoritativeMove, applyAuthoritativeSnapshot, authoritativeActorForColor, hostedRuntime]);
 
   const doPromo = React.useCallback((type: PieceType) => {
     if (!promo) return;
@@ -3436,9 +4523,10 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
   const canUseCard = React.useCallback((card: GameCard, playerColor: PieceColor): boolean => {
     if (over) return false;
+    if (hostedRuntime && viewerSeatRef.current !== playerColor) return false;
     if (card.type !== 'trap' && turn !== playerColor) return false;
     return !cardUsedByRef.current[playerColor];
-  }, [over, turn]);
+  }, [over, turn, hostedRuntime]);
 
   const applyCard = React.useCallback((card: GameCard, playerColor: PieceColor) => {
     if (!canUseCard(card, playerColor)) return;
@@ -3789,8 +4877,17 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     setCardPromo(null);
     setDoubleMove(null);
     setCardAnim(null);
+    setViewerSeat(null);
+    viewerSeatRef.current = null;
+    setMatchSeatMeta(null);
       setAuthoritativeLive(false);
       setAuthoritativeMatchId(null);
+      setAuthoritativeStatus(null);
+      setAuthoritativeFinishReason(null);
+      setAuthoritativeWhiteConnected(false);
+      setAuthoritativeBlackConnected(false);
+      setAuthoritativeDisconnectGraceFor(null);
+      setAuthoritativeDisconnectGraceDeadline(null);
       authoritativeMatchIdRef.current = null;
       authoritativeSeatSecretsRef.current = { white: null, black: null };
       authoritativeClaimExpiresAtRef.current = { white: null, black: null };
@@ -3808,6 +4905,28 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     setTimeout(() => startAbortCountdown(), 0);
     void bootstrapAuthoritativeMatch();
   }, [stop, setTicking, startAbortCountdown, bootstrapAuthoritativeMatch, hostedRuntime]);
+
+  const returnToQueueHome = React.useCallback(() => {
+    setQueueLaunchIntent(null);
+    newGame();
+  }, [newGame]);
+
+  const returnToSameQueueLane = React.useCallback(() => {
+    if (!authoritativeMatchId) {
+      returnToQueueHome();
+      return;
+    }
+    const roomMeta = readStoredRoomMeta(authoritativeMatchId);
+    if (roomMeta?.queue === 'casual' || roomMeta?.queue === 'rated') {
+      setQueueLaunchIntent({
+        queue: roomMeta.queue,
+        modeId: roomMeta.modeId ?? DEFAULT_MATCH_MODE_ID,
+      });
+      newGame();
+      return;
+    }
+    returnToQueueHome();
+  }, [authoritativeMatchId, newGame, returnToQueueHome]);
 
   // ── Review navigation ───────────────────────────────────────────────────────
   const goToSnap = React.useCallback((idx: number) => {
@@ -3872,6 +4991,17 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     [board, lm, moved, turn, getFusedMoves, filterFusionChecks],
   );
 
+  const canControlColor = React.useCallback((color: PieceColor): boolean => {
+    if (!hostedRuntime) {
+      return true;
+    }
+    return viewerSeatRef.current === color;
+  }, [hostedRuntime]);
+
+  const canActWithColor = React.useCallback((color: PieceColor): boolean => (
+    canControlColor(color) && turnRef.current === color
+  ), [canControlColor]);
+
   const canSelectPiece = React.useCallback((row: number, col: number): boolean => {
     const dm = doubleMoveRef.current;
     if (!dm || dm.movesLeft === 2) return true;
@@ -3913,19 +5043,19 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     if (isReviewing || over || promo) return;
     const p = board[r][c];
     const ghost = ghostRef.current;
-    const isGhostSq = ghost && ghost.ownerColor === turn && ghost.row === r && ghost.col === c;
+    const isGhostSq = ghost && canActWithColor(ghost.ownerColor) && ghost.row === r && ghost.col === c;
 
     if (!sel) {
-      if (isGhostSq || (p?.color === turn && canSelectPiece(r, c))) {
+      if (isGhostSq || (p && canActWithColor(p.color) && canSelectPiece(r, c))) {
         setSel({ row: r, col: c });
         setHints(getMoves(r, c));
       }
       return;
     }
 
-    if (isGhostSq || p?.color === turn) {
+    if (isGhostSq || (p && canControlColor(p.color))) {
       if (sel.row === r && sel.col === c) { setSel(null); setHints([]); }
-      else if (isGhostSq || canSelectPiece(r, c)) { setSel({ row: r, col: c }); setHints(getMoves(r, c)); }
+      else if ((isGhostSq || canSelectPiece(r, c)) && (!p || canActWithColor(p.color))) { setSel({ row: r, col: c }); setHints(getMoves(r, c)); }
       return;
     }
 
@@ -3934,7 +5064,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     doMove(sel.row, sel.col, r, c);
     setSel(null);
     setHints([]);
-  }, [cardPending, isReviewing, over, promo, board, sel, turn, hints, canSelectPiece, getMoves, doMove, handleCardClick]);
+  }, [cardPending, isReviewing, over, promo, board, sel, hints, canSelectPiece, getMoves, doMove, handleCardClick, canActWithColor, canControlColor]);
 
   // ── Board highlight helpers ─────────────────────────────────────────────────
   const getCardHighlight = React.useCallback((row: number, col: number): string | null => {
@@ -4194,7 +5324,10 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                 overflow:'hidden',
                 animation: isJokerCard && canUse ? 'jokerFloat 3s ease-in-out infinite' : 'none',
               }}
-              onClick={() => setSelectedCard(isSelected ? null : card)}
+              onClick={() => {
+                if (!canUse) return;
+                setSelectedCard(isSelected ? null : card);
+              }}
               onMouseEnter={e => {
                 if (!canUse) return;
                 const el = e.currentTarget as HTMLDivElement;
@@ -4265,6 +5398,45 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       </div>
     );
   }, [selectedCard, radarActive, canUseCard, cardUsedBy, dealPhase, setSelectedCard]);
+
+  const renderPlayerCard = (seat: PieceColor): React.ReactElement => {
+    const isWhiteSeat = seat === 'white';
+    const seatName = isWhiteSeat ? displayedWhiteName : displayedBlackName;
+    const seatRating = isWhiteSeat ? displayedWhiteRating : displayedBlackRating;
+    const seatTime = isWhiteSeat ? timeW : timeB;
+    const seatBadge = isWhiteSeat ? whiteSeatBadge : blackSeatBadge;
+    const seatTicking = tickingState === seat && clockActive && !over;
+
+    return (
+      <div style={{
+        background: isWhiteSeat ? 'rgba(8,45,18,0.50)' : 'rgba(35,12,58,0.52)',
+        backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)',
+        border: isWhiteSeat ? '1px solid rgba(60,220,110,0.45)' : '1px solid rgba(180,110,255,0.35)',
+        borderRadius:'16px', padding:'12px 16px',
+        display:'flex', alignItems:'center', gap:'12px',
+        boxShadow: isWhiteSeat
+          ? '0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(80,240,130,0.2), 0 0 30px rgba(30,180,70,0.2)'
+          : '0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(180,110,255,0.12), 0 0 30px rgba(120,70,200,0.18)',
+      }}>
+        <div style={{ width:'58px', height:'58px', borderRadius:'50%', flexShrink:0, background:isWhiteSeat ? 'linear-gradient(135deg, #0a200f, #051208)' : 'linear-gradient(135deg, #1e102f, #0f0817)', border:isWhiteSeat ? '2px solid rgba(46,180,90,0.7)' : '2px solid rgba(180,110,255,0.6)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'28px', boxShadow:isWhiteSeat ? '0 0 20px rgba(46,180,90,0.4)' : '0 0 20px rgba(180,110,255,0.24)' }}>🧑‍💻</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+            <div style={{ color:isWhiteSeat ? '#d0fce8' : '#e8d8ff', fontWeight:700, fontSize:'16px', letterSpacing:'0.3px' }}>{seatName}</div>
+            {seatBadge && (
+              <span style={{ padding:'2px 7px', borderRadius:'999px', background:seatBadge === 'You' ? (isWhiteSeat ? 'rgba(74,222,128,0.16)' : 'rgba(96,165,250,0.18)') : 'rgba(255,255,255,0.06)', border:seatBadge === 'You' ? (isWhiteSeat ? '1px solid rgba(74,222,128,0.32)' : '1px solid rgba(96,165,250,0.35)') : '1px solid rgba(255,255,255,0.10)', color:seatBadge === 'You' ? (isWhiteSeat ? '#86efac' : '#93c5fd') : 'rgba(255,255,255,0.6)', fontSize:'9px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>
+                {seatBadge}
+              </span>
+            )}
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:'10px', marginTop:'5px' }}>
+            <span style={{ color:isWhiteSeat ? '#52c77a' : '#c89dff', fontSize:'12px', fontWeight:600 }}>♟ {seatRating}</span>
+            <span style={{ color: seatTime <= 30 ? '#ff5555' : '#f0a030', fontSize:'13px', fontFamily:'monospace', fontWeight:700, background: seatTicking ? 'rgba(240,160,48,0.18)' : 'rgba(0,0,0,0.3)', padding:'2px 8px', borderRadius:'5px', border:'1px solid rgba(240,160,48,0.2)' }}>⏱ {fmtClock(seatTime)}</span>
+          </div>
+        </div>
+        <div style={{ width:'10px', height:'10px', borderRadius:'50%', background:isWhiteSeat ? '#2ecc71' : '#a855f7', boxShadow:isWhiteSeat ? '0 0 12px #2ecc71' : '0 0 12px #a855f7', flexShrink:0 }} />
+      </div>
+    );
+  };
 
   // ── JOKER PICKER OVERLAY ───────────────────────────────────────────────────
   const renderJokerPicker = () => {
@@ -4453,66 +5625,226 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           <span style={{ fontSize:'22px', fontWeight:800, letterSpacing:'1px', background:'linear-gradient(135deg, #ffd700 0%, #c8860a 50%, #fff8e0 100%)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', textShadow:'none' }}>CardChess</span>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'2px' }}>
-          {[['Play', playTabLabel], ['Queue','Queue'], ['History','History'], ['Cards','Cards'], ['Rankings','Rankings'], ['Community','Community'], ['Status','Status'], ['Account','Account']].map(([pageKey, label], i) => (
-            <button key={pageKey} onClick={() => setActivePage(pageKey)} style={{
+          {navItems.map((item, i) => (
+            <button key={item.key} onClick={() => setActivePage(item.key)} style={{
               padding:'8px 18px', fontSize:'13px', fontWeight: i===0?700:500,
-              background: activePage===pageKey?'linear-gradient(180deg, rgba(200,134,10,0.35) 0%, rgba(139,94,10,0.4) 100%)':'transparent',
-              color: activePage===pageKey?'#ffd700':'rgba(200,185,140,0.8)',
-              border: activePage===pageKey?'1px solid rgba(200,134,10,0.6)':'1px solid transparent',
+              background: activePage===item.key?'linear-gradient(180deg, rgba(200,134,10,0.35) 0%, rgba(139,94,10,0.4) 100%)':'transparent',
+              color: activePage===item.key?'#ffd700':'rgba(200,185,140,0.8)',
+              border: activePage===item.key?'1px solid rgba(200,134,10,0.6)':'1px solid transparent',
               borderRadius:'6px', cursor:'pointer',
-              borderBottom: activePage===pageKey?'2px solid #c8860a':'2px solid transparent',
+              borderBottom: activePage===item.key?'2px solid #c8860a':'2px solid transparent',
               transition:'all 0.15s ease',
+              display:'flex',
+              alignItems:'center',
+              gap:'8px',
             }}
-              onMouseEnter={e => { if (activePage!==pageKey) { (e.target as HTMLButtonElement).style.color='#ffd700'; }}}
-              onMouseLeave={e => { if (activePage!==pageKey) (e.target as HTMLButtonElement).style.color='rgba(200,185,140,0.8)'; }}
-            >{label}</button>
+              onMouseEnter={e => { if (activePage!==item.key) { (e.target as HTMLButtonElement).style.color='#ffd700'; }}}
+              onMouseLeave={e => { if (activePage!==item.key) (e.target as HTMLButtonElement).style.color='rgba(200,185,140,0.8)'; }}
+            >
+              <span>{item.label}</span>
+              {item.badge ? (
+                <span style={{
+                  minWidth:'18px',
+                  padding:'1px 6px',
+                  borderRadius:'999px',
+                  background:'rgba(255,215,0,0.18)',
+                  border:'1px solid rgba(255,215,0,0.22)',
+                  color:'#fff3cf',
+                  fontSize:'11px',
+                  fontWeight:800,
+                  lineHeight:1.4,
+                }}>{item.badge}</span>
+              ) : null}
+            </button>
           ))}
         </div>
         <div style={{ display:'flex', gap:'10px', minWidth:'180px', justifyContent:'flex-end' }}>
-          <button style={{ padding:'7px 20px', fontSize:'13px', fontWeight:600, background:'transparent', color:'rgba(220,200,150,0.9)', border:'1px solid rgba(180,130,60,0.45)', borderRadius:'6px', cursor:'pointer', transition:'all 0.15s' }}>Log In</button>
-          <button style={{ padding:'7px 20px', fontSize:'13px', fontWeight:700, background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)', color:'#fff8e0', border:'1px solid rgba(255,180,60,0.5)', borderRadius:'6px', cursor:'pointer', boxShadow:'0 2px 14px rgba(200,134,10,0.5)' }}>Sign Up</button>
+          <button onClick={() => setActivePage('Profiles')} style={{ padding:'7px 20px', fontSize:'13px', fontWeight:600, background:'transparent', color:'rgba(220,200,150,0.9)', border:'1px solid rgba(180,130,60,0.45)', borderRadius:'6px', cursor:'pointer', transition:'all 0.15s' }}>Profiles</button>
+          <button onClick={() => setActivePage('Account')} style={{ padding:'7px 20px', fontSize:'13px', fontWeight:700, background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)', color:'#fff8e0', border:'1px solid rgba(255,180,60,0.5)', borderRadius:'6px', cursor:'pointer', boxShadow:'0 2px 14px rgba(200,134,10,0.5)' }}>{hasPrimaryAccountSession ? 'My Account' : 'Sign In'}</button>
         </div>
       </nav>
+
+      {visibleSocialAlert ? (
+        <div style={{
+          display:'flex',
+          alignItems:'center',
+          justifyContent:'space-between',
+          gap:'16px',
+          padding:'12px 22px',
+          background: visibleSocialAlert.action === 'match'
+            ? 'linear-gradient(90deg, rgba(22,64,40,0.92) 0%, rgba(16,42,32,0.95) 100%)'
+            : 'linear-gradient(90deg, rgba(70,44,12,0.92) 0%, rgba(32,22,10,0.95) 100%)',
+          borderBottom:'1px solid rgba(255,180,60,0.18)',
+          boxShadow:'0 8px 24px rgba(0,0,0,0.18)',
+          position:'relative',
+          zIndex:90,
+        }}>
+          <div style={{ display:'grid', gap:'4px', minWidth:0 }}>
+            <div style={{ color:'#fff5d6', fontSize:'15px', fontWeight:800, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+              {visibleSocialAlert.title}
+            </div>
+            <div style={{ color:'rgba(255,236,194,0.78)', fontSize:'12px', lineHeight:1.5 }}>
+              {visibleSocialAlert.detail}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:'10px', flexWrap:'wrap', flexShrink:0 }}>
+            <button
+              onClick={handleSocialAlertAction}
+              style={{
+                padding:'9px 14px',
+                borderRadius:'10px',
+                border:'1px solid rgba(255,215,120,0.26)',
+                background:'rgba(255,255,255,0.08)',
+                color:'#fff8de',
+                fontSize:'12px',
+                fontWeight:800,
+                cursor:'pointer',
+              }}
+            >
+              {visibleSocialAlert.actionLabel}
+            </button>
+            <button
+              onClick={dismissSocialAlert}
+              style={{
+                padding:'9px 14px',
+                borderRadius:'10px',
+                border:'1px solid rgba(255,255,255,0.10)',
+                background:'rgba(255,255,255,0.03)',
+                color:'rgba(255,236,194,0.82)',
+                fontSize:'12px',
+                fontWeight:700,
+                cursor:'pointer',
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {activePage === 'History' ? (
         <HistoryPage
           focusMatchId={historyFocusMatchId}
           focusGuestId={historyFocusGuestId}
+          onSelectMatchId={setHistoryFocusMatchId}
           onOpenGuest={(guestId) => {
             setCommunityFocusGuestId(guestId);
             setActivePage('Community');
           }}
           onClearGuestFocus={() => setHistoryFocusGuestId(null)}
+          onWatchLiveMatch={openLiveMatch}
         />
+      ) : activePage === 'Modes' ? (
+        <ModesPage onPlayMode={(modeId, queue) => {
+          setQueueLaunchIntent({ modeId, queue });
+          setActivePage('Queue');
+        }} />
       ) : activePage === 'Queue' ? (
-        <QueuePage whiteProfile={whiteProfile} blackProfile={blackProfile} />
+        <QueuePage
+          whiteProfile={whiteProfile}
+          blackProfile={blackProfile}
+          preferredQueue={queueLaunchIntent?.queue}
+          preferredModeId={queueLaunchIntent?.modeId}
+        />
+      ) : activePage === 'Lobbies' ? (
+        <LobbiesPage
+          hostedRuntime={hostedRuntime}
+          displayName={whiteProfile?.displayName ?? null}
+          identity={{
+            guestId: readStoredGuestIdentity('white').guestId,
+            sessionSecret: readStoredGuestIdentity('white').sessionSecret,
+            sessionToken: readStoredGuestIdentity('white').sessionToken,
+            accountId: primaryAccountIdentity.accountId,
+            accountSessionToken: primaryAccountIdentity.sessionToken,
+          }}
+        />
+      ) : activePage === 'Friends' ? (
+        <FriendsPage
+          identity={{
+            guestId: readStoredGuestIdentity('white').guestId,
+            sessionSecret: readStoredGuestIdentity('white').sessionSecret,
+            sessionToken: readStoredGuestIdentity('white').sessionToken,
+            accountId: primaryAccountIdentity.accountId,
+            accountSessionToken: primaryAccountIdentity.sessionToken,
+          }}
+          accountId={primaryAccountIdentity.accountId ?? null}
+          sessionToken={primaryAccountIdentity.sessionToken ?? null}
+          liveRefreshToken={socialLiveToken}
+          onOpenProfile={openProfileHandle}
+          onOpenAccount={() => setActivePage('Account')}
+        />
+      ) : activePage === 'Inbox' ? (
+        <InboxPage
+          accountId={primaryAccountIdentity.accountId ?? null}
+          sessionToken={primaryAccountIdentity.sessionToken ?? null}
+          liveRefreshToken={socialLiveToken}
+          onOpenProfile={openProfileHandle}
+          onOpenFriends={() => setActivePage('Friends')}
+          onUnreadCountChange={setInboxUnreadCount}
+        />
+      ) : activePage === 'Profiles' ? (
+        <ProfilesPage
+          focusHandle={profileFocusHandle}
+          viewerHandle={null}
+          accountId={primaryAccountIdentity.accountId ?? null}
+          sessionToken={primaryAccountIdentity.sessionToken ?? null}
+          onSelectHandle={openProfileHandle}
+          onOpenAccount={() => setActivePage('Account')}
+          onOpenReplay={openReplayMatch}
+        />
+      ) : activePage === 'Watch' ? (
+        <WatchPage
+          onWatchMatch={openLiveMatch}
+          onOpenReplay={openReplayMatch}
+        />
       ) : activePage === 'Cards' ? (
         <CardsPage embedded onNavigate={(page: string) => setActivePage(page)} />
       ) : activePage === 'Rankings' ? (
-        <RankingsPage onViewGuest={(guestId) => {
-          setCommunityFocusGuestId(guestId);
-          setActivePage('Community');
-        }} />
+        <RankingsPage
+          onViewGuest={(guestId) => {
+            setCommunityFocusGuestId(guestId);
+            setActivePage('Community');
+          }}
+          onViewAccount={openProfileHandle}
+        />
       ) : activePage === 'Community' ? (
         <CommunityPage
           whiteProfile={whiteProfile}
           blackProfile={blackProfile}
           focusGuestId={communityFocusGuestId}
-          onOpenMatch={(matchId) => {
-            setHistoryFocusMatchId(matchId);
-            setHistoryFocusGuestId(null);
-            setActivePage('History');
-          }}
-          onOpenGuestHistory={(guestId) => {
-            setHistoryFocusGuestId(guestId);
-            setHistoryFocusMatchId(null);
-            setActivePage('History');
-          }}
+          onOpenAccount={openProfileHandle}
+          onOpenMatch={openReplayMatch}
+          onOpenGuestHistory={openGuestHistory}
+        />
+      ) : activePage === 'Admin' ? (
+        <AdminModerationPage
+          accountId={primaryAccountIdentity.accountId ?? null}
+          sessionToken={primaryAccountIdentity.sessionToken ?? null}
+          onOpenProfile={openProfileHandle}
         />
       ) : activePage === 'Status' ? (
         <StatusPage />
       ) : activePage === 'Account' ? (
-        <AccountPage whiteProfile={whiteProfile} blackProfile={blackProfile} />
+        !hasPrimaryAccountSession && !accountActionQueryDetected ? (
+          <AuthPage
+            hostedRuntime={hostedRuntime}
+            guestProfile={whiteProfile}
+            externalNotice={shellAccountNotice}
+            onAuthenticated={handlePrimaryShellAuthenticated}
+            onOpenAccount={() => setActivePage('Account')}
+            onContinue={() => setActivePage(hostedRuntime ? 'Queue' : 'Play')}
+            onAuthStateChange={syncPrimaryAccountIdentity}
+          />
+        ) : (
+          <AccountPage
+            whiteProfile={whiteProfile}
+            blackProfile={blackProfile}
+            externalNotice={shellAccountNotice}
+            onOpenProfile={openProfileHandle}
+            onSeatAuthenticated={handleSeatAuthenticated}
+            onAuthStateChange={syncPrimaryAccountIdentity}
+          />
+        )
       ) : hostedRuntime && !authoritativeMatchId ? (
         <div style={{ display:'flex', flex:1, minHeight:0, alignItems:'center', justifyContent:'center', padding:'28px' }}>
           <div style={{
@@ -4578,25 +5910,36 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
         {/* ── Left column ── */}
         <div style={{ width:'290px', flexShrink:0, display:'flex', flexDirection:'column', gap:'10px', paddingTop:'10px', paddingBottom:'10px', paddingRight:'24px' }}>
-          {/* Black player card */}
+          {renderPlayerCard(topSeat)}
+          {false && (
           <div style={{
-            background:'rgba(40,10,80,0.50)',
+            background: topSeat === 'white' ? 'rgba(8,45,18,0.50)' : 'rgba(40,10,80,0.50)',
             backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)',
-            border:'1px solid rgba(200,120,255,0.45)',
+            border: topSeat === 'white' ? '1px solid rgba(60,220,110,0.45)' : '1px solid rgba(200,120,255,0.45)',
             borderRadius:'16px', padding:'12px 16px',
             display:'flex', alignItems:'center', gap:'12px',
-            boxShadow:'0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(220,140,255,0.2), 0 0 30px rgba(160,60,240,0.2)',
+            boxShadow: topSeat === 'white'
+              ? '0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(80,240,130,0.2), 0 0 30px rgba(30,180,70,0.2)'
+              : '0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(220,140,255,0.2), 0 0 30px rgba(160,60,240,0.2)',
           }}>
             <div style={{ width:'58px', height:'58px', borderRadius:'50%', flexShrink:0, background:'linear-gradient(135deg, #1a0a30, #0d0520)', border:'2px solid rgba(150,100,220,0.7)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'28px', boxShadow:'0 0 20px rgba(150,100,220,0.5)' }}>🕵️</div>
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ color:'#e8d8ff', fontWeight:700, fontSize:'16px', letterSpacing:'0.3px' }}>{blackProfile?.displayName ?? 'Opponent'}</div>
+              <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                <div style={{ color: topSeat === 'white' ? '#d0fce8' : '#e8d8ff', fontWeight:700, fontSize:'16px', letterSpacing:'0.3px' }}>{topPlayerName}</div>
+                {topSeatBadge && (
+                  <span style={{ padding:'2px 7px', borderRadius:'999px', background: topSeatBadge === 'You' ? (topSeat === 'white' ? 'rgba(74,222,128,0.16)' : 'rgba(96,165,250,0.18)') : 'rgba(255,255,255,0.06)', border: topSeatBadge === 'You' ? (topSeat === 'white' ? '1px solid rgba(74,222,128,0.32)' : '1px solid rgba(96,165,250,0.35)') : '1px solid rgba(255,255,255,0.10)', color: topSeatBadge === 'You' ? (topSeat === 'white' ? '#86efac' : '#93c5fd') : 'rgba(255,255,255,0.6)', fontSize:'9px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>
+                    {topSeatBadge}
+                  </span>
+                )}
+              </div>
               <div style={{ display:'flex', alignItems:'center', gap:'10px', marginTop:'5px' }}>
-                <span style={{ color:'#b088f0', fontSize:'12px', fontWeight:600 }}>♟ {blackProfile?.rating ?? 1200}</span>
+                <span style={{ color:'#b088f0', fontSize:'12px', fontWeight:600 }}>♟ {displayedBlackRating}</span>
                 <span style={{ color: timeB <= 30 ? '#ff5555' : '#f0a030', fontSize:'13px', fontFamily:'monospace', fontWeight:700, background: tickingState==='black'&&clockActive&&!over ? 'rgba(240,160,48,0.18)' : 'rgba(0,0,0,0.3)', padding:'2px 8px', borderRadius:'5px', border:'1px solid rgba(240,160,48,0.2)' }}>⏱ {fmtClock(timeB)}</span>
               </div>
             </div>
             <div style={{ width:'10px', height:'10px', borderRadius:'50%', background:'#2ecc71', boxShadow:'0 0 12px #2ecc71', flexShrink:0 }} />
           </div>
+          )}
 
           {/* Card preview panel */}
           <div style={{
@@ -4823,7 +6166,8 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             )}
           </div>
 
-          {/* White player card */}
+          {renderPlayerCard(bottomSeat)}
+          {false && (
           <div style={{
             background:'rgba(8,45,18,0.50)',
             backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)',
@@ -4834,18 +6178,112 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           }}>
             <div style={{ width:'58px', height:'58px', borderRadius:'50%', flexShrink:0, background:'linear-gradient(135deg, #0a200f, #051208)', border:'2px solid rgba(46,180,90,0.7)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'28px', boxShadow:'0 0 20px rgba(46,180,90,0.4)' }}>🧑‍💻</div>
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ color:'#d0fce8', fontWeight:700, fontSize:'16px', letterSpacing:'0.3px' }}>{whiteProfile?.displayName ?? 'Player'}</div>
+              <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                <div style={{ color:'#d0fce8', fontWeight:700, fontSize:'16px', letterSpacing:'0.3px' }}>{displayedWhiteName}</div>
+                {whiteSeatBadge && (
+                  <span style={{ padding:'2px 7px', borderRadius:'999px', background:whiteSeatBadge === 'You' ? 'rgba(74,222,128,0.16)' : 'rgba(255,255,255,0.06)', border:whiteSeatBadge === 'You' ? '1px solid rgba(74,222,128,0.32)' : '1px solid rgba(255,255,255,0.10)', color:whiteSeatBadge === 'You' ? '#86efac' : 'rgba(255,255,255,0.6)', fontSize:'9px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>
+                    {whiteSeatBadge}
+                  </span>
+                )}
+              </div>
               <div style={{ display:'flex', alignItems:'center', gap:'10px', marginTop:'5px' }}>
-                <span style={{ color:'#52c77a', fontSize:'12px', fontWeight:600 }}>♟ {whiteProfile?.rating ?? 1200}</span>
+                <span style={{ color:'#52c77a', fontSize:'12px', fontWeight:600 }}>♟ {displayedWhiteRating}</span>
                 <span style={{ color: timeW <= 30 ? '#ff5555' : '#f0a030', fontSize:'13px', fontFamily:'monospace', fontWeight:700, background: tickingState==='white'&&clockActive&&!over ? 'rgba(240,160,48,0.18)' : 'rgba(0,0,0,0.3)', padding:'2px 8px', borderRadius:'5px', border:'1px solid rgba(240,160,48,0.2)' }}>⏱ {fmtClock(timeW)}</span>
               </div>
             </div>
             <div style={{ width:'10px', height:'10px', borderRadius:'50%', background:'#2ecc71', boxShadow:'0 0 12px #2ecc71', flexShrink:0 }} />
           </div>
+          )}
         </div>
 
         {/* ── Board column ── */}
       <div style={{ display:'flex', flexDirection:'column', alignItems:'center', flexShrink:0, justifyContent:'center', paddingLeft:'16px', paddingRight:'32px' }}>
+          {authoritativeMatchId ? (
+            <div style={{ width:'100%', maxWidth:'660px', marginBottom:'10px', padding:'12px 14px', background:'linear-gradient(180deg, rgba(18,24,38,0.95) 0%, rgba(10,14,24,0.96) 100%)', border:'1px solid rgba(255,165,40,0.18)', borderRadius:'14px', boxShadow:'0 12px 36px rgba(0,0,0,0.24)', display:'grid', gap:'10px' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', gap:'12px', alignItems:'flex-start', flexWrap:'wrap' }}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ color:'#ffcf72', fontSize:'11px', fontWeight:800, letterSpacing:'1.2px', textTransform:'uppercase' }}>Public Match Destination</div>
+                  <div style={{ color:'#fff2c8', fontSize:'16px', fontWeight:800, marginTop:'4px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                    {displayedWhiteName} vs {displayedBlackName}
+                  </div>
+                  <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginTop:'7px' }}>
+                    <span style={{ padding:'4px 8px', borderRadius:'999px', background:'rgba(255,180,60,0.10)', border:'1px solid rgba(255,180,60,0.22)', color:'#ffe4a0', fontSize:'10px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>
+                      {activeMatchQueueLabel}
+                    </span>
+                    <span style={{ padding:'4px 8px', borderRadius:'999px', background:'rgba(110,170,255,0.10)', border:'1px solid rgba(110,170,255,0.20)', color:'#dcecff', fontSize:'10px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>
+                      {activeMatchModeLabel}
+                    </span>
+                    {activeMatchRoleLabel ? (
+                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:viewerSeat ? 'rgba(74,222,128,0.10)' : 'rgba(255,255,255,0.05)', border:viewerSeat ? '1px solid rgba(74,222,128,0.20)' : '1px solid rgba(255,255,255,0.10)', color:viewerSeat ? '#a7f3d0' : 'rgba(255,255,255,0.72)', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
+                        {activeMatchRoleLabel}
+                      </span>
+                    ) : null}
+                    {whitePresenceLabel ? (
+                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:authoritativeWhiteConnected ? 'rgba(74,222,128,0.10)' : 'rgba(248,113,113,0.10)', border:authoritativeWhiteConnected ? '1px solid rgba(74,222,128,0.20)' : '1px solid rgba(248,113,113,0.22)', color:authoritativeWhiteConnected ? '#bbf7d0' : '#fecaca', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
+                        White {whitePresenceLabel}
+                      </span>
+                    ) : null}
+                    {blackPresenceLabel ? (
+                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:authoritativeBlackConnected ? 'rgba(74,222,128,0.10)' : 'rgba(248,113,113,0.10)', border:authoritativeBlackConnected ? '1px solid rgba(74,222,128,0.20)' : '1px solid rgba(248,113,113,0.22)', color:authoritativeBlackConnected ? '#bbf7d0' : '#fecaca', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
+                        Black {blackPresenceLabel}
+                      </span>
+                    ) : null}
+                    {activeFinishReasonLabel ? (
+                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:'rgba(255,212,138,0.10)', border:'1px solid rgba(255,212,138,0.22)', color:'#fff0c8', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
+                        {activeFinishReasonLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div style={{ color:'rgba(160,184,216,0.55)', fontSize:'10px', fontWeight:700, textAlign:'right' }}>
+                  {authoritativeStatus?.toUpperCase() ?? 'MATCH'} · {authoritativeMatchId.slice(-8)}
+                </div>
+              </div>
+              <div style={{ color:'rgba(255,232,180,0.72)', fontSize:'11px', lineHeight:1.5 }}>
+                This board now behaves like a real public match page. Queue, lobbies, social alerts, and shared links can all land here directly, while replay/archive links route to the canonical history destination.
+              </div>
+              {disconnectGraceBanner ? (
+                <div style={{ padding:'9px 12px', borderRadius:'10px', background:'rgba(248,113,113,0.10)', border:'1px solid rgba(248,113,113,0.22)', color:'#fecaca', fontSize:'11px', lineHeight:1.5, fontWeight:700 }}>
+                  {disconnectGraceBanner}
+                </div>
+              ) : null}
+              <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+                <button
+                  onClick={() => void copyLiveMatchLink(authoritativeMatchId)}
+                  style={{ padding:'8px 12px', borderRadius:'10px', border:'1px solid rgba(110,170,255,0.28)', background:'linear-gradient(180deg, rgba(54,102,184,0.24) 0%, rgba(24,40,82,0.34) 100%)', color:'#e5f0ff', fontSize:'11px', fontWeight:800, cursor:'pointer' }}
+                >
+                  Copy Live Link
+                </button>
+                <button
+                  onClick={() => openReplayMatch(authoritativeMatchId)}
+                  style={{ padding:'8px 12px', borderRadius:'10px', border:'1px solid rgba(255,180,60,0.24)', background:'rgba(255,180,60,0.08)', color:'#fff0c6', fontSize:'11px', fontWeight:800, cursor:'pointer' }}
+                >
+                  Open {activeMatchRouteLabel}
+                </button>
+                <button
+                  onClick={() => void copyReplayPageLink(authoritativeMatchId)}
+                  style={{ padding:'8px 12px', borderRadius:'10px', border:'1px solid rgba(255,255,255,0.12)', background:'rgba(255,255,255,0.04)', color:'rgba(255,236,194,0.88)', fontSize:'11px', fontWeight:800, cursor:'pointer' }}
+                >
+                  Copy Replay Link
+                </button>
+              </div>
+              {matchDestinationNotice ? (
+                <div style={{ color:'#9ee6b8', fontSize:'11px', fontWeight:700 }}>
+                  {matchDestinationNotice}
+                </div>
+              ) : activeLiveMatchUrl || activeReplayPageUrl ? (
+                <div style={{ display:'grid', gap:'4px', color:'rgba(160,184,216,0.62)', fontSize:'10px' }}>
+                  {activeLiveMatchUrl ? <div>Live: {activeLiveMatchUrl}</div> : null}
+                  {activeReplayPageUrl ? <div>Replay: {activeReplayPageUrl}</div> : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {authoritativeLive && authoritativeStatus === 'waiting' && authoritativeMatchId ? (
+            <div style={{ marginBottom:'8px', padding:'9px 14px', background:'rgba(255,212,135,0.10)', border:'1px solid rgba(255,212,135,0.28)', borderRadius:'8px', color:'#ffd487', fontSize:'11px', fontWeight:700, textAlign:'center' }}>
+              Private room is waiting for the second player to open the invite link. This seat is reserved, but the game will only start once both seats are claimed.
+            </div>
+          ) : null}
           {showHostedSoloBanner && (
             <div style={{ marginBottom:'8px', padding:'8px 14px', background:'rgba(96,165,250,0.10)', border:'1px solid rgba(96,165,250,0.28)', borderRadius:'8px', color:'#93c5fd', fontSize:'11px', fontWeight:700, textAlign:'center' }}>
               Solo board: use the Queue tab to find a real online opponent.
@@ -4881,7 +6319,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             </div>
           )}
 
-          {renderHand(blackHand, 'black', 'top')}
+          {renderHand(topHand, topSeat, 'top')}
 
           <div style={{ display:'flex', alignItems:'flex-start' }}>
             <div style={{ position:'relative', border:'2px solid rgba(220,160,40,0.8)', borderRadius:'4px', display:'inline-block', boxShadow:'0 0 0 1px rgba(255,200,60,0.2), 0 0 60px rgba(200,100,10,0.5), 0 0 120px rgba(180,60,0,0.25)' }}>
@@ -4908,11 +6346,13 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                 cardPending={cardPending}
                 onClick={clickSq}
                 onDragStart={(e, r, c) => {
-                  if (cardPending || isReviewing || over || promo) return;
+                  if (cardPending || isReviewing || over || promo || (hostedRuntime && authoritativeStatus !== 'active')) return;
                   const p = board[r][c];
                   const ghostDs = ghostRef.current;
-                  const isGhostDs = ghostDs && ghostDs.ownerColor === turn && ghostDs.row === r && ghostDs.col === c;
-                  if (!isGhostDs && (!p || p.color !== turn)) return;
+                  const actingColor = hostedRuntime ? viewerSeat : turn;
+                  const isGhostDs = ghostDs && actingColor && ghostDs.ownerColor === actingColor && turn === actingColor && ghostDs.row === r && ghostDs.col === c;
+                  if (!actingColor) return;
+                  if (!isGhostDs && (!p || p.color !== actingColor || turn !== actingColor)) return;
                   setDrag({ row: r, col: c });
                   setSel({ row: r, col: c });
                   setHints(getMoves(r, c));
@@ -4945,7 +6385,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                     : null
                 }
                 fogZones={fogZones}
-                viewerColor={turn}
+                viewerColor={hostedRuntime ? viewerSeat : turn}
                 invisibleUnder={ghostPiece}
                 analysisArrows={analysisArrows}
                 onToggleAnalysisArrow={toggleAnalysisArrow}
@@ -5021,7 +6461,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             </div>
           </div>
 
-          {renderHand(whiteHand, 'white', 'bottom')}
+          {renderHand(bottomHand, bottomSeat, 'bottom')}
         </div>
 
         {/* ── Right panel ── */}
@@ -5184,7 +6624,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           <div style={{ background:'rgba(255,140,0,0.06)', border:'1px solid rgba(255,165,40,0.18)', borderRadius:'12px', padding:'10px 14px', flexShrink:0 }}>
             <div style={{ textAlign:'center', color:'#ffb830', fontSize:'9px', fontWeight:800, letterSpacing:'2px', textTransform:'uppercase', marginBottom:'9px' }}>⚔ ELO Stakes</div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:'5px 10px', alignItems:'center' }}>
-              <div style={{ textAlign:'right', color:'rgba(255,255,255,0.35)', fontSize:'9px', fontWeight:700 }}>⚪ {whiteProfile?.displayName ?? 'White'} · {whiteProfile?.rating ?? 1200}</div><div /><div style={{ color:'rgba(255,255,255,0.35)', fontSize:'9px', fontWeight:700 }}>⚫ {blackProfile?.displayName ?? 'Black'} · {blackProfile?.rating ?? 1200}</div>
+              <div style={{ textAlign:'right', color:'rgba(255,255,255,0.35)', fontSize:'9px', fontWeight:700 }}>⚪ {displayedWhiteName} · {displayedWhiteRating}</div><div /><div style={{ color:'rgba(255,255,255,0.35)', fontSize:'9px', fontWeight:700 }}>⚫ {displayedBlackName} · {displayedBlackRating}</div>
               <div style={{ textAlign:'right' }}><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>+40</span></div>
               <div style={{ border:'1px solid rgba(255,255,255,0.12)', borderRadius:'4px', padding:'3px 10px', textAlign:'center', background:'rgba(255,255,255,0.04)' }}><span style={{ color:'rgba(200,215,235,0.7)', fontSize:'9px', fontWeight:700, letterSpacing:'0.8px' }}>WIN</span></div>
               <div><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>+40</span></div>
@@ -5200,13 +6640,13 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
           {/* Game controls */}
           <div style={{ display:'flex', flexDirection:'column', gap:'6px', flexShrink:0 }}>
-            {drawOffer && drawOffer !== turn && (
+            {drawOffer && drawOffer !== turn && canRespondToDrawOffer && (
               <div style={{ background:'rgba(243,156,18,0.12)', border:'1px solid rgba(243,156,18,0.45)', borderRadius:'7px', padding:'8px 10px' }}>
                 <div style={{ marginBottom:'6px', fontWeight:'bold', fontSize:'12px', color:'#f39c12' }}>{drawOffer==='white'?'⚪ White':'⚫ Black'} offers a draw</div>
                 <div style={{ display:'flex', gap:'6px' }}>
                   <button onClick={() => {
                     if (authoritativeMatchIdRef.current) {
-                      void submitAuthoritativeIntent({ type: 'respond_draw', ...authoritativeActorForColor(turn), accept: true });
+                      void submitAuthoritativeIntent({ type: 'respond_draw', ...authoritativeActorForColor(controlSender), accept: true });
                       return;
                     }
                     finalPositionRef.current = { fen: toFEN(board, turn, moved, lm, hmc, fmn), turn };
@@ -5216,7 +6656,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                   }} style={{ flex:1, padding:'5px', background:'linear-gradient(180deg,#27ae60,#1e8449)', color:'#fff', border:'none', borderRadius:'5px', cursor:'pointer', fontWeight:'bold', fontSize:'12px' }}>✓ Accept</button>
                   <button onClick={() => {
                     if (authoritativeMatchIdRef.current) {
-                      void submitAuthoritativeIntent({ type: 'respond_draw', ...authoritativeActorForColor(turn), accept: false });
+                      void submitAuthoritativeIntent({ type: 'respond_draw', ...authoritativeActorForColor(controlSender), accept: false });
                       return;
                     }
                     setDrawOffer(null);
@@ -5242,10 +6682,11 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                     : winner==='draw'   ? <span style={{ color:'#f39c12' }}>Draw! 🤝</span>
                     : <span style={{ color:'#2ecc71' }}>{winner==='white'?'⚪ White':'⚫ Black'} Wins! 🏆</span>}
                   </div>
-                  {mate  && <div style={{ fontSize:'10px', color:'#e74c3c' }}>by Checkmate</div>}
-                  {stale && <div style={{ fontSize:'10px', color:'#f39c12' }}>by Stalemate</div>}
-                  {insuf && <div style={{ fontSize:'10px', color:'#f39c12' }}>by Insufficient Material</div>}
-                  {hmc >= 100 && <div style={{ fontSize:'10px', color:'#f39c12' }}>by 50-Move Rule</div>}
+                  {activeFinishReasonLabel ? (
+                    <div style={{ fontSize:'10px', color: winner === 'draw' || winner === 'aborted' ? '#f39c12' : '#e8f7cf' }}>
+                      by {activeFinishReasonLabel}
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div>
@@ -5261,17 +6702,63 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
               {over ? (
                 <>
                   {winner !== 'aborted' && (
-                    <button onClick={newGame} style={{ flex:1, padding:'9px', fontSize:'12px', background:'linear-gradient(180deg,#7b2fd4,#4a1a8a)', color:'#fff', border:'1px solid rgba(150,80,255,0.5)', borderRadius:'7px', cursor:'pointer', fontWeight:'bold', boxShadow:'0 2px 12px rgba(120,50,220,0.4)' }}>🔄 Rematch</button>
+                    <button
+                      disabled={authoritativeRematchBusy}
+                      onClick={() => {
+                        if (canCreateDirectRematch) {
+                          void createAuthoritativeRematchRoom();
+                          return;
+                        }
+                        if (canQueueSameLane) {
+                          returnToSameQueueLane();
+                          return;
+                        }
+                        if (hostedRuntime) {
+                          returnToQueueHome();
+                          return;
+                        }
+                        newGame();
+                      }}
+                      style={{
+                        flex:1,
+                        padding:'9px',
+                        fontSize:'12px',
+                        background:'linear-gradient(180deg,#7b2fd4,#4a1a8a)',
+                        color:'#fff',
+                        border:'1px solid rgba(150,80,255,0.5)',
+                        borderRadius:'7px',
+                        cursor: authoritativeRematchBusy ? 'default' : 'pointer',
+                        fontWeight:'bold',
+                        boxShadow:'0 2px 12px rgba(120,50,220,0.4)',
+                        opacity: authoritativeRematchBusy ? 0.75 : 1,
+                      }}
+                    >
+                      {finishedPrimaryActionLabel}
+                    </button>
                   )}
-                  <button onClick={newGame} style={{ flex:1, padding:'9px', fontSize:'12px', background:'linear-gradient(180deg,#1a8a40,#0f5a28)', color:'#fff', border:'1px solid rgba(46,204,113,0.4)', borderRadius:'7px', cursor:'pointer', fontWeight:'bold', boxShadow:'0 2px 12px rgba(30,140,70,0.4)' }}>♟ New Game</button>
+                  <button
+                    onClick={() => {
+                      if (hostedRuntime) {
+                        returnToQueueHome();
+                        return;
+                      }
+                      newGame();
+                    }}
+                    style={{ flex:1, padding:'9px', fontSize:'12px', background:'linear-gradient(180deg,#1a8a40,#0f5a28)', color:'#fff', border:'1px solid rgba(46,204,113,0.4)', borderRadius:'7px', cursor:'pointer', fontWeight:'bold', boxShadow:'0 2px 12px rgba(30,140,70,0.4)' }}
+                  >
+                    {finishedSecondaryActionLabel}
+                  </button>
                 </>
               ) : (
                 <>
                   {movHist.length === 0 || (movHist.length === 1 && !movHist[0].b) ? (
-                    <button onClick={() => {
+                    <button disabled={hostedActionLocked} onClick={() => {
+                      if (hostedActionLocked) {
+                        return;
+                      }
                       if (authoritativeMatchIdRef.current) {
                         stopAbortCountdown();
-                        void submitAuthoritativeIntent({ type: 'abort', ...authoritativeActorForColor(turn) });
+                        void submitAuthoritativeIntent({ type: 'abort', ...authoritativeActorForColor(controlSender) });
                         return;
                       }
                       stopAbortCountdown();
@@ -5282,9 +6769,12 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                   ) : (
                     <button onClick={newGame} style={{ flex:1, padding:'9px', fontSize:'12px', background:'linear-gradient(180deg,#1a8a40,#0f5a28)', color:'#fff', border:'1px solid rgba(46,204,113,0.4)', borderRadius:'7px', cursor:'pointer', fontWeight:'bold', boxShadow:'0 2px 12px rgba(30,140,70,0.4)' }}>♟ New Game</button>
                   )}
-            <button onClick={() => {
+            <button disabled={hostedActionLocked} onClick={() => {
+              if (hostedActionLocked) {
+                return;
+              }
               if (authoritativeMatchIdRef.current) {
-                void submitAuthoritativeIntent({ type: 'resign', ...authoritativeActorForColor(turn) });
+                void submitAuthoritativeIntent({ type: 'resign', ...authoritativeActorForColor(controlSender) });
                 return;
               }
               finalPositionRef.current = { fen: toFEN(board, turn, moved, lm, hmc, fmn), turn };
@@ -5293,9 +6783,12 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             }}
             style={{ flex:1, padding:'9px', fontSize:'12px', background:'linear-gradient(180deg,#8a1a1a,#5a0f0f)', color:'#fff', border:'1px solid rgba(220,60,60,0.4)', borderRadius:'7px', cursor:'pointer', fontWeight:'bold', boxShadow:'0 2px 12px rgba(180,30,30,0.4)' }}>🏳 Resign</button>
             {!drawOffer
-              ? <button onClick={() => {
+              ? <button disabled={hostedActionLocked} onClick={() => {
+                if (hostedActionLocked) {
+                  return;
+                }
                 if (authoritativeMatchIdRef.current) {
-                void submitAuthoritativeIntent({ type: 'offer_draw', ...authoritativeActorForColor(turn) });
+                void submitAuthoritativeIntent({ type: 'offer_draw', ...authoritativeActorForColor(controlSender) });
                   return;
                 }
                 setDrawOffer(turn);
@@ -5323,34 +6816,42 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             <div style={{ display:'flex', gap:'6px' }}>
                   <input
                     value={chatInput}
+                    disabled={hostedActionLocked}
                     onChange={e => setChatInput(e.target.value)}
                     onKeyDown={e => {
+                      if (hostedActionLocked) {
+                        return;
+                      }
                       if (e.key === 'Enter' && chatInput.trim()) {
                         const text = chatInput.trim();
                         if (authoritativeMatchIdRef.current) {
-                void submitAuthoritativeIntent({ type: 'send_chat', ...authoritativeActorForColor(turn), text });
+                void submitAuthoritativeIntent({ type: 'send_chat', ...authoritativeActorForColor(controlSender), text });
                         } else {
-                          setChatMessages(prev => [...prev, { sender: turn, text }]);
+                          setChatMessages(prev => [...prev, { sender: controlSender, text }]);
                         }
                         setChatInput('');
                       }
                     }}
-                placeholder={`${turn==='white'?'⚪ White':'⚫ Black'} says…`}
-                style={{ flex:1, padding:'7px 10px', background:'rgba(0,0,0,0.35)', border:'1px solid rgba(255,165,40,0.25)', borderRadius:'6px', color:'#ffe8a0', fontSize:'11px', outline:'none' }}
+                placeholder={hostedActionLocked ? 'Spectator chat is read-only' : `${actorSeatPlainLabel} says…`}
+                style={{ flex:1, padding:'7px 10px', background:'rgba(0,0,0,0.35)', border:'1px solid rgba(255,165,40,0.25)', borderRadius:'6px', color:'#ffe8a0', fontSize:'11px', outline:'none', opacity: hostedActionLocked ? 0.55 : 1, cursor: hostedActionLocked ? 'not-allowed' : 'text' }}
               />
                   <button
+                    disabled={hostedActionLocked || !chatInput.trim()}
                     onClick={() => {
+                      if (hostedActionLocked) {
+                        return;
+                      }
                       if (chatInput.trim()) {
                         const text = chatInput.trim();
                         if (authoritativeMatchIdRef.current) {
-                void submitAuthoritativeIntent({ type: 'send_chat', ...authoritativeActorForColor(turn), text });
+                void submitAuthoritativeIntent({ type: 'send_chat', ...authoritativeActorForColor(controlSender), text });
                         } else {
-                          setChatMessages(prev => [...prev, { sender: turn, text }]);
+                          setChatMessages(prev => [...prev, { sender: controlSender, text }]);
                         }
                         setChatInput('');
                       }
                     }}
-                style={{ padding:'7px 14px', background:'linear-gradient(135deg, #c8860a, #7a4f08)', color:'#fff8e0', border:'1px solid rgba(255,180,60,0.4)', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:700, boxShadow:'0 2px 12px rgba(200,100,10,0.4)' }}
+                style={{ padding:'7px 14px', background:'linear-gradient(135deg, #c8860a, #7a4f08)', color:'#fff8e0', border:'1px solid rgba(255,180,60,0.4)', borderRadius:'6px', cursor: hostedActionLocked || !chatInput.trim() ? 'not-allowed' : 'pointer', fontSize:'12px', fontWeight:700, boxShadow:'0 2px 12px rgba(200,100,10,0.4)', opacity: hostedActionLocked || !chatInput.trim() ? 0.5 : 1 }}
               >Send</button>
             </div>
           </div>

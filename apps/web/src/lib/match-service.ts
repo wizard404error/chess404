@@ -1,4 +1,5 @@
-import type { MatchSnapshotMessage, PlayerIntent } from '@chess404/contracts';
+import type { MatchModeId, MatchPresenceRequest, MatchSnapshotMessage, PlayerIntent } from '@chess404/contracts';
+import { DEFAULT_MATCH_MODE_ID } from '@chess404/contracts';
 
 const gatewayBaseUrl = '/api/gateway';
 let httpBaseUrl = '/api/realtime';
@@ -16,7 +17,8 @@ export interface CreateMatchInput {
   seed?: number;
   clockSeconds?: number;
   starterHandMode?: 'starter_three' | 'full_catalog';
-  queue?: 'casual' | 'rated';
+  queue?: 'casual' | 'rated' | 'direct';
+  modeId?: MatchModeId;
   whiteGuestId?: string;
   blackGuestId?: string;
   whiteAccountId?: string;
@@ -30,6 +32,7 @@ export interface CreateMatchInput {
 }
 
 export interface StoredRoomMeta extends CreateMatchInput {
+  viewerSeat?: 'white' | 'black' | null;
   whiteClaimExpiresAt?: string;
   blackClaimExpiresAt?: string;
 }
@@ -100,6 +103,23 @@ export async function applyIntent(matchId: string, intent: Omit<PlayerIntent, 'm
   return unwrapResponse<MatchSnapshotMessage>(response);
 }
 
+export async function sendMatchPresenceHeartbeat(
+  matchId: string,
+  presence: MatchPresenceRequest,
+): Promise<void> {
+  const response = await fetch(buildPresenceUrl(matchId, presence), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(presence),
+  });
+
+  if (!response.ok) {
+    await unwrapResponse<never>(response);
+  }
+}
+
 export function createSeatSecret(): string {
   if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
@@ -128,7 +148,11 @@ export function readStoredRoomMeta(matchId: string): StoredRoomMeta | null {
     return null;
   }
   try {
-    return JSON.parse(raw) as StoredRoomMeta;
+    const parsed = JSON.parse(raw) as StoredRoomMeta;
+    return {
+      ...parsed,
+      modeId: parsed.modeId ?? DEFAULT_MATCH_MODE_ID,
+    };
   } catch {
     return null;
   }
@@ -143,7 +167,10 @@ export function writeStoredRoomMeta(matchId: string, meta: StoredRoomMeta | null
     window.localStorage.removeItem(key);
     return;
   }
-  window.localStorage.setItem(key, JSON.stringify(meta));
+  window.localStorage.setItem(key, JSON.stringify({
+    ...meta,
+    modeId: meta.modeId ?? DEFAULT_MATCH_MODE_ID,
+  }));
 }
 
 export function connectToMatchStream(
@@ -306,6 +333,16 @@ function buildIntentUrl(matchId: string, intent?: Partial<PlayerIntent>): string
     return `${httpBaseUrl}/matches/${matchId}`;
   }
   return `${httpBaseUrl}/matches/${matchId}/intents`;
+}
+
+function buildPresenceUrl(matchId: string, presence?: Partial<MatchPresenceRequest>): string {
+  if (typeof presence?.playerClaimToken === 'string' && presence.playerClaimToken.trim()) {
+    return `${gatewayBaseUrl}/matches/${matchId}/presence`;
+  }
+  if (/\/api\/realtime$/i.test(httpBaseUrl)) {
+    return `${httpBaseUrl}/matches/${matchId}/presence`;
+  }
+  return `${httpBaseUrl}/matches/${matchId}/presence`;
 }
 
 function normalizeSecret(value?: string | null): string {

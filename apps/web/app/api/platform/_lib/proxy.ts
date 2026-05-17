@@ -24,6 +24,26 @@ export async function proxyPlatform(request: Request, path: string): Promise<Res
   });
 }
 
+export async function proxyPlatformStream(request: Request, path: string): Promise<Response> {
+  const url = `${backendBaseUrl}${path}`;
+  const init: RequestInit = {
+    method: request.method,
+    headers: filterHeaders(request.headers),
+    cache: 'no-store',
+  };
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    init.body = await request.text();
+  }
+
+  const upstream = await fetch(url, init);
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: filterResponseHeaders(upstream.headers),
+  });
+}
+
 function filterHeaders(headers: Headers): Headers {
   const next = new Headers();
   headers.forEach((value, key) => {

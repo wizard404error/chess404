@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 func TestAccountStoreClaimGuestPersistsAndReloads(t *testing.T) {
@@ -140,7 +142,7 @@ func TestAccountStoreFinalizeMatchUpdatesDirectStats(t *testing.T) {
 		t.Fatalf("expected black account sync to succeed, got %v", err)
 	}
 
-	white, black, changed, err := store.FinalizeMatch("match_account_direct", whiteSession.Account.AccountID, blackSession.Account.AccountID, "white")
+	white, black, changed, err := store.FinalizeMatch("match_account_direct", whiteSession.Account.AccountID, blackSession.Account.AccountID, "white", "rated", contracts.MatchModeHiddenCards)
 	if err != nil {
 		t.Fatalf("expected account finalization to succeed, got %v", err)
 	}
@@ -156,10 +158,10 @@ func TestAccountStoreFinalizeMatchUpdatesDirectStats(t *testing.T) {
 	if len(white.RatingHistory) != 1 || len(black.RatingHistory) != 1 {
 		t.Fatalf("expected direct account history entries, got %#v %#v", white.RatingHistory, black.RatingHistory)
 	}
-	if white.RatingHistory[0].MatchID != "match_account_direct" || white.RatingHistory[0].Result != "win" || white.RatingHistory[0].Delta != 16 || white.RatingHistory[0].RatingAfter != 1246 {
+	if white.RatingHistory[0].MatchID != "match_account_direct" || white.RatingHistory[0].Result != "win" || white.RatingHistory[0].Delta != 16 || white.RatingHistory[0].RatingAfter != 1246 || white.RatingHistory[0].Queue != "rated" || white.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
 		t.Fatalf("unexpected white account history %#v", white.RatingHistory[0])
 	}
-	if black.RatingHistory[0].MatchID != "match_account_direct" || black.RatingHistory[0].Result != "loss" || black.RatingHistory[0].Delta != -16 || black.RatingHistory[0].RatingAfter != 1174 {
+	if black.RatingHistory[0].MatchID != "match_account_direct" || black.RatingHistory[0].Result != "loss" || black.RatingHistory[0].Delta != -16 || black.RatingHistory[0].RatingAfter != 1174 || black.RatingHistory[0].Queue != "rated" || black.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
 		t.Fatalf("unexpected black account history %#v", black.RatingHistory[0])
 	}
 }
@@ -198,5 +200,124 @@ func TestAccountStoreSyncGuestStatsSeedsLegacyAccounts(t *testing.T) {
 	}
 	if synced.Rating != 1275 || synced.MatchesPlayed != 8 || synced.Wins != 5 || synced.Losses != 2 || synced.Draws != 1 {
 		t.Fatalf("unexpected synced legacy account %#v", synced)
+	}
+}
+
+func TestAccountStorePasswordLoginAndLogout(t *testing.T) {
+	store, err := NewAccountStore("")
+	if err != nil {
+		t.Fatalf("expected in-memory account store to initialize, got %v", err)
+	}
+
+	claimed, err := store.ClaimGuest(GuestProfile{GuestID: "guest_white"}, "aurora_auth")
+	if err != nil {
+		t.Fatalf("expected account claim to succeed, got %v", err)
+	}
+	enabled, err := store.EnablePasswordLogin(claimed.Account.AccountID, claimed.SessionToken, "aurora@example.com", "Swordfish88")
+	if err != nil {
+		t.Fatalf("expected password login setup to succeed, got %v", err)
+	}
+	if enabled.Account.AccountID != claimed.Account.AccountID {
+		t.Fatalf("expected enabled account session to match claim, got %#v", enabled)
+	}
+
+	byEmail, err := store.LoginWithPassword("aurora@example.com", "Swordfish88")
+	if err != nil {
+		t.Fatalf("expected email login to succeed, got %v", err)
+	}
+	if byEmail.Account.AccountID != claimed.Account.AccountID || byEmail.SessionToken == "" {
+		t.Fatalf("unexpected email login session %#v", byEmail)
+	}
+
+	byHandle, err := store.LoginWithPassword("aurora_auth", "Swordfish88")
+	if err != nil {
+		t.Fatalf("expected handle login to succeed, got %v", err)
+	}
+	if byHandle.Account.AccountID != claimed.Account.AccountID {
+		t.Fatalf("unexpected handle login session %#v", byHandle)
+	}
+
+	if err := store.LogoutAccount(byHandle.Account.AccountID, byHandle.SessionToken); err != nil {
+		t.Fatalf("expected logout to succeed, got %v", err)
+	}
+	if _, err := store.ResumeAccount(byHandle.Account.AccountID, byHandle.SessionToken); err != ErrUnauthorizedAccountSession {
+		t.Fatalf("expected logged-out session to be invalid, got %v", err)
+	}
+}
+
+func TestAccountStoreRejectsDuplicateEmail(t *testing.T) {
+	store, err := NewAccountStore("")
+	if err != nil {
+		t.Fatalf("expected in-memory account store to initialize, got %v", err)
+	}
+
+	first, err := store.ClaimGuest(GuestProfile{GuestID: "guest_one"}, "aurora_one")
+	if err != nil {
+		t.Fatalf("expected first claim to succeed, got %v", err)
+	}
+	if _, err := store.EnablePasswordLogin(first.Account.AccountID, first.SessionToken, "shared@example.com", "Swordfish88"); err != nil {
+		t.Fatalf("expected first password setup to succeed, got %v", err)
+	}
+
+	second, err := store.ClaimGuest(GuestProfile{GuestID: "guest_two"}, "aurora_two")
+	if err != nil {
+		t.Fatalf("expected second claim to succeed, got %v", err)
+	}
+	if _, err := store.EnablePasswordLogin(second.Account.AccountID, second.SessionToken, "shared@example.com", "Swordfish99"); err != ErrAccountEmailTaken {
+		t.Fatalf("expected duplicate email to be rejected, got %v", err)
+	}
+}
+
+func TestAccountStoreManagesMultipleSessionsPerAccount(t *testing.T) {
+	store, err := NewAccountStore("")
+	if err != nil {
+		t.Fatalf("expected in-memory account store to initialize, got %v", err)
+	}
+
+	claimed, err := store.ClaimGuest(GuestProfile{GuestID: "guest_multi"}, "aurora_multi")
+	if err != nil {
+		t.Fatalf("expected account claim to succeed, got %v", err)
+	}
+	if _, err := store.EnablePasswordLogin(claimed.Account.AccountID, claimed.SessionToken, "aurora_multi@example.com", "Swordfish88"); err != nil {
+		t.Fatalf("expected password login setup to succeed, got %v", err)
+	}
+
+	byEmail, err := store.LoginWithPassword("aurora_multi@example.com", "Swordfish88")
+	if err != nil {
+		t.Fatalf("expected email login to succeed, got %v", err)
+	}
+	byHandle, err := store.LoginWithPassword("aurora_multi", "Swordfish88")
+	if err != nil {
+		t.Fatalf("expected handle login to succeed, got %v", err)
+	}
+
+	overview, err := store.ListAccountSessions(claimed.Account.AccountID, claimed.SessionToken)
+	if err != nil {
+		t.Fatalf("expected account session overview to succeed, got %v", err)
+	}
+	if len(overview.Sessions) != 3 {
+		t.Fatalf("expected three active account sessions, got %#v", overview.Sessions)
+	}
+
+	if err := store.RevokeAccountSession(claimed.Account.AccountID, claimed.SessionToken, byEmail.SessionToken); err != nil {
+		t.Fatalf("expected targeted account session revoke to succeed, got %v", err)
+	}
+	if _, err := store.ResumeAccount(byEmail.Account.AccountID, byEmail.SessionToken); err != ErrUnauthorizedAccountSession {
+		t.Fatalf("expected revoked session to be invalid, got %v", err)
+	}
+
+	if err := store.RevokeOtherAccountSessions(claimed.Account.AccountID, claimed.SessionToken); err != nil {
+		t.Fatalf("expected revoke-other-sessions to succeed, got %v", err)
+	}
+	if _, err := store.ResumeAccount(byHandle.Account.AccountID, byHandle.SessionToken); err != ErrUnauthorizedAccountSession {
+		t.Fatalf("expected other session to be invalid after revoke-others, got %v", err)
+	}
+
+	overview, err = store.ListAccountSessions(claimed.Account.AccountID, claimed.SessionToken)
+	if err != nil {
+		t.Fatalf("expected account session overview after revoke-others to succeed, got %v", err)
+	}
+	if len(overview.Sessions) != 1 || overview.Sessions[0].SessionToken != claimed.SessionToken {
+		t.Fatalf("expected only the current session to remain, got %#v", overview.Sessions)
 	}
 }
