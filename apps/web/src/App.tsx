@@ -17,10 +17,8 @@ import CardsPage from './CardsPage';
 import FriendsPage from './FriendsPage';
 import HistoryPage from './HistoryPage';
 import InboxPage from './InboxPage';
-import LobbiesPage from './LobbiesPage';
-import ModesPage from './ModesPage';
+import PlayHubPage from './PlayHubPage';
 import ProfilesPage from './ProfilesPage';
-import QueuePage from './QueuePage';
 import WatchPage from './WatchPage';
 import RankingsPage from './RankingsPage';
 import CommunityPage from './CommunityPage';
@@ -63,6 +61,24 @@ import {
   touchAccountPresence,
 } from './lib/platform-service';
 import type { QueueName } from './lib/matchmaking-service';
+
+type AppPage =
+  | 'Play'
+  | 'Match'
+  | 'Watch'
+  | 'Rankings'
+  | 'Profiles'
+  | 'Account'
+  | 'History'
+  | 'Friends'
+  | 'Inbox'
+  | 'Cards'
+  | 'Community'
+  | 'Status'
+  | 'Admin'
+  | 'Modes'
+  | 'Queue'
+  | 'Lobbies';
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 const AUTHORITATIVE_JOKER_MECHANICS = new Set<CardMechanic>([
@@ -430,7 +446,8 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     wsBaseUrl: runtimeConfig?.matchServiceWsBase,
   } satisfies MatchServiceRuntimeConfig);
   const [hostedRuntime, setHostedRuntime] = React.useState(false);
-  const [activePage, setActivePage] = React.useState<string>('Play');
+  const [activePage, setActivePage] = React.useState<AppPage>('Play');
+  const [secondaryMenuOpen, setSecondaryMenuOpen] = React.useState(false);
   const [friendsAttentionCount, setFriendsAttentionCount] = React.useState(0);
   const [inboxUnreadCount, setInboxUnreadCount] = React.useState(0);
   const [socialAlert, setSocialAlert] = React.useState<SocialAlert | null>(null);
@@ -532,6 +549,10 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     window.location.href = `${url.pathname}${url.search}${url.hash}`;
   }, []);
 
+  React.useEffect(() => {
+    setSecondaryMenuOpen(false);
+  }, [activePage]);
+
   const copyLiveMatchLink = React.useCallback(async (matchId: string) => {
     const matchUrl = buildLiveMatchUrl(matchId);
     if (!matchUrl) {
@@ -615,7 +636,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
   const handlePrimaryShellAuthenticated = React.useCallback((guestSession: PlatformGuestSession, accountSession: PlatformAccountSession) => {
     handleSeatAuthenticated('white', guestSession, accountSession);
-    setActivePage(hostedRuntime ? 'Queue' : 'Play');
+    setActivePage('Play');
   }, [handleSeatAuthenticated, hostedRuntime]);
 
   // Card state
@@ -979,7 +1000,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           return current;
         }
         const identity = readStoredAccountIdentity('white');
-        return identity.accountId && identity.sessionToken ? 'Queue' : 'Account';
+        return identity.accountId && identity.sessionToken ? 'Play' : 'Account';
       });
     }
   }, []);
@@ -1210,7 +1231,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       setActivePage('Profiles');
     } else if (!requestedMatchId && nextHosted) {
       const identity = readStoredAccountIdentity('white');
-      setActivePage(identity.accountId && identity.sessionToken ? 'Queue' : 'Account');
+      setActivePage(identity.accountId && identity.sessionToken ? 'Play' : 'Account');
     }
     setProfileQueryReady(true);
     setHistoryQueryReady(true);
@@ -1454,8 +1475,9 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     if (!matchQueryReady) {
       return;
     }
-    syncRequestedMatchQuery(activePage === 'Play' ? authoritativeMatchId : null);
-  }, [activePage, authoritativeMatchId, matchQueryReady]);
+    const boardPageActive = activePage === 'Match' || (!hostedRuntime && activePage === 'Play');
+    syncRequestedMatchQuery(boardPageActive ? authoritativeMatchId : null);
+  }, [activePage, authoritativeMatchId, hostedRuntime, matchQueryReady]);
   const [cheaterTurnsLeft, setCheaterTurnsLeft] = React.useState(0);
   const [cheaterColor,     setCheaterColor]     = React.useState<PieceColor | null>(null);
   const cheaterColorRef = React.useRef<PieceColor | null>(null);
@@ -1844,7 +1866,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
               setAuthoritativeDisconnectGraceDeadline(null);
               setViewerSeat(null);
               setMatchSeatMeta(null);
-              setActivePage('Queue');
+              setActivePage('Play');
               return;
             }
             roomMeta = buildStoredRoomMeta(
@@ -1886,7 +1908,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
               setAuthoritativeDisconnectGraceDeadline(null);
               setViewerSeat(null);
               setMatchSeatMeta(null);
-              setActivePage('Queue');
+              setActivePage('Play');
               return;
             }
             roomMeta = buildStoredRoomMeta(
@@ -2325,8 +2347,8 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       return;
     }
     openedBoardMatchRef.current = authoritativeMatchId;
-    setActivePage('Play');
-  }, [authoritativeMatchId]);
+    setActivePage(hostedRuntime ? 'Match' : 'Play');
+  }, [authoritativeMatchId, hostedRuntime]);
 
   React.useEffect(() => {
     if (!authoritativeMatchId) {
@@ -2496,11 +2518,6 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     };
   }, [authoritativeMatchId, over, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, buildGatewayBootstrapRequest]);
 
-  const playTabLabel = authoritativeMatchId
-    ? 'Match'
-    : hostedRuntime
-      ? 'Board'
-      : 'Play';
   const boardStatusLabel = authoritativeMatchId
     ? authoritativeStatus === 'waiting'
       ? 'Private Match Waiting Room'
@@ -2508,30 +2525,34 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         ? (authoritativeLive ? 'Spectating Live Match' : 'Spectator Sync Reconnecting')
         : (authoritativeLive ? 'Online Match Live' : 'Match Sync Reconnecting')
     : hostedRuntime
-      ? 'Hosted Solo Board'
+      ? 'Competitive Match Destination'
       : 'Local Play Sandbox';
   const hasPrimaryAccountSession = Boolean((primaryAccountIdentity.accountId ?? '').trim() && (primaryAccountIdentity.sessionToken ?? '').trim());
   const showSocialNav = hasPrimaryAccountSession || activePage === 'Friends' || activePage === 'Inbox';
-  const showAdminNav = hasPrimaryAccountSession;
-  const navItems: Array<{ key: string; label: string; badge?: number | null }> = [
-    { key: 'Play', label: playTabLabel },
-    { key: 'Modes', label: 'Modes' },
-    { key: 'Queue', label: 'Queue' },
-    { key: 'Lobbies', label: 'Lobbies' },
-    ...(showSocialNav ? [
-      { key: 'Friends', label: 'Friends', badge: friendsAttentionCount > 0 ? friendsAttentionCount : null },
-      { key: 'Inbox', label: 'Inbox', badge: inboxUnreadCount > 0 ? inboxUnreadCount : null },
-    ] : []),
-    { key: 'Profiles', label: 'Profiles' },
+  const showAdminNav = hasPrimaryAccountSession || activePage === 'Admin';
+  const primaryNavItems: Array<{ key: AppPage; label: string }> = [
+    { key: 'Play', label: 'Play' },
     { key: 'Watch', label: 'Watch' },
-    { key: 'History', label: 'History' },
-    { key: 'Cards', label: 'Cards' },
     { key: 'Rankings', label: 'Rankings' },
-    { key: 'Community', label: 'Community' },
-    ...(showAdminNav || activePage === 'Admin' ? [{ key: 'Admin', label: 'Admin' }] : []),
-    { key: 'Status', label: 'Status' },
-    { key: 'Account', label: hasPrimaryAccountSession ? 'Account' : 'Sign In' },
+    { key: 'Profiles', label: 'Profiles' },
   ];
+  const secondaryNavItems: Array<{ key: AppPage; label: string; badge?: number | null }> = [
+    { key: 'History', label: 'History' },
+    ...(showSocialNav ? [
+      { key: 'Friends' as const, label: 'Friends', badge: friendsAttentionCount > 0 ? friendsAttentionCount : null },
+      { key: 'Inbox' as const, label: 'Inbox', badge: inboxUnreadCount > 0 ? inboxUnreadCount : null },
+    ] : []),
+    { key: 'Cards', label: 'Cards' },
+    { key: 'Community', label: 'Community' },
+    { key: 'Status', label: 'Status' },
+    ...(showAdminNav ? [{ key: 'Admin' as const, label: 'Admin' }] : []),
+  ];
+  const activeSecondaryNav = secondaryNavItems.some((item) => item.key === activePage);
+  const showReturnToMatch = hostedRuntime && Boolean(authoritativeMatchId);
+  const showPlayHub = hostedRuntime
+    ? (activePage === 'Play' || activePage === 'Modes' || activePage === 'Queue' || activePage === 'Lobbies')
+    : (activePage === 'Modes' || activePage === 'Queue' || activePage === 'Lobbies');
+  const showBoardSurface = activePage === 'Match' || (!hostedRuntime && activePage === 'Play');
   const controlledSeat = hostedRuntime ? viewerSeat : null;
   const topSeat: PieceColor = controlledSeat === 'black' ? 'white' : 'black';
   const bottomSeat: PieceColor = controlledSeat === 'black' ? 'black' : 'white';
@@ -4899,7 +4920,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     clearRequestedMatchQuery();
     setGameKey(k => k + 1);
     if (hostedRuntime) {
-      setActivePage('Queue');
+      setActivePage('Play');
       return;
     }
     setTimeout(() => startAbortCountdown(), 0);
@@ -5612,22 +5633,24 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       {/* TOP NAV */}
       <nav style={{
         display:'flex', alignItems:'center', justifyContent:'space-between',
-        padding:'0 28px', height:'58px', flexShrink:0,
-        background:'rgba(8,4,20,0.75)',
+        padding:'0 28px', minHeight:'62px', flexShrink:0,
+        background:'rgba(8,4,20,0.82)',
         backdropFilter:'blur(20px)',
         WebkitBackdropFilter:'blur(20px)',
         borderBottom:'1px solid rgba(255,165,40,0.25)',
         boxShadow:'0 4px 32px rgba(0,0,0,0.5), inset 0 -1px 0 rgba(255,140,0,0.1)',
         position:'relative', zIndex:100,
+        gap:'18px',
+        flexWrap:'wrap',
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:'12px', minWidth:'180px' }}>
           <div style={{ width:'38px', height:'38px', borderRadius:'8px', background:'linear-gradient(135deg, #c8860a 0%, #8b5e0a 100%)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', boxShadow:'0 0 18px rgba(200,134,10,0.6)', border:'1px solid rgba(255,180,60,0.5)' }}>♛</div>
-          <span style={{ fontSize:'22px', fontWeight:800, letterSpacing:'1px', background:'linear-gradient(135deg, #ffd700 0%, #c8860a 50%, #fff8e0 100%)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', textShadow:'none' }}>CardChess</span>
+          <span style={{ fontSize:'22px', fontWeight:800, letterSpacing:'1px', color:'#fff1c7' }}>CardChess</span>
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:'2px' }}>
-          {navItems.map((item, i) => (
+        <div style={{ display:'flex', alignItems:'center', gap:'6px', flex:'1 1 auto', flexWrap:'wrap' }}>
+          {primaryNavItems.map((item, i) => (
             <button key={item.key} onClick={() => setActivePage(item.key)} style={{
-              padding:'8px 18px', fontSize:'13px', fontWeight: i===0?700:500,
+              padding:'8px 16px', fontSize:'13px', fontWeight: i===0?700:600,
               background: activePage===item.key?'linear-gradient(180deg, rgba(200,134,10,0.35) 0%, rgba(139,94,10,0.4) 100%)':'transparent',
               color: activePage===item.key?'#ffd700':'rgba(200,185,140,0.8)',
               border: activePage===item.key?'1px solid rgba(200,134,10,0.6)':'1px solid transparent',
@@ -5642,26 +5665,101 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
               onMouseLeave={e => { if (activePage!==item.key) (e.target as HTMLButtonElement).style.color='rgba(200,185,140,0.8)'; }}
             >
               <span>{item.label}</span>
-              {item.badge ? (
-                <span style={{
-                  minWidth:'18px',
-                  padding:'1px 6px',
-                  borderRadius:'999px',
-                  background:'rgba(255,215,0,0.18)',
-                  border:'1px solid rgba(255,215,0,0.22)',
-                  color:'#fff3cf',
-                  fontSize:'11px',
-                  fontWeight:800,
-                  lineHeight:1.4,
-                }}>{item.badge}</span>
-              ) : null}
             </button>
           ))}
         </div>
-        <div style={{ display:'flex', gap:'10px', minWidth:'180px', justifyContent:'flex-end' }}>
-          <button onClick={() => setActivePage('Profiles')} style={{ padding:'7px 20px', fontSize:'13px', fontWeight:600, background:'transparent', color:'rgba(220,200,150,0.9)', border:'1px solid rgba(180,130,60,0.45)', borderRadius:'6px', cursor:'pointer', transition:'all 0.15s' }}>Profiles</button>
-          <button onClick={() => setActivePage('Account')} style={{ padding:'7px 20px', fontSize:'13px', fontWeight:700, background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)', color:'#fff8e0', border:'1px solid rgba(255,180,60,0.5)', borderRadius:'6px', cursor:'pointer', boxShadow:'0 2px 14px rgba(200,134,10,0.5)' }}>{hasPrimaryAccountSession ? 'My Account' : 'Sign In'}</button>
+        <div style={{ display:'flex', gap:'10px', minWidth:'180px', justifyContent:'flex-end', alignItems:'center', marginLeft:'auto' }}>
+          {showReturnToMatch ? (
+            <button
+              onClick={() => setActivePage('Match')}
+              style={{
+                padding:'8px 16px',
+                fontSize:'12px',
+                fontWeight:800,
+                background: activePage === 'Match'
+                  ? 'linear-gradient(180deg, rgba(58,110,210,0.9) 0%, rgba(28,54,112,0.95) 100%)'
+                  : 'rgba(58,110,210,0.12)',
+                color:'#eff6ff',
+                border:'1px solid rgba(122,166,255,0.34)',
+                borderRadius:'8px',
+                cursor:'pointer',
+              }}
+            >
+              Return To Match
+            </button>
+          ) : null}
+          <button
+            onClick={() => setSecondaryMenuOpen(current => !current)}
+            style={{
+              padding:'8px 14px',
+              fontSize:'12px',
+              fontWeight:700,
+              background: activeSecondaryNav || secondaryMenuOpen ? 'rgba(255,255,255,0.08)' : 'transparent',
+              color:'rgba(220,200,150,0.9)',
+              border:'1px solid rgba(180,130,60,0.3)',
+              borderRadius:'8px',
+              cursor:'pointer',
+            }}
+          >
+            More
+          </button>
+          <button onClick={() => setActivePage('Account')} style={{ padding:'8px 18px', fontSize:'13px', fontWeight:700, background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)', color:'#fff8e0', border:'1px solid rgba(255,180,60,0.5)', borderRadius:'8px', cursor:'pointer', boxShadow:'0 2px 14px rgba(200,134,10,0.5)' }}>{hasPrimaryAccountSession ? 'Account' : 'Sign In'}</button>
         </div>
+        {secondaryMenuOpen ? (
+          <div style={{
+            position:'absolute',
+            top:'calc(100% + 10px)',
+            right:'28px',
+            width:'min(320px, calc(100vw - 32px))',
+            padding:'12px',
+            borderRadius:'16px',
+            background:'linear-gradient(180deg, rgba(14,18,30,0.98) 0%, rgba(9,12,20,0.99) 100%)',
+            border:'1px solid rgba(255,165,40,0.18)',
+            boxShadow:'0 18px 48px rgba(0,0,0,0.35)',
+            display:'grid',
+            gap:'8px',
+          }}>
+            <div style={{ color:'#ffcf72', fontSize:'11px', fontWeight:800, letterSpacing:'1.2px', textTransform:'uppercase', padding:'4px 6px 8px' }}>
+              Secondary Surfaces
+            </div>
+            {secondaryNavItems.map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setActivePage(item.key)}
+                style={{
+                  padding:'10px 12px',
+                  borderRadius:'10px',
+                  border: activePage === item.key ? '1px solid rgba(255,165,40,0.24)' : '1px solid rgba(255,255,255,0.06)',
+                  background: activePage === item.key ? 'rgba(200,134,10,0.14)' : 'rgba(255,255,255,0.03)',
+                  color: activePage === item.key ? '#fff2c8' : 'rgba(244,232,200,0.82)',
+                  display:'flex',
+                  alignItems:'center',
+                  justifyContent:'space-between',
+                  gap:'10px',
+                  cursor:'pointer',
+                  fontWeight:700,
+                  fontSize:'12px',
+                  textAlign:'left',
+                }}
+              >
+                <span>{item.label}</span>
+                {item.badge ? (
+                  <span style={{
+                    minWidth:'18px',
+                    padding:'1px 6px',
+                    borderRadius:'999px',
+                    background:'rgba(255,215,0,0.18)',
+                    border:'1px solid rgba(255,215,0,0.22)',
+                    color:'#fff3cf',
+                    fontSize:'11px',
+                    fontWeight:800,
+                    lineHeight:1.4,
+                  }}>{item.badge}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </nav>
 
       {visibleSocialAlert ? (
@@ -5722,7 +5820,31 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         </div>
       ) : null}
 
-      {activePage === 'History' ? (
+      {showPlayHub ? (
+        <PlayHubPage
+          hostedRuntime={hostedRuntime}
+          whiteProfile={whiteProfile}
+          blackProfile={blackProfile}
+          preferredQueue={queueLaunchIntent?.queue}
+          preferredModeId={queueLaunchIntent?.modeId}
+          displayName={whiteProfile?.displayName ?? null}
+          identity={{
+            guestId: readStoredGuestIdentity('white').guestId,
+            sessionSecret: readStoredGuestIdentity('white').sessionSecret,
+            sessionToken: readStoredGuestIdentity('white').sessionToken,
+            accountId: primaryAccountIdentity.accountId,
+            accountSessionToken: primaryAccountIdentity.sessionToken,
+          }}
+          activeMatchId={authoritativeMatchId}
+          activeMatchQueue={activeMatchRoomMeta?.queue ?? null}
+          activeMatchModeId={activeMatchRoomMeta?.modeId ?? null}
+          boardStatusLabel={boardStatusLabel}
+          viewerSeat={viewerSeat}
+          matchDestinationNotice={matchDestinationNotice}
+          onReturnToMatch={() => setActivePage('Match')}
+          onCopyMatchLink={(matchId) => { void copyLiveMatchLink(matchId); }}
+        />
+      ) : activePage === 'History' ? (
         <HistoryPage
           focusMatchId={historyFocusMatchId}
           focusGuestId={historyFocusGuestId}
@@ -5733,30 +5855,6 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           }}
           onClearGuestFocus={() => setHistoryFocusGuestId(null)}
           onWatchLiveMatch={openLiveMatch}
-        />
-      ) : activePage === 'Modes' ? (
-        <ModesPage onPlayMode={(modeId, queue) => {
-          setQueueLaunchIntent({ modeId, queue });
-          setActivePage('Queue');
-        }} />
-      ) : activePage === 'Queue' ? (
-        <QueuePage
-          whiteProfile={whiteProfile}
-          blackProfile={blackProfile}
-          preferredQueue={queueLaunchIntent?.queue}
-          preferredModeId={queueLaunchIntent?.modeId}
-        />
-      ) : activePage === 'Lobbies' ? (
-        <LobbiesPage
-          hostedRuntime={hostedRuntime}
-          displayName={whiteProfile?.displayName ?? null}
-          identity={{
-            guestId: readStoredGuestIdentity('white').guestId,
-            sessionSecret: readStoredGuestIdentity('white').sessionSecret,
-            sessionToken: readStoredGuestIdentity('white').sessionToken,
-            accountId: primaryAccountIdentity.accountId,
-            accountSessionToken: primaryAccountIdentity.sessionToken,
-          }}
         />
       ) : activePage === 'Friends' ? (
         <FriendsPage
@@ -5798,7 +5896,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           onOpenReplay={openReplayMatch}
         />
       ) : activePage === 'Cards' ? (
-        <CardsPage embedded onNavigate={(page: string) => setActivePage(page)} />
+        <CardsPage embedded onNavigate={(page: string) => setActivePage(page as AppPage)} />
       ) : activePage === 'Rankings' ? (
         <RankingsPage
           onViewGuest={(guestId) => {
@@ -5832,7 +5930,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             externalNotice={shellAccountNotice}
             onAuthenticated={handlePrimaryShellAuthenticated}
             onOpenAccount={() => setActivePage('Account')}
-            onContinue={() => setActivePage(hostedRuntime ? 'Queue' : 'Play')}
+            onContinue={() => setActivePage('Play')}
             onAuthStateChange={syncPrimaryAccountIdentity}
           />
         ) : (
@@ -5845,7 +5943,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             onAuthStateChange={syncPrimaryAccountIdentity}
           />
         )
-      ) : hostedRuntime && !authoritativeMatchId ? (
+      ) : showBoardSurface && hostedRuntime && !authoritativeMatchId ? (
         <div style={{ display:'flex', flex:1, minHeight:0, alignItems:'center', justifyContent:'center', padding:'28px' }}>
           <div style={{
             width:'min(720px, 100%)',
@@ -5860,14 +5958,14 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
               No Active Online Match
             </div>
             <div style={{ color:'#f3e6bf', fontSize:'28px', fontWeight:800, marginBottom:'10px' }}>
-              Join queue before the board opens
+              Return to the play hub
             </div>
             <div style={{ color:'rgba(255,232,180,0.72)', fontSize:'14px', lineHeight:1.6, maxWidth:'560px', margin:'0 auto 20px' }}>
-              On the hosted site, one browser should behave like one player. You should only land on the match board after queue finds you a real opponent and opens a real assigned room.
+              On the hosted site, online play starts from the Play hub. Open quick pair or create a private invite room there, then come back once a real room exists.
             </div>
             <div style={{ display:'flex', gap:'12px', justifyContent:'center', flexWrap:'wrap' }}>
               <button
-                onClick={() => setActivePage('Queue')}
+                onClick={() => setActivePage('Play')}
                 style={{
                   padding:'12px 22px',
                   background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)',
@@ -5880,14 +5978,14 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
                   boxShadow:'0 6px 20px rgba(200,134,10,0.35)',
                 }}
               >
-                Go To Queue
+                Go To Play
               </button>
               <button
                 onClick={() => {
                   writeStoredActiveMatchId(null);
                   clearRequestedMatchQuery();
                   requestedMatchIdRef.current = null;
-                  setActivePage('Queue');
+                  setActivePage('Play');
                 }}
                 style={{
                   padding:'12px 22px',
@@ -5905,7 +6003,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             </div>
           </div>
         </div>
-      ) : (
+      ) : showBoardSurface ? (
       <div style={{ display:'flex', alignItems:'stretch', flex:1, padding:'12px 28px', gap:'0', overflow:'hidden', minHeight:0 }}>
 
         {/* ── Left column ── */}
@@ -6857,7 +6955,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
           </div>
         </div>
       </div>
-      )}
+      ) : null}
     </div>
     </>
   );

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -216,7 +218,23 @@ func matchmakingTicketStoreRedisKey() string {
 }
 
 func matchmakingMatchServiceURL() string {
-	return strings.TrimRight(envOrDefault("MATCH_SERVICE_INTERNAL_URL", "http://127.0.0.1:8082"), "/")
+	return resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8082")
+}
+
+func resolveInternalServiceURL(explicit string, fallback string) string {
+	trimmedFallback := strings.TrimRight(strings.TrimSpace(fallback), "/")
+	trimmed := strings.TrimRight(strings.TrimSpace(explicit), "/")
+	if trimmed == "" || strings.Contains(trimmed, "${{") || strings.HasSuffix(trimmed, ":") {
+		return trimmedFallback
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return trimmedFallback
+	}
+	if parsed.Port() == "" && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".railway.internal") {
+		parsed.Host = net.JoinHostPort(parsed.Hostname(), "8080")
+	}
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 func openMatchmakingService() (*matchmaking.Service, error) {
