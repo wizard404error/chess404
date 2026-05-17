@@ -2,19 +2,12 @@ import React from 'react';
 import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { MatchModeId } from '@chess404/contracts';
 import type { AccountLeaderboardSummary, AccountLeaderboardSpotlight, AccountProfile, AccountSeasonSummary, SeasonOption } from './lib/platform-service';
+import { formatLastSeenLabel } from './lib/display';
 import { fetchAccountLeaderboard } from './lib/platform-service';
 
 interface RankingsPageProps {
   onViewGuest?: (guestId: string) => void;
   onViewAccount?: (handle: string) => void;
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
 }
 
 function formatRatingDelta(delta: number): string {
@@ -52,6 +45,13 @@ function renderSpotlightLabel(summary: AccountLeaderboardSummary | undefined, se
     return `${OFFICIAL_MATCH_MODES.find((mode) => mode.id === selectedModeId)?.label ?? 'Mode'} ladder`;
   }
   return 'Current ladder';
+}
+
+function describeSparseLane(selectedModeId: MatchModeId | '', selectedSeasonId: string): string {
+  if (selectedModeId || selectedSeasonId) {
+    return 'No claimed account has posted rated results for this exact lane yet.';
+  }
+  return 'No claimed accounts are on the board yet. Open Account, claim a handle, and play your first rated match to seed the ladder.';
 }
 
 export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPageProps): React.ReactElement {
@@ -104,7 +104,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
             <div>
               <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Account Rankings</div>
               <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-                Claimed account leaderboard with official-mode lanes and season-aware momentum filters.
+                Track the strongest claimed accounts by official mode, season, and rated form.
               </div>
             </div>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -168,7 +168,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px' }}>
-          {!loading && summary && accounts.length > 0 && (
+          {!loading && summary && accounts.length > 1 && (
             <div style={{ display: 'grid', gap: '12px', marginBottom: '18px' }}>
               <div
                 style={{
@@ -205,6 +205,28 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
             </div>
           )}
 
+          {!loading && summary && accounts.length === 1 && (
+            <div
+              style={{
+                marginBottom: '18px',
+                padding: '16px 18px',
+                borderRadius: '14px',
+                background: 'linear-gradient(180deg, rgba(200,134,10,0.16) 0%, rgba(70,42,8,0.22) 100%)',
+                border: '1px solid rgba(255,180,60,0.18)',
+              }}
+            >
+              <div style={{ color: '#ffcf72', fontSize: '11px', fontWeight: 800, letterSpacing: '0.9px', textTransform: 'uppercase' }}>
+                First account on this lane
+              </div>
+              <div style={{ color: '#fff4d2', fontSize: '20px', fontWeight: 900, marginTop: '8px' }}>
+                @{accounts[0]?.handle} sets the first benchmark
+              </div>
+              <div style={{ color: 'rgba(255,232,180,0.7)', fontSize: '12px', lineHeight: 1.6, marginTop: '6px' }}>
+                {renderSpotlightLabel(summary, selectedModeId)} has only one claimed competitor right now. More rated results will unlock richer ladder comparisons and momentum cards.
+              </div>
+            </div>
+          )}
+
           {error && (
             <div style={{
               marginBottom: '16px',
@@ -223,10 +245,18 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
           {loading ? (
             <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>Loading rankings...</div>
           ) : accounts.length === 0 ? (
-            <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>
-              {selectedSeasonId || selectedModeId
-                ? 'No accounts have ladder activity for that mode and season filter yet.'
-                : 'No claimed accounts yet. Open the Account tab to claim a handle and start building the account ladder.'}
+            <div
+              style={{
+                padding: '18px',
+                borderRadius: '14px',
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,165,40,0.1)',
+                color: 'rgba(255,232,180,0.72)',
+                fontSize: '13px',
+                lineHeight: 1.65,
+              }}
+            >
+              {describeSparseLane(selectedModeId, selectedSeasonId)}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -271,7 +301,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
                     <div style={{ color: 'rgba(255,232,180,0.62)', fontSize: '11px', textAlign: 'right' }}>
                       {season
                         ? `${season.label} peak ${season.peakRating}`
-                        : `Last seen ${formatDateTime(account.lastSeenAt)}`}
+                        : formatLastSeenLabel(account.lastSeenAt)}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                       <button

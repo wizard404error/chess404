@@ -1236,6 +1236,8 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
     }
     if (requestedAuthLink) {
       setActivePage('Account');
+    } else if (requestedMatchId?.trim()) {
+      setActivePage(nextHosted ? 'Match' : 'Play');
     } else if (!requestedMatchId && ((requestedReplayMatchId?.trim() ?? '') || (requestedGuestId?.trim() ?? ''))) {
       setHistoryFocusMatchId(requestedReplayMatchId?.trim() ? requestedReplayMatchId.trim() : null);
       setHistoryFocusGuestId(requestedGuestId?.trim() ? requestedGuestId.trim() : null);

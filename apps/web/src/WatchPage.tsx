@@ -1,7 +1,8 @@
 import React from 'react';
-import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
+import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { MatchModeId } from '@chess404/contracts';
 import { fetchArchivedMatches, type MatchArchiveEntry, type PublicMatchStatusFilter } from './lib/platform-service';
+import { formatDateTime, formatMatchPlayers, formatMatchResult, formatModeLabel } from './lib/display';
 
 const FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
@@ -50,21 +51,12 @@ async function copyTextToClipboard(value: string): Promise<boolean> {
   return false;
 }
 
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
 function parseModeFilterValue(value: string): MatchModeId | '' {
   return OFFICIAL_MATCH_MODES.some((mode) => mode.id === value as MatchModeId) ? (value as MatchModeId) : '';
 }
 
 function modeLabel(modeId?: string): string {
-  const normalized = modeId === 'hidden_cards' ? 'hidden_cards' : DEFAULT_MATCH_MODE_ID;
-  return OFFICIAL_MATCH_MODES.find((mode) => mode.id === normalized)?.label ?? 'Open Cards';
+  return formatModeLabel(modeId);
 }
 
 function queueLabel(queue?: string): string {
@@ -74,24 +66,15 @@ function queueLabel(queue?: string): string {
   if (queue === 'casual') {
     return 'Casual';
   }
-  return 'Direct';
-}
-
-function playersLabel(entry: MatchArchiveEntry): string {
-  return `${entry.whiteName ?? entry.whiteGuestId ?? 'White'} vs ${entry.blackName ?? entry.blackGuestId ?? 'Black'}`;
+  return 'Private';
 }
 
 function resultLabel(entry: MatchArchiveEntry): string {
-  if (entry.status === 'active') {
-    return 'Live now';
-  }
-  if (entry.winner === 'draw') {
-    return 'Draw';
-  }
-  if (entry.winner) {
-    return `${entry.winner} won`;
-  }
-  return entry.status;
+  return formatMatchResult({
+    status: entry.status,
+    winner: entry.winner,
+    finishReason: entry.finishReason,
+  });
 }
 
 function renderBoardPreview(board: MatchArchiveEntry['snapshot']['match']['board']): React.ReactElement {
@@ -316,8 +299,8 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
           ) : matches.length === 0 ? (
             <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px', lineHeight: 1.6 }}>
               {status === 'active'
-                ? `No live public games are visible for ${modeId ? modeLabel(modeId) : 'the selected filters'} yet.`
-                : `No finished public matches are available for ${modeId ? modeLabel(modeId) : 'the selected filters'} yet.`}
+                ? `No live public games are visible for ${modeId ? formatModeLabel(modeId) : 'the selected filters'} yet.`
+                : `No finished public matches are available for ${modeId ? formatModeLabel(modeId) : 'the selected filters'} yet.`}
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '14px' }}>
@@ -336,7 +319,14 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'flex-start' }}>
                     <div>
-                      <div style={{ color: '#fff2c8', fontSize: '16px', fontWeight: 800 }}>{playersLabel(entry)}</div>
+                      <div style={{ color: '#fff2c8', fontSize: '16px', fontWeight: 800 }}>
+                        {formatMatchPlayers({
+                          whiteName: entry.whiteName,
+                          whiteHandle: entry.whiteAccountHandle,
+                          blackName: entry.blackName,
+                          blackHandle: entry.blackAccountHandle,
+                        })}
+                      </div>
                       <div style={{ color: 'rgba(255,232,180,0.7)', fontSize: '12px', marginTop: '5px' }}>
                         {queueLabel(entry.queue)} · {modeLabel(entry.modeId)}
                       </div>
