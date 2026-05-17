@@ -11,6 +11,7 @@ interface QueuePageProps {
   blackProfile: GuestProfile | null;
   preferredQueue?: QueueName | null;
   preferredModeId?: MatchModeId | null;
+  embedded?: boolean;
 }
 
 type QueueSide = 'white' | 'black';
@@ -146,6 +147,7 @@ export default function QueuePage({
   blackProfile,
   preferredQueue = null,
   preferredModeId = null,
+  embedded = false,
 }: QueuePageProps): React.ReactElement {
   const [hostedRuntime, setHostedRuntime] = React.useState(false);
   const [queue, setQueue] = React.useState<QueueName>(() => readStoredQueueSelection());
@@ -613,10 +615,16 @@ export default function QueuePage({
   };
 
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0, padding: '22px 28px 26px', gap: '18px' }}>
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+      flex: embedded ? undefined : 1,
+      minHeight: 0,
+      padding: embedded ? 0 : '22px 28px 26px',
+      gap: '18px',
+      alignItems: 'start',
+    }}>
       <div style={{
-        width: '360px',
-        flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,

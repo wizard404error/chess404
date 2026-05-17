@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -1109,9 +1111,9 @@ func bootstrapMessage(status GatewaySystemStatus) string {
 
 func gatewayConfigFromEnv() GatewayConfig {
 	return GatewayConfig{
-		MatchServiceURL:       strings.TrimRight(envOrDefault("MATCH_SERVICE_INTERNAL_URL", "http://127.0.0.1:8082"), "/"),
-		PlatformServiceURL:    strings.TrimRight(envOrDefault("PLATFORM_SERVICE_INTERNAL_URL", "http://127.0.0.1:8083"), "/"),
-		MatchmakingServiceURL: strings.TrimRight(envOrDefault("MATCHMAKING_SERVICE_INTERNAL_URL", "http://127.0.0.1:8084"), "/"),
+		MatchServiceURL:       resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8082"),
+		PlatformServiceURL:    resolveInternalServiceURL(os.Getenv("PLATFORM_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8083"),
+		MatchmakingServiceURL: resolveInternalServiceURL(os.Getenv("MATCHMAKING_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8084"),
 	}
 }
 
@@ -1120,6 +1122,22 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func resolveInternalServiceURL(explicit string, fallback string) string {
+	trimmedFallback := strings.TrimRight(strings.TrimSpace(fallback), "/")
+	trimmed := strings.TrimRight(strings.TrimSpace(explicit), "/")
+	if trimmed == "" || strings.Contains(trimmed, "${{") || strings.HasSuffix(trimmed, ":") {
+		return trimmedFallback
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return trimmedFallback
+	}
+	if parsed.Port() == "" && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".railway.internal") {
+		parsed.Host = net.JoinHostPort(parsed.Hostname(), "8080")
+	}
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 func listenAddr(key string, fallbackPort int) string {

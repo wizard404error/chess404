@@ -7,9 +7,10 @@ interface LobbiesPageProps {
   identity: PrivateMatchIdentity | null;
   displayName?: string | null;
   hostedRuntime: boolean;
+  embedded?: boolean;
 }
 
-export default function LobbiesPage({ identity, displayName, hostedRuntime }: LobbiesPageProps): React.ReactElement {
+export default function LobbiesPage({ identity, displayName, hostedRuntime, embedded = false }: LobbiesPageProps): React.ReactElement {
   const [modeId, setModeId] = React.useState<MatchModeId>(DEFAULT_MATCH_MODE_ID);
   const [preferredSeat, setPreferredSeat] = React.useState<PieceColor>('white');
   const [creating, setCreating] = React.useState(false);
@@ -72,15 +73,17 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime }: Lo
   }, [created?.matchId]);
 
   return (
-    <div style={{ maxWidth: '980px', margin: '0 auto', display: 'grid', gap: '18px' }}>
-      <div style={{ padding: '22px', borderRadius: '18px', background: 'linear-gradient(180deg, rgba(14,20,38,0.92) 0%, rgba(7,11,22,0.98) 100%)', border: '1px solid rgba(120,150,255,0.18)', boxShadow: '0 18px 48px rgba(0,0,0,0.28)' }}>
-        <div style={{ color: '#f3f6ff', fontSize: '28px', fontWeight: 900 }}>Private Lobbies</div>
-        <div style={{ marginTop: '8px', color: 'rgba(214,224,255,0.76)', fontSize: '14px', lineHeight: 1.65 }}>
-          Create a private invite room, share the link, and let the second device auto-join the empty seat like a real quick-pair platform should.
+    <div style={{ maxWidth: embedded ? 'none' : '980px', margin: '0 auto', display: 'grid', gap: '18px' }}>
+      {!embedded ? (
+        <div style={{ padding: '22px', borderRadius: '18px', background: 'linear-gradient(180deg, rgba(14,20,38,0.92) 0%, rgba(7,11,22,0.98) 100%)', border: '1px solid rgba(120,150,255,0.18)', boxShadow: '0 18px 48px rgba(0,0,0,0.28)' }}>
+          <div style={{ color: '#f3f6ff', fontSize: '28px', fontWeight: 900 }}>Private Lobbies</div>
+          <div style={{ marginTop: '8px', color: 'rgba(214,224,255,0.76)', fontSize: '14px', lineHeight: 1.65 }}>
+            Create a private invite room, share the link, and let the second device auto-join the empty seat like a real quick-pair platform should.
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.15fr) minmax(320px, 0.85fr)', gap: '18px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' }}>
         <div style={{ padding: '20px', borderRadius: '18px', background: 'rgba(10,14,28,0.92)', border: '1px solid rgba(120,150,255,0.14)' }}>
           <div style={{ color: '#ffffff', fontSize: '16px', fontWeight: 800 }}>Create Invite Match</div>
           <div style={{ marginTop: '6px', color: 'rgba(214,224,255,0.7)', fontSize: '12px' }}>

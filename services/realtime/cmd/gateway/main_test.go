@@ -10,6 +10,20 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 )
 
+func TestResolveInternalServiceURLAddsRailwayPortFallback(t *testing.T) {
+	resolved := resolveInternalServiceURL("http://platform-service.railway.internal", "http://127.0.0.1:8083")
+	if resolved != "http://platform-service.railway.internal:8080" {
+		t.Fatalf("expected railway internal host to gain :8080, got %q", resolved)
+	}
+}
+
+func TestResolveInternalServiceURLFallsBackForInvalidTemplate(t *testing.T) {
+	resolved := resolveInternalServiceURL("${{platform-service.RAILWAY_PRIVATE_DOMAIN}}", "http://127.0.0.1:8083")
+	if resolved != "http://127.0.0.1:8083" {
+		t.Fatalf("expected invalid template value to use fallback, got %q", resolved)
+	}
+}
+
 func TestGatewayStatusAggregatesHealthyServices(t *testing.T) {
 	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
