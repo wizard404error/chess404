@@ -79,7 +79,7 @@ function describeOpponent(entry: MatchArchiveEntry, accountId: string): string {
   if (entry.blackAccountId === accountId) {
     return entry.whiteAccountHandle ? `@${entry.whiteAccountHandle}` : (entry.whiteName ?? entry.whiteGuestId ?? 'Unknown');
   }
-  return entry.whiteName ?? entry.blackName ?? entry.matchId;
+  return entry.whiteName ?? entry.blackName ?? 'Unknown opponent';
 }
 
 export default function ProfilesPage({
@@ -287,9 +287,9 @@ export default function ProfilesPage({
         document.execCommand('copy');
         document.body.removeChild(textArea);
       }
-      setNotice(`Copied ${profileUrl}`);
+      setNotice('Profile link copied.');
     } catch {
-      setNotice(profileUrl);
+      setNotice('Copy failed. You can still share the current profile URL from the address bar.');
     }
   }, [profile]);
 
@@ -408,11 +408,9 @@ export default function ProfilesPage({
   }, [directorySummary, profile?.accountId]);
 
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0, padding: '22px 28px 26px', gap: '18px' }}>
+    <div className={profile ? 'profile-shell' : 'profile-shell profile-shell--stacked'}>
       <div
         style={{
-          width: '400px',
-          flexShrink: 0,
           minWidth: 0,
           minHeight: 0,
           display: 'flex',
@@ -622,7 +620,7 @@ export default function ProfilesPage({
         <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid rgba(255,165,40,0.12)' }}>
           <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Profile Focus</div>
           <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px', lineHeight: 1.5 }}>
-            Public handle pages are the foundation for shareable player identity, rankings follow-up, and future friend/challenge flows.
+            Public handles tie rankings, replay history, and future social identity into one player-facing destination.
           </div>
         </div>
 
@@ -675,10 +673,37 @@ export default function ProfilesPage({
           {profileLoading ? (
             <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>Loading public profile...</div>
           ) : !profile ? (
-            <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px', lineHeight: 1.6 }}>
-              {resolvedFocusHandle
-                ? 'The requested public handle could not be resolved.'
-                : 'Choose a claimed handle from the left column to open a shareable Chess404 public profile.'}
+            <div className="empty-state">
+              <div>
+                <div className="empty-state__icon">♟</div>
+                <div className="empty-state__title">
+                  {resolvedFocusHandle ? 'That handle is not live yet' : 'Choose a player profile'}
+                </div>
+                <div className="empty-state__body">
+                  {resolvedFocusHandle
+                    ? 'The requested handle could not be resolved to a claimed Chess404 account. Try another search or open a visible ladder profile from the directory.'
+                    : 'Open a claimed handle from the directory to see ratings, season momentum, spotlight badges, and recent replay history in one shareable player page.'}
+                </div>
+                {onOpenAccount ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: '18px' }}>
+                    <button
+                      onClick={onOpenAccount}
+                      style={{
+                        padding: '11px 16px',
+                        borderRadius: '12px',
+                        border: '1px solid rgba(255,190,90,0.34)',
+                        background: 'linear-gradient(180deg, rgba(200,134,10,0.3) 0%, rgba(112,71,8,0.42) 100%)',
+                        color: '#fff6de',
+                        fontSize: '12px',
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Open Account
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

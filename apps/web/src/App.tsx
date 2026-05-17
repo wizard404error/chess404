@@ -24,6 +24,20 @@ import RankingsPage from './RankingsPage';
 import CommunityPage from './CommunityPage';
 import StatusPage from './StatusPage';
 import AccountPage from './AccountPage';
+import AppShell, { type ShellNavGroup, type ShellNavItem, type ShellPageMeta } from './components/layout/AppShell';
+import {
+  AdminIcon,
+  CardsIcon,
+  CommunityIcon,
+  FriendsIcon,
+  HistoryIcon,
+  InboxIcon,
+  PlayIcon,
+  ProfileIcon,
+  StatusIcon,
+  TrophyIcon,
+  WatchIcon,
+} from './components/layout/icons';
 import { fetchGatewayBootstrap } from './lib/system-service';
 import { joinPrivateMatch, rematchPrivateMatch } from './lib/private-match-service';
 import {
@@ -2529,24 +2543,48 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
       : 'Local Play Sandbox';
   const hasPrimaryAccountSession = Boolean((primaryAccountIdentity.accountId ?? '').trim() && (primaryAccountIdentity.sessionToken ?? '').trim());
   const showSocialNav = hasPrimaryAccountSession || activePage === 'Friends' || activePage === 'Inbox';
-  const showAdminNav = hasPrimaryAccountSession || activePage === 'Admin';
-  const primaryNavItems: Array<{ key: AppPage; label: string }> = [
-    { key: 'Play', label: 'Play' },
-    { key: 'Watch', label: 'Watch' },
-    { key: 'Rankings', label: 'Rankings' },
-    { key: 'Profiles', label: 'Profiles' },
+  const showAdminNav = activePage === 'Admin' || activePage === 'Status';
+  const primaryNavItems: ShellNavItem[] = [
+    { key: 'Play', label: 'Play', icon: <PlayIcon /> },
+    { key: 'Watch', label: 'Watch', icon: <WatchIcon /> },
+    { key: 'Rankings', label: 'Rankings', icon: <TrophyIcon /> },
+    { key: 'Profiles', label: 'Profiles', icon: <ProfileIcon /> },
   ];
-  const secondaryNavItems: Array<{ key: AppPage; label: string; badge?: number | null }> = [
-    { key: 'History', label: 'History' },
-    ...(showSocialNav ? [
-      { key: 'Friends' as const, label: 'Friends', badge: friendsAttentionCount > 0 ? friendsAttentionCount : null },
-      { key: 'Inbox' as const, label: 'Inbox', badge: inboxUnreadCount > 0 ? inboxUnreadCount : null },
-    ] : []),
-    { key: 'Cards', label: 'Cards' },
-    { key: 'Community', label: 'Community' },
-    { key: 'Status', label: 'Status' },
-    ...(showAdminNav ? [{ key: 'Admin' as const, label: 'Admin' }] : []),
+  const utilityGroups: ShellNavGroup[] = [
+    {
+      label: 'Library',
+      items: [
+        { key: 'History', label: 'History', icon: <HistoryIcon /> },
+        { key: 'Cards', label: 'Cards', icon: <CardsIcon /> },
+        { key: 'Community', label: 'Community', icon: <CommunityIcon /> },
+      ],
+    },
+    ...(showSocialNav
+      ? [{
+          label: 'Social',
+          items: [
+            { key: 'Friends', label: 'Friends', icon: <FriendsIcon />, badge: friendsAttentionCount > 0 ? friendsAttentionCount : null },
+            { key: 'Inbox', label: 'Inbox', icon: <InboxIcon />, badge: inboxUnreadCount > 0 ? inboxUnreadCount : null },
+          ],
+        } satisfies ShellNavGroup]
+      : []),
+    ...(showAdminNav
+      ? [{
+          label: 'Admin',
+          items: [
+            { key: 'Admin', label: 'Moderation', icon: <AdminIcon /> },
+            { key: 'Status', label: 'Status', icon: <StatusIcon /> },
+          ],
+        } satisfies ShellNavGroup]
+      : []),
   ];
+  const secondaryNavItems = utilityGroups.flatMap((group) =>
+    group.items.map((item) => ({
+      key: item.key as AppPage,
+      label: item.label,
+      badge: item.badge,
+    }))
+  );
   const activeSecondaryNav = secondaryNavItems.some((item) => item.key === activePage);
   const showReturnToMatch = hostedRuntime && Boolean(authoritativeMatchId);
   const showPlayHub = hostedRuntime
@@ -2654,6 +2692,94 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
   React.useEffect(() => {
     setMatchDestinationNotice('');
   }, [activePage, authoritativeMatchId, authoritativeStatus, viewerSeat]);
+  const shellPageMeta: ShellPageMeta = (() => {
+    switch (activePage) {
+      case 'Match':
+        return {
+          eyebrow: 'Match',
+          title: authoritativeMatchId ? boardStatusLabel : 'Live match',
+          description: authoritativeMatchId
+            ? `${activeMatchQueueLabel} · ${activeMatchModeLabel}${activeMatchRoleLabel ? ` · ${activeMatchRoleLabel}` : ''}`
+            : 'Live matches open here once a real room exists.',
+        };
+      case 'Watch':
+        return {
+          eyebrow: 'Watch',
+          title: 'Live games and replays',
+          description: 'Spectate active public matches, browse recent replays, and jump into stable match destinations.',
+        };
+      case 'Rankings':
+        return {
+          eyebrow: 'Rankings',
+          title: 'Competitive ladders',
+          description: 'Track official mode leaders, seasonal momentum, and player progression across the platform.',
+        };
+      case 'Profiles':
+        return {
+          eyebrow: 'Profiles',
+          title: 'Public player identity',
+          description: 'Search claimed handles, inspect competitive snapshots, and open shareable profile destinations.',
+        };
+      case 'History':
+        return {
+          eyebrow: 'History',
+          title: 'Replay archive',
+          description: 'Review finished games through curated player-facing summaries instead of raw platform state.',
+        };
+      case 'Friends':
+        return {
+          eyebrow: 'Friends',
+          title: 'Friend graph',
+          description: 'Manage persistent friendships and direct challenge relationships tied to your account.',
+        };
+      case 'Inbox':
+        return {
+          eyebrow: 'Inbox',
+          title: 'Account inbox',
+          description: 'See social notifications, challenge updates, and unread account events in one place.',
+        };
+      case 'Cards':
+        return {
+          eyebrow: 'Cards',
+          title: 'Card compendium',
+          description: 'Browse curated card powers and learn the mechanics that make Chess404 different from standard chess.',
+        };
+      case 'Community':
+        return {
+          eyebrow: 'Community',
+          title: 'Player activity',
+          description: 'Explore guest and account activity across the broader Chess404 platform.',
+        };
+      case 'Admin':
+        return {
+          eyebrow: 'Admin',
+          title: 'Moderation console',
+          description: 'Review reports and trust actions through the internal moderation workflow.',
+        };
+      case 'Status':
+        return {
+          eyebrow: 'Status',
+          title: 'Operational status',
+          description: 'Internal backend health and routing visibility for signed-in operators.',
+        };
+      case 'Account':
+        return {
+          eyebrow: hasPrimaryAccountSession ? 'Account' : 'Sign In',
+          title: hasPrimaryAccountSession ? 'Account security and identity' : 'Create your Chess404 account',
+          description: 'Chess404 is competitive online chess with curated card powers. Sign in once, recover easily, and carry your identity across devices.',
+        };
+      case 'Modes':
+      case 'Queue':
+      case 'Lobbies':
+      case 'Play':
+      default:
+        return {
+          eyebrow: 'Play',
+          title: 'Competitive play hub',
+          description: 'Quick pair into official modes or create a private invite room. The board opens only when a real match exists.',
+        };
+    }
+  })();
   const actorSeatForHostedControls: PieceColor | null = hostedRuntime ? viewerSeat : turn;
   const actorSeatPlainLabel = actorSeatForHostedControls
     ? (actorSeatForHostedControls === 'white' ? 'White' : 'Black')
@@ -5632,7 +5758,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
 
       {/* TOP NAV */}
       <nav style={{
-        display:'flex', alignItems:'center', justifyContent:'space-between',
+        display:'none', alignItems:'center', justifyContent:'space-between',
         padding:'0 28px', minHeight:'62px', flexShrink:0,
         background:'rgba(8,4,20,0.82)',
         backdropFilter:'blur(20px)',
@@ -5649,7 +5775,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:'6px', flex:'1 1 auto', flexWrap:'wrap' }}>
           {primaryNavItems.map((item, i) => (
-            <button key={item.key} onClick={() => setActivePage(item.key)} style={{
+            <button key={item.key} onClick={() => setActivePage(item.key as AppPage)} style={{
               padding:'8px 16px', fontSize:'13px', fontWeight: i===0?700:600,
               background: activePage===item.key?'linear-gradient(180deg, rgba(200,134,10,0.35) 0%, rgba(139,94,10,0.4) 100%)':'transparent',
               color: activePage===item.key?'#ffd700':'rgba(200,185,140,0.8)',
@@ -5725,7 +5851,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
             {secondaryNavItems.map((item) => (
               <button
                 key={item.key}
-                onClick={() => setActivePage(item.key)}
+                      onClick={() => setActivePage(item.key as AppPage)}
                 style={{
                   padding:'10px 12px',
                   borderRadius:'10px',
@@ -5820,6 +5946,19 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         </div>
       ) : null}
 
+      <AppShell
+        brandTitle="Chess404"
+        brandSubtitle="Card Chess"
+        pageMeta={shellPageMeta}
+        primaryItems={primaryNavItems}
+        utilityGroups={utilityGroups}
+        accountLabel={hasPrimaryAccountSession ? 'Account' : 'Sign In'}
+        activeKey={activePage}
+        onNavigate={(key) => setActivePage(key as AppPage)}
+        onOpenAccount={() => setActivePage('Account')}
+        showReturnToMatch={showReturnToMatch}
+        onReturnToMatch={() => setActivePage('Match')}
+      >
       {showPlayHub ? (
         <PlayHubPage
           hostedRuntime={hostedRuntime}
@@ -6956,6 +7095,7 @@ export default function App({ runtimeConfig }: { runtimeConfig?: { matchServiceH
         </div>
       </div>
       ) : null}
+      </AppShell>
     </div>
     </>
   );

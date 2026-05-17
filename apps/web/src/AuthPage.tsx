@@ -102,7 +102,7 @@ function suggestHandle(seed: string): string {
   if (normalized.length >= 3) {
     return normalized;
   }
-  return 'cardchess_player';
+  return 'chess404_player';
 }
 
 function formatDateTime(value?: string): string {
@@ -165,7 +165,7 @@ export default function AuthPage({
       if (guestIdentity.guestId) {
         return suggestHandle(guestIdentity.guestId);
       }
-      return 'cardchess_player';
+      return 'chess404_player';
     });
   }, [guestIdentity.guestId, guestProfile?.displayName]);
 
@@ -404,14 +404,129 @@ export default function AuthPage({
               letterSpacing:'1.1px',
               textTransform:'uppercase',
             }}>
-              Quality-first launch
+              Chess404
             </div>
             <div style={{ color:'#fff4d8', fontSize:'38px', lineHeight:1.08, fontWeight:900, maxWidth:'620px' }}>
-              Launch with a real account, not a throwaway seat tool.
+              Competitive online chess with curated card powers.
             </div>
             <div style={{ color:'rgba(255,234,194,0.76)', fontSize:'15px', lineHeight:1.75, maxWidth:'640px' }}>
-              Chess404 still keeps a temporary live player session under the hood so queue ownership and match claims stay stable on this device,
-              but the product story should feel like a real platform from the start: sign in once, recover your account, and move between devices without losing your place.
+              Build one lasting identity for official modes, private invites, replays, and ranked progress. Sign in once, recover normally, and move between devices without losing your place in the competitive loop.
+            </div>
+          </div>
+
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))',
+            gap:'14px',
+            alignItems:'stretch',
+          }}>
+            <div style={{
+              borderRadius:'22px',
+              padding:'18px',
+              background:'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)',
+              border:'1px solid rgba(255,215,128,0.12)',
+              display:'grid',
+              gap:'14px',
+            }}>
+              <div style={{ display:'flex', justifyContent:'space-between', gap:'10px', alignItems:'center', flexWrap:'wrap' }}>
+                <div>
+                  <div style={{ color:'#ffdc95', fontSize:'11px', fontWeight:800, letterSpacing:'1px', textTransform:'uppercase' }}>
+                    Match Preview
+                  </div>
+                  <div style={{ color:'#fff0c9', fontSize:'16px', fontWeight:800, marginTop:'6px' }}>
+                    Official modes on a live competitive board
+                  </div>
+                </div>
+                <span style={{
+                  padding:'6px 10px',
+                  borderRadius:'999px',
+                  border:'1px solid rgba(255,190,90,0.18)',
+                  background:'rgba(255,190,90,0.08)',
+                  color:'#ffe3a0',
+                  fontSize:'11px',
+                  fontWeight:800,
+                }}>
+                  Card Chess
+                </span>
+              </div>
+
+              <div style={{
+                display:'grid',
+                gridTemplateColumns:'repeat(8, minmax(0, 1fr))',
+                gap:'4px',
+                padding:'12px',
+                borderRadius:'18px',
+                background:'linear-gradient(180deg, rgba(6,8,16,0.98) 0%, rgba(11,16,26,0.98) 100%)',
+                border:'1px solid rgba(255,255,255,0.06)',
+                boxShadow:'inset 0 1px 0 rgba(255,255,255,0.05)',
+              }}>
+                {Array.from({ length: 64 }, (_, index) => {
+                  const row = Math.floor(index / 8);
+                  const col = index % 8;
+                  const dark = (row + col) % 2 === 1;
+                  const marker =
+                    index === 4 ? '♚'
+                    : index === 11 ? '♞'
+                    : index === 27 ? '🂠'
+                    : index === 36 ? '♕'
+                    : index === 52 ? '♟'
+                    : '';
+                  return (
+                    <div
+                      key={index}
+                      style={{
+                        aspectRatio:'1 / 1',
+                        borderRadius:'10px',
+                        display:'grid',
+                        placeItems:'center',
+                        fontSize: marker === '🂠' ? '18px' : '20px',
+                        color: marker === '♚' || marker === '♞' ? '#ffe09c' : '#fff7df',
+                        background: marker === '🂠'
+                          ? 'linear-gradient(180deg, rgba(200,134,10,0.28) 0%, rgba(103,62,8,0.36) 100%)'
+                          : dark
+                            ? 'rgba(155,116,48,0.28)'
+                            : 'rgba(255,233,186,0.12)',
+                        border: marker === '🂠'
+                          ? '1px solid rgba(255,205,120,0.28)'
+                          : '1px solid rgba(255,255,255,0.04)',
+                      }}
+                    >
+                      {marker}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ display:'grid', gap:'12px' }}>
+              {[
+                {
+                  title: 'Rated lanes',
+                  detail: 'Account-backed progress for official modes instead of throwaway local identity.',
+                },
+                {
+                  title: 'Private invites',
+                  detail: 'One real room, one clean link, and a waiting room that becomes the match destination.',
+                },
+                {
+                  title: 'Replay archive',
+                  detail: 'Shareable profiles, history, and watch surfaces built around player-facing destinations.',
+                },
+              ].map((item) => (
+                <div
+                  key={item.title}
+                  style={{
+                    borderRadius:'18px',
+                    padding:'16px',
+                    background:'rgba(255,255,255,0.03)',
+                    border:'1px solid rgba(255,255,255,0.07)',
+                    boxShadow:'inset 0 1px 0 rgba(255,255,255,0.05)',
+                  }}
+                >
+                  <div style={{ color:'#fff0c9', fontSize:'15px', fontWeight:800, marginBottom:'7px' }}>{item.title}</div>
+                  <div style={{ color:'rgba(255,232,184,0.70)', fontSize:'13px', lineHeight:1.65 }}>{item.detail}</div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -422,22 +537,22 @@ export default function AuthPage({
           }}>
             {[
               {
-                title: 'Rated play you can trust',
-                detail: 'Your match history, profile, and future ladder progress stay tied to one account instead of disappearing into local device state.',
+                title: 'Quick pair stays clear',
+                detail: 'Official modes, rated choice, and match ownership now live under one competitive shell instead of scattered pages.',
               },
               {
-                title: 'Recovery that feels normal',
-                detail: 'Email verification, password reset, and multi-device restore are part of the narrow launch core, not optional extras.',
+                title: 'Recovery feels normal',
+                detail: 'Email verification, password reset, and multi-device restore are part of the real launch path, not hidden utilities.',
               },
               {
-                title: 'One browser, one player',
-                detail: 'The account shell sits on top of the hosted single-seat model, so live queue and private rooms still behave like real online chess.',
+                title: 'Watch and replay travel',
+                detail: 'Profiles, rankings, history, and public match links all point back to stable player-facing destinations.',
               },
               {
-                title: 'Keep the bridge invisible',
+                title: 'One browser, one seat',
                 detail: guestProfile?.displayName
-                  ? `This device is temporarily playing as ${guestProfile.displayName}, but that bridge should disappear behind your account experience.`
-                  : 'Guest identity still exists only as an implementation bridge while the launch becomes account-first.',
+                  ? `${guestProfile.displayName} is the temporary live seat on this device, but your account remains the identity that carries across the product.`
+                  : 'The hosted runtime keeps seat ownership strict while your account becomes the identity players actually recognize.',
               },
             ].map((item) => (
               <div
@@ -468,10 +583,10 @@ export default function AuthPage({
           }}>
             <div style={{ flex:'1 1 300px', minWidth:0 }}>
               <div style={{ color:'#dffbe8', fontSize:'14px', fontWeight:800, marginBottom:'4px' }}>
-                Device player bridge
+                Current device session
               </div>
               <div style={{ color:'rgba(223,251,232,0.74)', fontSize:'12px', lineHeight:1.6 }}>
-                Current device player: {guestProfile?.displayName ?? guestIdentity.guestId ?? 'Preparing guest session...'}
+                Live seat on this browser: {guestProfile?.displayName ?? guestIdentity.guestId ?? 'Preparing guest session...'}
               </div>
             </div>
             {onContinue ? (
@@ -488,7 +603,7 @@ export default function AuthPage({
                   cursor:'pointer',
                 }}
               >
-                {hostedRuntime ? 'Continue To Queue' : 'Continue To Board'}
+                {hostedRuntime ? 'Continue To Play' : 'Continue To Board'}
               </button>
             ) : null}
           </div>
@@ -567,7 +682,7 @@ export default function AuthPage({
                     boxShadow:'0 8px 20px rgba(200,134,10,0.28)',
                   }}
                 >
-                  {hostedRuntime ? 'Go To Queue' : 'Open Board'}
+                  {hostedRuntime ? 'Go To Play' : 'Open Board'}
                 </button>
                 <button
                   onClick={() => onOpenAccount?.()}
@@ -610,7 +725,7 @@ export default function AuthPage({
                   Create or restore your account
                 </div>
                 <div style={{ color:'rgba(255,232,184,0.72)', fontSize:'14px', lineHeight:1.7 }}>
-                  Keep the competitive core trustworthy: one account, recoverable access, and a stable identity across queue, lobbies, and replays.
+                  Start with one Chess404 account for quick pair, private invites, rankings, replays, and future rated progress.
                 </div>
               </div>
 
