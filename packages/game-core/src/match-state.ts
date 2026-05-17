@@ -40,8 +40,13 @@ export const createMatchState = (params?: {
       runningFor: 'white',
       startedAtMs
     },
+    whiteConnected: true,
+    blackConnected: true,
+    disconnectGraceFor: null,
+    disconnectGraceDeadline: null,
     status: 'active',
     winner: null,
+    finishReason: null,
     drawOfferedBy: null
   };
 };
@@ -216,6 +221,7 @@ const applyRespondDrawIntent = (
       ...match,
       status: 'finished',
       winner: 'draw',
+      finishReason: 'draw_agreement',
       drawOfferedBy: null,
       clock: {
         ...match.clock,
@@ -228,7 +234,7 @@ const applyRespondDrawIntent = (
       match: nextMatch,
       events: [
         makeEvent(match.matchId, 'draw_resolved', now, intent.playerId, { accept: true }),
-        makeEvent(match.matchId, 'match_finished', now, intent.playerId, { result: 'draw' })
+        makeEvent(match.matchId, 'match_finished', now, intent.playerId, { result: 'draw_agreement' })
       ]
     };
   }
@@ -259,6 +265,7 @@ const applyResignIntent = (
     ...match,
     status: 'finished',
     winner,
+    finishReason: 'resign',
     drawOfferedBy: null,
     clock: {
       ...match.clock,

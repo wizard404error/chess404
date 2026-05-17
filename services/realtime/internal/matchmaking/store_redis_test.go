@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 func TestRedisQueueStorePersistsAcrossReload(t *testing.T) {
@@ -16,11 +17,11 @@ func TestRedisQueueStorePersistsAcrossReload(t *testing.T) {
 	}
 	defer func() { _ = service.Close() }()
 
-	first, err := service.Enqueue(QueueRated, "guest_a", 1200)
+	first, err := service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
 	if err != nil {
 		t.Fatalf("enqueue first ticket: %v", err)
 	}
-	second, err := service.Enqueue(QueueRated, "guest_b", 1210)
+	second, err := service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo")
 	if err != nil {
 		t.Fatalf("enqueue second ticket: %v", err)
 	}
@@ -44,5 +45,8 @@ func TestRedisQueueStorePersistsAcrossReload(t *testing.T) {
 	}
 	if reloaded.Backend() != "redis" {
 		t.Fatalf("expected redis backend, got %s", reloaded.Backend())
+	}
+	if firstReloaded.ModeID != contracts.MatchModeOpenCards || secondReloaded.ModeID != contracts.MatchModeOpenCards {
+		t.Fatalf("expected redis reload to preserve mode metadata, got %#v and %#v", firstReloaded, secondReloaded)
 	}
 }

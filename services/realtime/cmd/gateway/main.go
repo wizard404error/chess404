@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -111,6 +112,52 @@ type GatewayBootstrapPayload struct {
 	Message            string                           `json:"message"`
 }
 
+type GatewayPrivateMatchRequest struct {
+	Guest         GatewayGuestIdentity    `json:"guest"`
+	Account       *GatewayAccountIdentity `json:"account,omitempty"`
+	ModeID        contracts.MatchModeID   `json:"modeId,omitempty"`
+	ClockSeconds  int64                   `json:"clockSeconds,omitempty"`
+	PreferredSeat string                  `json:"preferredSeat,omitempty"`
+}
+
+type GatewayPrivateMatchResponse struct {
+	MatchID            string                          `json:"matchId"`
+	SeatColor          string                          `json:"seatColor"`
+	WaitingForOpponent bool                            `json:"waitingForOpponent"`
+	Snapshot           contracts.MatchSnapshotResponse `json:"snapshot"`
+	Claim              *GatewaySeatClaim               `json:"claim,omitempty"`
+}
+
+type GatewayDirectChallengeRequest struct {
+	Guest           GatewayGuestIdentity    `json:"guest"`
+	Account         *GatewayAccountIdentity `json:"account,omitempty"`
+	TargetAccountID string                  `json:"targetAccountId"`
+	ModeID          contracts.MatchModeID   `json:"modeId,omitempty"`
+	ClockSeconds    int64                   `json:"clockSeconds,omitempty"`
+	PreferredSeat   string                  `json:"preferredSeat,omitempty"`
+}
+
+type GatewayDirectChallengeAcceptRequest struct {
+	Guest   GatewayGuestIdentity    `json:"guest"`
+	Account *GatewayAccountIdentity `json:"account,omitempty"`
+}
+
+type GatewayDirectChallengeView struct {
+	ChallengeID    string                `json:"challengeId"`
+	Status         string                `json:"status"`
+	MatchID        string                `json:"matchId"`
+	ModeID         contracts.MatchModeID `json:"modeId,omitempty"`
+	ClockSeconds   int64                 `json:"clockSeconds,omitempty"`
+	ChallengerSeat string                `json:"challengerSeat,omitempty"`
+	ViewerSeat     string                `json:"viewerSeat,omitempty"`
+}
+
+type GatewayDirectChallengeLaunchResponse struct {
+	ChallengeID string                      `json:"challengeId"`
+	ModeID      contracts.MatchModeID       `json:"modeId,omitempty"`
+	Match       GatewayPrivateMatchResponse `json:"match"`
+}
+
 func main() {
 	config := gatewayConfigFromEnv()
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -182,6 +229,27 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		})
 	})
 
+	mux.HandleFunc("/api/private-matches", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var payload GatewayPrivateMatchRequest
+		if r.Body != nil {
+			defer r.Body.Close()
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid private match payload")
+				return
+			}
+		}
+		response, statusCode, err := createGatewayPrivateMatch(config, client, payload)
+		if err != nil {
+			writeError(w, statusCode, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, response)
+	})
+
 	mux.HandleFunc("/api/matches/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -193,11 +261,103 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			return
 		}
 		parts := strings.Split(path, "/")
-		if len(parts) != 2 || parts[1] != "intents" {
+		if len(parts) != 2 || (parts[1] != "intents" && parts[1] != "presence") {
 			writeError(w, http.StatusNotFound, "route not found")
 			return
 		}
-		proxyGatewayIntent(w, r, config, client, parts[0])
+		if parts[1] == "intents" {
+			proxyGatewayIntent(w, r, config, client, parts[0])
+			return
+		}
+		proxyGatewayPresence(w, r, config, client, parts[0])
+	})
+
+	mux.HandleFunc("/api/private-matches/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/api/private-matches/")
+		if path == "" {
+			writeError(w, http.StatusNotFound, "match id required")
+			return
+		}
+		parts := strings.Split(path, "/")
+		if len(parts) != 2 || (parts[1] != "join" && parts[1] != "rematch") {
+			writeError(w, http.StatusNotFound, "route not found")
+			return
+		}
+		var payload GatewayPrivateMatchRequest
+		if r.Body != nil {
+			defer r.Body.Close()
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid private match join payload")
+				return
+			}
+		}
+		var (
+			response   GatewayPrivateMatchResponse
+			statusCode int
+			err        error
+		)
+		if parts[1] == "join" {
+			response, statusCode, err = joinGatewayPrivateMatch(config, client, parts[0], payload)
+		} else {
+			response, statusCode, err = rematchGatewayPrivateMatch(config, client, parts[0], payload)
+		}
+		if err != nil {
+			writeError(w, statusCode, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+	})
+
+	mux.HandleFunc("/api/challenges", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var payload GatewayDirectChallengeRequest
+		if r.Body != nil {
+			defer r.Body.Close()
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid direct challenge payload")
+				return
+			}
+		}
+		response, statusCode, err := createGatewayDirectChallenge(config, client, payload)
+		if err != nil {
+			writeError(w, statusCode, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, response)
+	})
+
+	mux.HandleFunc("/api/challenges/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/api/challenges/")
+		parts := strings.Split(path, "/")
+		if len(parts) != 2 || parts[1] != "accept" || strings.TrimSpace(parts[0]) == "" {
+			writeError(w, http.StatusNotFound, "route not found")
+			return
+		}
+		var payload GatewayDirectChallengeAcceptRequest
+		if r.Body != nil {
+			defer r.Body.Close()
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid challenge accept payload")
+				return
+			}
+		}
+		response, statusCode, err := acceptGatewayDirectChallenge(config, client, parts[0], payload)
+		if err != nil {
+			writeError(w, statusCode, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
 	})
 
 	return mux
@@ -463,6 +623,323 @@ func resolveGatewayClaimByToken(config GatewayConfig, client *http.Client, match
 	return &claim, ""
 }
 
+func createGatewayPrivateMatch(config GatewayConfig, client *http.Client, request GatewayPrivateMatchRequest) (GatewayPrivateMatchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+	if err != nil {
+		return GatewayPrivateMatchResponse{}, statusCode, err
+	}
+	accountSession, _, _ := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.ModeID, request.ClockSeconds, request.PreferredSeat)
+}
+
+func createGatewayPrivateMatchForSession(
+	config GatewayConfig,
+	client *http.Client,
+	session *platform.GuestSession,
+	accountSession *platform.AccountSession,
+	modeID contracts.MatchModeID,
+	clockSeconds int64,
+	preferredSeat string,
+) (GatewayPrivateMatchResponse, int, error) {
+	if session == nil {
+		return GatewayPrivateMatchResponse{}, http.StatusBadRequest, errors.New("guest session is required")
+	}
+	preferredSeat = strings.ToLower(strings.TrimSpace(preferredSeat))
+	if preferredSeat == "" {
+		preferredSeat = "white"
+	}
+
+	createReq := contracts.CreateMatchRequest{
+		ClockSeconds: clockSeconds,
+		Queue:        "direct",
+		ModeID:       contracts.NormalizeMatchModeID(string(modeID)),
+	}
+	if createReq.ModeID == "" {
+		createReq.ModeID = contracts.MatchModeOpenCards
+	}
+	if preferredSeat == "black" {
+		createReq.BlackGuestID = session.Guest.GuestID
+		createReq.BlackName = session.Guest.DisplayName
+		createReq.BlackPlayerSecret = session.SessionSecret
+		if accountSession != nil {
+			createReq.BlackAccountID = accountSession.Account.AccountID
+		}
+	} else {
+		createReq.WhiteGuestID = session.Guest.GuestID
+		createReq.WhiteName = session.Guest.DisplayName
+		createReq.WhitePlayerSecret = session.SessionSecret
+		if accountSession != nil {
+			createReq.WhiteAccountID = accountSession.Account.AccountID
+		}
+	}
+
+	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches", createReq)
+	if result.Error != "" && result.StatusCode == 0 {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(result.Error)
+	}
+	if !result.Healthy {
+		return GatewayPrivateMatchResponse{}, statusOrDefault(result.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(result, "failed to create private match"))
+	}
+	snapshot, err := decodeGatewayPayload[contracts.MatchSnapshotResponse](result.Payload)
+	if err != nil {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode private match snapshot: %v", err)
+	}
+
+	claim, claimErr := bootstrapMatchClaimForSide(config, client, snapshot.Match.MatchID, session)
+	if claimErr != "" {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(claimErr)
+	}
+
+	return GatewayPrivateMatchResponse{
+		MatchID:            snapshot.Match.MatchID,
+		SeatColor:          claim.SeatColor,
+		WaitingForOpponent: snapshot.Match.Status == "waiting",
+		Snapshot:           snapshot,
+		Claim:              claim,
+	}, http.StatusCreated, nil
+}
+
+func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID string, request GatewayPrivateMatchRequest) (GatewayPrivateMatchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+	if err != nil {
+		return GatewayPrivateMatchResponse{}, statusCode, err
+	}
+	accountSession, _, _ := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+
+	joinReq := contracts.JoinMatchSeatRequest{
+		GuestID:       session.Guest.GuestID,
+		DisplayName:   session.Guest.DisplayName,
+		PlayerSecret:  session.SessionSecret,
+		PreferredSeat: strings.ToLower(strings.TrimSpace(request.PreferredSeat)),
+	}
+	if accountSession != nil {
+		joinReq.AccountID = accountSession.Account.AccountID
+	}
+
+	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/join", joinReq)
+	if result.Error != "" && result.StatusCode == 0 {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(result.Error)
+	}
+	if !result.Healthy {
+		return GatewayPrivateMatchResponse{}, statusOrDefault(result.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(result, "failed to join private match"))
+	}
+	joined, err := decodeGatewayPayload[contracts.JoinMatchSeatResponse](result.Payload)
+	if err != nil {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode private join response: %v", err)
+	}
+
+	claim, claimErr := bootstrapMatchClaimForSide(config, client, matchID, session)
+	if claimErr != "" {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(claimErr)
+	}
+
+	return GatewayPrivateMatchResponse{
+		MatchID:            joined.Match.Match.MatchID,
+		SeatColor:          claim.SeatColor,
+		WaitingForOpponent: joined.WaitingForOpponent,
+		Snapshot:           joined.Match,
+		Claim:              claim,
+	}, http.StatusOK, nil
+}
+
+func rematchGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID string, request GatewayPrivateMatchRequest) (GatewayPrivateMatchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+	if err != nil {
+		return GatewayPrivateMatchResponse{}, statusCode, err
+	}
+	accountSession, _, _ := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+
+	result := fetchGatewayJSONRequest(client, http.MethodGet, config.MatchServiceURL+"/api/matches/"+matchID, nil)
+	if result.Error != "" && result.StatusCode == 0 {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(result.Error)
+	}
+	if !result.Healthy {
+		return GatewayPrivateMatchResponse{}, statusOrDefault(result.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(result, "failed to load private match for rematch"))
+	}
+	snapshot, err := decodeGatewayPayload[contracts.MatchSnapshotResponse](result.Payload)
+	if err != nil {
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode private match snapshot: %v", err)
+	}
+	if snapshot.Match.Queue != "direct" {
+		return GatewayPrivateMatchResponse{}, http.StatusConflict, errors.New("rematch rooms are only available for private direct matches")
+	}
+	if snapshot.Match.Status != "finished" {
+		return GatewayPrivateMatchResponse{}, http.StatusConflict, errors.New("rematch is only available after the private match finishes")
+	}
+
+	requesterSeat := ""
+	switch session.Guest.GuestID {
+	case strings.TrimSpace(snapshot.Match.WhiteGuestID):
+		requesterSeat = "white"
+	case strings.TrimSpace(snapshot.Match.BlackGuestID):
+		requesterSeat = "black"
+	default:
+		return GatewayPrivateMatchResponse{}, http.StatusForbidden, errors.New("only players from the original private match can create a rematch room")
+	}
+
+	clockSeconds := request.ClockSeconds
+	if clockSeconds <= 0 {
+		clockSeconds = 600
+	}
+
+	return createGatewayPrivateMatchForSession(
+		config,
+		client,
+		session,
+		accountSession,
+		snapshot.Match.ModeID,
+		clockSeconds,
+		requesterSeat,
+	)
+}
+
+func createGatewayDirectChallenge(config GatewayConfig, client *http.Client, request GatewayDirectChallengeRequest) (GatewayDirectChallengeLaunchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
+	}
+	accountSession, statusCode, err := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
+	}
+	if accountSession == nil {
+		return GatewayDirectChallengeLaunchResponse{}, http.StatusUnauthorized, errors.New("direct challenges require a signed-in account session")
+	}
+	targetAccountID := strings.TrimSpace(request.TargetAccountID)
+	if targetAccountID == "" {
+		return GatewayDirectChallengeLaunchResponse{}, http.StatusBadRequest, errors.New("target account is required")
+	}
+
+	eligibility := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/eligibility", map[string]string{
+		"accountId":       accountSession.Account.AccountID,
+		"sessionToken":    accountSession.SessionToken,
+		"targetAccountId": targetAccountID,
+	})
+	if !eligibility.Healthy {
+		return GatewayDirectChallengeLaunchResponse{}, statusOrDefault(eligibility.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(eligibility, "failed to validate direct challenge"))
+	}
+
+	matchResponse, statusCode, err := createGatewayPrivateMatch(config, client, GatewayPrivateMatchRequest{
+		Guest:         request.Guest,
+		Account:       request.Account,
+		ModeID:        request.ModeID,
+		ClockSeconds:  request.ClockSeconds,
+		PreferredSeat: request.PreferredSeat,
+	})
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
+	}
+
+	createResult := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges", map[string]any{
+		"accountId":       accountSession.Account.AccountID,
+		"sessionToken":    accountSession.SessionToken,
+		"targetAccountId": targetAccountID,
+		"matchId":         matchResponse.MatchID,
+		"modeId":          matchResponse.Snapshot.Match.ModeID,
+		"clockSeconds":    request.ClockSeconds,
+		"challengerSeat":  matchResponse.SeatColor,
+	})
+	if !createResult.Healthy {
+		return GatewayDirectChallengeLaunchResponse{}, statusOrDefault(createResult.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(createResult, "failed to persist direct challenge"))
+	}
+	challenge, err := decodeGatewayPayload[GatewayDirectChallengeView](createResult.Payload)
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode direct challenge: %v", err)
+	}
+
+	return GatewayDirectChallengeLaunchResponse{
+		ChallengeID: challenge.ChallengeID,
+		ModeID:      challenge.ModeID,
+		Match:       matchResponse,
+	}, http.StatusCreated, nil
+}
+
+func acceptGatewayDirectChallenge(config GatewayConfig, client *http.Client, challengeID string, request GatewayDirectChallengeAcceptRequest) (GatewayDirectChallengeLaunchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
+	}
+	accountSession, statusCode, err := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
+	}
+	if accountSession == nil {
+		return GatewayDirectChallengeLaunchResponse{}, http.StatusUnauthorized, errors.New("direct challenges require a signed-in account session")
+	}
+
+	viewResult := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/"+challengeID+"/view", map[string]string{
+		"accountId":    accountSession.Account.AccountID,
+		"sessionToken": accountSession.SessionToken,
+	})
+	if !viewResult.Healthy {
+		return GatewayDirectChallengeLaunchResponse{}, statusOrDefault(viewResult.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(viewResult, "failed to load direct challenge"))
+	}
+	challenge, err := decodeGatewayPayload[GatewayDirectChallengeView](viewResult.Payload)
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode direct challenge: %v", err)
+	}
+	if challenge.Status != "pending" {
+		return GatewayDirectChallengeLaunchResponse{}, http.StatusConflict, errors.New("direct challenge is no longer pending")
+	}
+
+	matchResponse, statusCode, err := joinGatewayPrivateMatch(config, client, challenge.MatchID, GatewayPrivateMatchRequest{
+		Guest:   request.Guest,
+		Account: request.Account,
+	})
+	if err != nil {
+		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
+	}
+
+	respondResult := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/"+challengeID+"/respond", map[string]any{
+		"accountId":    accountSession.Account.AccountID,
+		"sessionToken": accountSession.SessionToken,
+		"accept":       true,
+	})
+	if !respondResult.Healthy {
+		return GatewayDirectChallengeLaunchResponse{}, statusOrDefault(respondResult.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(respondResult, "failed to accept direct challenge"))
+	}
+
+	return GatewayDirectChallengeLaunchResponse{
+		ChallengeID: challenge.ChallengeID,
+		ModeID:      challenge.ModeID,
+		Match:       matchResponse,
+	}, http.StatusOK, nil
+}
+
+func ensureGatewayPrivateGuestSession(config GatewayConfig, client *http.Client, identity GatewayGuestIdentity) (*platform.GuestSession, int, error) {
+	session, errMessage := bootstrapGuestSessionForSide(config, client, &identity)
+	if session != nil {
+		return session, http.StatusOK, nil
+	}
+	if errMessage == "" {
+		return nil, http.StatusBadRequest, errors.New("failed to bootstrap guest session")
+	}
+	if strings.Contains(strings.ToLower(errMessage), "unauthorized") {
+		return nil, http.StatusUnauthorized, errors.New(errMessage)
+	}
+	if strings.Contains(strings.ToLower(errMessage), "unknown guest") {
+		return nil, http.StatusNotFound, errors.New(errMessage)
+	}
+	return nil, http.StatusBadGateway, errors.New(errMessage)
+}
+
+func ensureGatewayPrivateAccountSession(config GatewayConfig, client *http.Client, identity *GatewayAccountIdentity, guestSession *platform.GuestSession) (*platform.AccountSession, int, error) {
+	if identity == nil || strings.TrimSpace(identity.AccountID) == "" {
+		return nil, http.StatusOK, nil
+	}
+	session, errMessage := bootstrapAccountSessionForSide(config, client, identity, guestSession)
+	if session != nil {
+		return session, http.StatusOK, nil
+	}
+	if errMessage == "" {
+		return nil, http.StatusBadGateway, errors.New("failed to bootstrap account session")
+	}
+	if strings.Contains(strings.ToLower(errMessage), "unauthorized") {
+		return nil, http.StatusUnauthorized, errors.New(errMessage)
+	}
+	return nil, http.StatusBadGateway, errors.New(errMessage)
+}
+
 func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayConfig, client *http.Client, matchID string) {
 	var req contracts.ApplyIntentRequest
 	if r.Body != nil {
@@ -488,6 +965,39 @@ func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayCo
 	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/intents", req)
 	if result.Error != "" && result.StatusCode == 0 {
 		writeError(w, http.StatusBadGateway, result.Error)
+		return
+	}
+	writeJSON(w, statusOrDefault(result.StatusCode, http.StatusBadGateway), result.Payload)
+}
+
+func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config GatewayConfig, client *http.Client, matchID string) {
+	var req contracts.MatchPresenceRequest
+	if r.Body != nil {
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+
+	if strings.TrimSpace(req.PlayerClaimToken) != "" {
+		claim, errMessage := resolveGatewayClaimByToken(config, client, matchID, strings.TrimSpace(req.PlayerClaimToken))
+		if errMessage != "" {
+			writeError(w, http.StatusUnauthorized, errMessage)
+			return
+		}
+		req.PlayerID = claim.PlayerID
+		req.PlayerSecret = claim.PlayerSecret
+		req.PlayerClaimToken = ""
+	}
+
+	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/presence", req)
+	if result.Error != "" && result.StatusCode == 0 {
+		writeError(w, http.StatusBadGateway, result.Error)
+		return
+	}
+	if result.StatusCode == http.StatusNoContent {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	writeJSON(w, statusOrDefault(result.StatusCode, http.StatusBadGateway), result.Payload)
@@ -522,6 +1032,14 @@ func fetchGatewayJSONRequest(client *http.Client, method, url string, payload an
 		return GatewayServiceHealth{URL: url, Error: err.Error()}
 	}
 	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusNoContent {
+		return GatewayServiceHealth{
+			URL:        url,
+			Healthy:    true,
+			StatusCode: response.StatusCode,
+		}
+	}
 
 	var responsePayload any
 	if err := json.NewDecoder(response.Body).Decode(&responsePayload); err != nil {

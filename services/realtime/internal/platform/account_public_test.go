@@ -3,6 +3,8 @@ package platform
 import (
 	"testing"
 	"time"
+
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 func TestBuildAccountSeasonHistoryGroupsMonthlyProgression(t *testing.T) {
@@ -150,5 +152,137 @@ func TestBuildAvailableSeasonOptionsDeduplicatesAndSortsDescending(t *testing.T)
 	}
 	if options[0].SeasonID != "2026-05" || options[1].SeasonID != "2026-04" {
 		t.Fatalf("expected descending season order, got %#v", options)
+	}
+}
+
+func TestBuildAccountSeasonHistoryForModeFiltersOtherModes(t *testing.T) {
+	account := AccountProfile{
+		AccountID: "acct_mode_history",
+		RatingHistory: []AccountRatingHistoryEntry{
+			{MatchID: "m1", Result: "win", Winner: "white", Delta: 16, Queue: "rated", ModeID: contracts.MatchModeOpenCards, RatingBefore: 1200, RatingAfter: 1216, MatchesPlayed: 1, At: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)},
+			{MatchID: "m2", Result: "loss", Winner: "black", Delta: -16, Queue: "rated", ModeID: contracts.MatchModeHiddenCards, RatingBefore: 1216, RatingAfter: 1200, MatchesPlayed: 2, At: time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)},
+			{MatchID: "m3", Result: "draw", Winner: "draw", Delta: 0, Queue: "rated", ModeID: contracts.MatchModeHiddenCards, RatingBefore: 1200, RatingAfter: 1200, MatchesPlayed: 3, At: time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)},
+		},
+	}
+
+	allSeasons := BuildAccountSeasonHistoryForMode(account, "")
+	if len(allSeasons) != 2 {
+		t.Fatalf("expected all-mode season history to include both months, got %#v", allSeasons)
+	}
+
+	hiddenSeasons := BuildAccountSeasonHistoryForMode(account, contracts.MatchModeHiddenCards)
+	if len(hiddenSeasons) != 2 {
+		t.Fatalf("expected hidden-card season history to include two months, got %#v", hiddenSeasons)
+	}
+	if hiddenSeasons[0].SeasonID != "2026-05" || hiddenSeasons[0].MatchesPlayed != 1 || hiddenSeasons[1].SeasonID != "2026-04" || hiddenSeasons[1].MatchesPlayed != 1 {
+		t.Fatalf("unexpected hidden-card season summaries %#v", hiddenSeasons)
+	}
+}
+
+func TestBuildPublicAccountProfileForSeasonAndModeScopesStats(t *testing.T) {
+	guests, err := NewGuestStore("")
+	if err != nil {
+		t.Fatalf("expected in-memory guest store to initialize, got %v", err)
+	}
+
+	account := AccountProfile{
+		AccountID:     "acct_mode_profile",
+		Handle:        "mode_profile",
+		Rating:        1216,
+		MatchesPlayed: 3,
+		Wins:          1,
+		Losses:        1,
+		Draws:         1,
+		RatingHistory: []AccountRatingHistoryEntry{
+			{MatchID: "m1", Result: "win", Winner: "white", Delta: 16, Queue: "rated", ModeID: contracts.MatchModeOpenCards, RatingBefore: 1200, RatingAfter: 1216, MatchesPlayed: 1, At: time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)},
+			{MatchID: "m2", Result: "loss", Winner: "black", Delta: -16, Queue: "rated", ModeID: contracts.MatchModeHiddenCards, RatingBefore: 1216, RatingAfter: 1200, MatchesPlayed: 2, At: time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)},
+			{MatchID: "m3", Result: "draw", Winner: "draw", Delta: 0, Queue: "rated", ModeID: contracts.MatchModeHiddenCards, RatingBefore: 1200, RatingAfter: 1200, MatchesPlayed: 3, At: time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)},
+		},
+	}
+
+	profile := BuildPublicAccountProfileForSeasonAndMode(account, guests, "", contracts.MatchModeHiddenCards)
+	if profile.MatchesPlayed != 2 || profile.Wins != 0 || profile.Losses != 1 || profile.Draws != 1 {
+		t.Fatalf("expected hidden-card stats only, got %#v", profile)
+	}
+	if profile.Rating != 1200 {
+		t.Fatalf("expected hidden-card rating to come from filtered history, got %#v", profile)
+	}
+	if profile.CurrentSeason == nil || profile.CurrentSeason.SeasonID != "2026-05" {
+		t.Fatalf("expected hidden-card current season to come from hidden-card history, got %#v", profile.CurrentSeason)
+	}
+}
+
+func TestBuildAvailableSeasonOptionsForModeOnlyReturnsRelevantSeasons(t *testing.T) {
+	accounts := []AccountProfile{
+		{
+			AccountID: "acct_mode_one",
+			RatingHistory: []AccountRatingHistoryEntry{
+				{MatchID: "m1", Result: "win", Delta: 16, Queue: "rated", ModeID: contracts.MatchModeOpenCards, RatingBefore: 1200, RatingAfter: 1216, MatchesPlayed: 1, At: time.Date(2026, 4, 2, 12, 0, 0, 0, time.UTC)},
+				{MatchID: "m2", Result: "draw", Delta: 0, Queue: "rated", ModeID: contracts.MatchModeHiddenCards, RatingBefore: 1216, RatingAfter: 1216, MatchesPlayed: 2, At: time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)},
+			},
+		},
+		{
+			AccountID: "acct_mode_two",
+			RatingHistory: []AccountRatingHistoryEntry{
+				{MatchID: "m3", Result: "loss", Delta: -16, Queue: "rated", ModeID: contracts.MatchModeHiddenCards, RatingBefore: 1200, RatingAfter: 1184, MatchesPlayed: 1, At: time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)},
+			},
+		},
+	}
+
+	options := BuildAvailableSeasonOptionsForMode(accounts, contracts.MatchModeOpenCards)
+	if len(options) != 1 || options[0].SeasonID != "2026-04" {
+		t.Fatalf("expected only open-card season options, got %#v", options)
+	}
+}
+
+func TestBuildPublicAccountPresenceWindows(t *testing.T) {
+	now := time.Now().UTC()
+
+	online := buildPublicAccountPresenceAt(AccountProfile{
+		AccountID:    "acct_online",
+		LastActiveAt: now.Add(-45 * time.Second),
+		LastSeenAt:   now.Add(-45 * time.Second),
+	}, now)
+	if online.Status != AccountPresenceOnline || !online.Online || !online.RecentlyActive {
+		t.Fatalf("expected online presence, got %#v", online)
+	}
+
+	recent := buildPublicAccountPresenceAt(AccountProfile{
+		AccountID:    "acct_recent",
+		LastActiveAt: now.Add(-8 * time.Minute),
+		LastSeenAt:   now.Add(-8 * time.Minute),
+	}, now)
+	if recent.Status != AccountPresenceRecentlyActive || recent.Online || !recent.RecentlyActive {
+		t.Fatalf("expected recently active presence, got %#v", recent)
+	}
+
+	offline := buildPublicAccountPresenceAt(AccountProfile{
+		AccountID:    "acct_offline",
+		LastActiveAt: now.Add(-30 * time.Minute),
+		LastSeenAt:   now.Add(-30 * time.Minute),
+	}, now)
+	if offline.Status != AccountPresenceOffline || offline.Online || offline.RecentlyActive {
+		t.Fatalf("expected offline presence, got %#v", offline)
+	}
+}
+
+func TestBuildPublicAccountProfileFallsBackToLastSeenForPresence(t *testing.T) {
+	guests, err := NewGuestStore("")
+	if err != nil {
+		t.Fatalf("expected in-memory guest store to initialize, got %v", err)
+	}
+
+	account := AccountProfile{
+		AccountID:  "acct_presence_fallback",
+		Handle:     "presence_fallback",
+		LastSeenAt: time.Now().UTC().Add(-90 * time.Second),
+	}
+
+	profile := BuildPublicAccountProfile(account, guests)
+	if profile.PresenceStatus != AccountPresenceOnline || !profile.Online {
+		t.Fatalf("expected profile presence to fall back to last seen, got %#v", profile)
+	}
+	if profile.LastActiveAt.IsZero() {
+		t.Fatalf("expected profile to expose derived lastActiveAt, got %#v", profile)
 	}
 }

@@ -300,6 +300,577 @@ func TestGatewayPostBootstrapReturnsGuestSessionsAndSeatClaims(t *testing.T) {
 	}
 }
 
+func TestGatewayCreatesPrivateMatch(t *testing.T) {
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/matches":
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected create private match post, got %s", r.Method)
+			}
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if payload["queue"] != "direct" {
+				t.Fatalf("expected direct queue, got %#v", payload["queue"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"matchId":      "private-room-1",
+					"status":       "waiting",
+					"queue":        "direct",
+					"modeId":       "open_cards",
+					"whiteGuestId": "white-guest",
+					"whiteName":    "Guest white-guest",
+				},
+				"replayHead": 1,
+				"events":     []map[string]any{},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
+		}
+	}))
+	defer matchServer.Close()
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/guest-sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       "white-guest",
+					"displayName":   "Guest white-guest",
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": "white-secret",
+			})
+		case "/api/platform/match-claims":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      "private-room-1",
+				"guestId":      "white-guest",
+				"seatColor":    "white",
+				"playerId":     "white-guest",
+				"playerSecret": "white-secret",
+				"claimToken":   "claim-white",
+				"queue":        "direct",
+				"status":       "waiting",
+			})
+		case "/api/platform/status", "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchmakingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer matchmakingServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchmakingServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/private-matches", strings.NewReader(`{
+		"guest":{"guestId":"white-guest","sessionSecret":"white-secret"},
+		"modeId":"open_cards",
+		"preferredSeat":"white"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected private room create to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload GatewayPrivateMatchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected private room create response to decode, got %v", err)
+	}
+	if payload.MatchID != "private-room-1" || payload.SeatColor != "white" || !payload.WaitingForOpponent {
+		t.Fatalf("unexpected private room create payload: %#v", payload)
+	}
+}
+
+func TestGatewayJoinsPrivateMatch(t *testing.T) {
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/matches/private-room-2/join":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"match": map[string]any{
+						"matchId":      "private-room-2",
+						"status":       "active",
+						"queue":        "direct",
+						"modeId":       "hidden_cards",
+						"whiteGuestId": "white-guest",
+						"blackGuestId": "black-guest",
+					},
+					"replayHead": 2,
+					"events":     []map[string]any{},
+				},
+				"seatColor":          "black",
+				"joined":             true,
+				"waitingForOpponent": false,
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
+		}
+	}))
+	defer matchServer.Close()
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/guest-sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       "black-guest",
+					"displayName":   "Guest black-guest",
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": "black-secret",
+			})
+		case "/api/platform/match-claims":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      "private-room-2",
+				"guestId":      "black-guest",
+				"seatColor":    "black",
+				"playerId":     "black-guest",
+				"playerSecret": "black-secret",
+				"claimToken":   "claim-black",
+				"queue":        "direct",
+				"status":       "active",
+			})
+		case "/api/platform/status", "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchmakingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer matchmakingServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchmakingServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/private-matches/private-room-2/join", strings.NewReader(`{
+		"guest":{"guestId":"black-guest","sessionSecret":"black-secret"}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected private room join to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload GatewayPrivateMatchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected private room join response to decode, got %v", err)
+	}
+	if payload.MatchID != "private-room-2" || payload.SeatColor != "black" || payload.WaitingForOpponent {
+		t.Fatalf("unexpected private room join payload: %#v", payload)
+	}
+}
+
+func TestGatewayCreatesPrivateRematchRoom(t *testing.T) {
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/matches/private-room-finished":
+			if r.Method != http.MethodGet {
+				t.Fatalf("expected rematch source load to use get, got %s", r.Method)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"matchId":      "private-room-finished",
+					"status":       "finished",
+					"queue":        "direct",
+					"modeId":       "hidden_cards",
+					"whiteGuestId": "white-guest",
+					"blackGuestId": "black-guest",
+				},
+				"replayHead": 44,
+				"events":     []map[string]any{},
+			})
+		case "/api/matches":
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected rematch room create to use post, got %s", r.Method)
+			}
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if payload["queue"] != "direct" {
+				t.Fatalf("expected rematch queue to stay direct, got %#v", payload["queue"])
+			}
+			if payload["modeId"] != "hidden_cards" {
+				t.Fatalf("expected rematch mode to stay hidden_cards, got %#v", payload["modeId"])
+			}
+			if payload["clockSeconds"] != float64(600) {
+				t.Fatalf("expected rematch clock to stay 600 seconds, got %#v", payload["clockSeconds"])
+			}
+			if payload["blackGuestId"] != "black-guest" {
+				t.Fatalf("expected rematch creator to keep black seat, got %#v", payload)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"matchId":      "private-room-rematch-1",
+					"status":       "waiting",
+					"queue":        "direct",
+					"modeId":       "hidden_cards",
+					"blackGuestId": "black-guest",
+					"blackName":    "Guest black-guest",
+				},
+				"replayHead": 1,
+				"events":     []map[string]any{},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
+		}
+	}))
+	defer matchServer.Close()
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/guest-sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       "black-guest",
+					"displayName":   "Guest black-guest",
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": "black-secret",
+			})
+		case "/api/platform/match-claims":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      "private-room-rematch-1",
+				"guestId":      "black-guest",
+				"seatColor":    "black",
+				"playerId":     "black-guest",
+				"playerSecret": "black-secret",
+				"claimToken":   "claim-black-rematch",
+				"queue":        "direct",
+				"status":       "waiting",
+			})
+		case "/api/platform/status", "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchmakingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer matchmakingServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchmakingServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/private-matches/private-room-finished/rematch", strings.NewReader(`{
+		"guest":{"guestId":"black-guest","sessionSecret":"black-secret"},
+		"clockSeconds":600
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected private rematch create to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload GatewayPrivateMatchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected private rematch response to decode, got %v", err)
+	}
+	if payload.MatchID != "private-room-rematch-1" || payload.SeatColor != "black" || !payload.WaitingForOpponent {
+		t.Fatalf("unexpected private rematch payload: %#v", payload)
+	}
+}
+
+func TestGatewayCreatesDirectChallenge(t *testing.T) {
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/matches":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"matchId":      "challenge-room-1",
+					"status":       "waiting",
+					"queue":        "direct",
+					"modeId":       "hidden_cards",
+					"whiteGuestId": "white-guest",
+					"whiteName":    "Guest white-guest",
+				},
+				"replayHead": 1,
+				"events":     []map[string]any{},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
+		}
+	}))
+	defer matchServer.Close()
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/guest-sessions":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       payload["guestId"],
+					"displayName":   "Guest " + payload["guestId"],
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": payload["sessionSecret"],
+			})
+		case "/api/platform/account-sessions":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"account": map[string]any{
+					"accountId":      payload["accountId"],
+					"handle":         "aurora_white",
+					"primaryGuestId": "white-guest",
+					"linkedGuestIds": []string{"white-guest"},
+					"createdAt":      "2026-01-01T00:00:00Z",
+					"lastSeenAt":     "2026-01-02T00:00:00Z",
+				},
+				"sessionToken": payload["sessionToken"],
+				"expiresAt":    "2026-12-31T00:00:00Z",
+			})
+		case "/api/platform/challenges/eligibility":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "/api/platform/challenges":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challengeId":    "challenge-1",
+				"status":         "pending",
+				"matchId":        "challenge-room-1",
+				"modeId":         "hidden_cards",
+				"clockSeconds":   900,
+				"challengerSeat": "white",
+				"viewerSeat":     "white",
+			})
+		case "/api/platform/match-claims":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      "challenge-room-1",
+				"guestId":      "white-guest",
+				"seatColor":    "white",
+				"playerId":     "white-guest",
+				"playerSecret": "white-secret",
+				"claimToken":   "claim-white",
+				"queue":        "direct",
+				"status":       "waiting",
+			})
+		case "/api/platform/status", "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchmakingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer matchmakingServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchmakingServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/challenges", strings.NewReader(`{
+		"guest":{"guestId":"white-guest","sessionSecret":"white-secret"},
+		"account":{"accountId":"acct-white","sessionToken":"accttok-white"},
+		"targetAccountId":"acct-black",
+		"modeId":"hidden_cards",
+		"preferredSeat":"white",
+		"clockSeconds":900
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected direct challenge create to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload GatewayDirectChallengeLaunchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected direct challenge create response to decode, got %v", err)
+	}
+	if payload.ChallengeID != "challenge-1" || payload.ModeID != contracts.MatchModeHiddenCards || payload.Match.MatchID != "challenge-room-1" {
+		t.Fatalf("unexpected direct challenge create payload: %#v", payload)
+	}
+}
+
+func TestGatewayAcceptsDirectChallenge(t *testing.T) {
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/matches/challenge-room-2/join":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"match": map[string]any{
+						"matchId":      "challenge-room-2",
+						"status":       "active",
+						"queue":        "direct",
+						"modeId":       "open_cards",
+						"whiteGuestId": "white-guest",
+						"blackGuestId": "black-guest",
+					},
+					"replayHead": 2,
+					"events":     []map[string]any{},
+				},
+				"seatColor":          "black",
+				"joined":             true,
+				"waitingForOpponent": false,
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
+		}
+	}))
+	defer matchServer.Close()
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/guest-sessions":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       payload["guestId"],
+					"displayName":   "Guest " + payload["guestId"],
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": payload["sessionSecret"],
+			})
+		case "/api/platform/account-sessions":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"account": map[string]any{
+					"accountId":      payload["accountId"],
+					"handle":         "nova_black",
+					"primaryGuestId": "black-guest",
+					"linkedGuestIds": []string{"black-guest"},
+					"createdAt":      "2026-01-01T00:00:00Z",
+					"lastSeenAt":     "2026-01-02T00:00:00Z",
+				},
+				"sessionToken": payload["sessionToken"],
+				"expiresAt":    "2026-12-31T00:00:00Z",
+			})
+		case "/api/platform/challenges/challenge-2/view":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challengeId":    "challenge-2",
+				"status":         "pending",
+				"matchId":        "challenge-room-2",
+				"modeId":         "open_cards",
+				"clockSeconds":   600,
+				"challengerSeat": "white",
+				"viewerSeat":     "black",
+			})
+		case "/api/platform/challenges/challenge-2/respond":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"challengeId":    "challenge-2",
+				"status":         "accepted",
+				"matchId":        "challenge-room-2",
+				"modeId":         "open_cards",
+				"clockSeconds":   600,
+				"challengerSeat": "white",
+				"viewerSeat":     "black",
+			})
+		case "/api/platform/match-claims":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      "challenge-room-2",
+				"guestId":      "black-guest",
+				"seatColor":    "black",
+				"playerId":     "black-guest",
+				"playerSecret": "black-secret",
+				"claimToken":   "claim-black",
+				"queue":        "direct",
+				"status":       "active",
+			})
+		case "/api/platform/status", "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchmakingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer matchmakingServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchmakingServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/challenges/challenge-2/accept", strings.NewReader(`{
+		"guest":{"guestId":"black-guest","sessionSecret":"black-secret"},
+		"account":{"accountId":"acct-black","sessionToken":"accttok-black"}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected direct challenge accept to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload GatewayDirectChallengeLaunchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected direct challenge accept response to decode, got %v", err)
+	}
+	if payload.ChallengeID != "challenge-2" || payload.Match.MatchID != "challenge-room-2" || payload.Match.SeatColor != "black" {
+		t.Fatalf("unexpected direct challenge accept payload: %#v", payload)
+	}
+}
+
 func TestGatewayPostBootstrapRecoversStaleAccountSessionFromGuestSession(t *testing.T) {
 	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
@@ -599,5 +1170,79 @@ func TestGatewayIntentProxyResolvesClaimToken(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected gateway intent proxy to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGatewayPresenceProxyResolvesClaimToken(t *testing.T) {
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/matches/room-presence/presence" {
+			http.NotFound(w, r)
+			return
+		}
+		var req contracts.MatchPresenceRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("expected forwarded presence body to decode, got %v", err)
+		}
+		if req.PlayerSecret != "resolved-room-secret" || req.PlayerID != "guest_claimed" || req.PlayerClaimToken != "" {
+			t.Fatalf("expected gateway to inject resolved presence secret, got %#v", req)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer matchServer.Close()
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/match-claims/resolve":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if payload["claimToken"] != "claimtok_presence" || payload["matchId"] != "room-presence" {
+				t.Fatalf("expected gateway presence resolve request to include claim token and match id, got %#v", payload)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      payload["matchId"],
+				"guestId":      "guest_claimed",
+				"seatColor":    "white",
+				"playerId":     "guest_claimed",
+				"playerSecret": "resolved-room-secret",
+				"claimToken":   payload["claimToken"],
+			})
+		case "/api/platform/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "platform-service"})
+		case "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"profiles": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchmakingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "matchmaking-service"})
+		case "/api/queues/default":
+			_ = json.NewEncoder(w).Encode(map[string]any{"queue": "rated", "status": "open"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer matchmakingServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchmakingServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/matches/room-presence/presence", strings.NewReader(`{
+		"playerId":"ignored-client-id",
+		"playerClaimToken":"claimtok_presence"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected gateway presence proxy to succeed, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }

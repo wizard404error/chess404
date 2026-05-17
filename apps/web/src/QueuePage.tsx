@@ -1,12 +1,16 @@
 import React from 'react';
+import type { MatchModeId } from '@chess404/contracts';
+import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { GuestProfile } from './lib/platform-service';
 import type { QueueName, QueueTicket } from './lib/matchmaking-service';
 import { cancelTicket, enqueueGuest, fetchQueueTickets, fetchTicket } from './lib/matchmaking-service';
-import { ensureMatch, readStoredRoomMeta, resolveSeatSecret, writeStoredRoomMeta } from './lib/match-service';
+import { ensureMatch, readStoredRoomMeta, resolveSeatSecret, writeStoredRoomMeta, type StoredRoomMeta } from './lib/match-service';
 
 interface QueuePageProps {
   whiteProfile: GuestProfile | null;
   blackProfile: GuestProfile | null;
+  preferredQueue?: QueueName | null;
+  preferredModeId?: MatchModeId | null;
 }
 
 type QueueSide = 'white' | 'black';
@@ -14,10 +18,12 @@ type QueueSide = 'white' | 'black';
 interface StoredTicketRef {
   ticketId: string;
   queue: QueueName;
+  modeId: MatchModeId;
 }
 
 const DEFAULT_QUEUE: QueueName = 'casual';
 const QUEUE_SELECTION_STORAGE_KEY = 'chess404.queue.selection';
+const MODE_SELECTION_STORAGE_KEY = 'chess404.mode.selection';
 
 function queueTicketStorageKey(side: QueueSide): string {
   return `chess404.queue.${side}.ticket`;
@@ -31,12 +37,27 @@ function accountIdStorageKey(side: QueueSide): string {
   return `chess404.account.${side}.id`;
 }
 
+function accountTokenStorageKey(side: QueueSide): string {
+  return `chess404.account.${side}.token`;
+}
+
 function readStoredQueueSelection(): QueueName {
   if (typeof window === 'undefined') {
     return DEFAULT_QUEUE;
   }
   const value = window.localStorage.getItem(QUEUE_SELECTION_STORAGE_KEY);
   return value === 'rated' ? 'rated' : DEFAULT_QUEUE;
+}
+
+function normalizeModeId(value?: string | null): MatchModeId {
+  return value === 'hidden_cards' ? 'hidden_cards' : DEFAULT_MATCH_MODE_ID;
+}
+
+function readStoredModeSelection(): MatchModeId {
+  if (typeof window === 'undefined') {
+    return DEFAULT_MATCH_MODE_ID;
+  }
+  return normalizeModeId(window.localStorage.getItem(MODE_SELECTION_STORAGE_KEY));
 }
 
 function readStoredTicketRef(side: QueueSide): StoredTicketRef | null {
@@ -55,6 +76,7 @@ function readStoredTicketRef(side: QueueSide): StoredTicketRef | null {
     return {
       ticketId: parsed.ticketId,
       queue: parsed.queue === 'rated' ? 'rated' : DEFAULT_QUEUE,
+      modeId: normalizeModeId(parsed.modeId),
     };
   } catch {
     return null;
@@ -72,6 +94,7 @@ function writeStoredTicketRef(side: QueueSide, ticket: QueueTicket | null): void
   window.localStorage.setItem(queueTicketStorageKey(side), JSON.stringify({
     ticketId: ticket.ticketId,
     queue: ticket.queue,
+    modeId: ticket.modeId ?? DEFAULT_MATCH_MODE_ID,
   }));
 }
 
@@ -96,6 +119,16 @@ function readStoredAccountId(side: QueueSide): string | null {
   return window.localStorage.getItem(accountIdStorageKey(side));
 }
 
+function readStoredAccountSession(side: QueueSide): { accountId: string | null; sessionToken: string | null } {
+  if (typeof window === 'undefined') {
+    return { accountId: null, sessionToken: null };
+  }
+  return {
+    accountId: window.localStorage.getItem(accountIdStorageKey(side)),
+    sessionToken: window.localStorage.getItem(accountTokenStorageKey(side)),
+  };
+}
+
 function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -104,18 +137,33 @@ function formatDateTime(value: string): string {
   return date.toLocaleString();
 }
 
-export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps): React.ReactElement {
+function modeLabel(modeId?: MatchModeId): string {
+  return OFFICIAL_MATCH_MODES.find(mode => mode.id === normalizeModeId(modeId))?.label ?? 'Open Cards';
+}
+
+export default function QueuePage({
+  whiteProfile,
+  blackProfile,
+  preferredQueue = null,
+  preferredModeId = null,
+}: QueuePageProps): React.ReactElement {
   const [hostedRuntime, setHostedRuntime] = React.useState(false);
   const [queue, setQueue] = React.useState<QueueName>(() => readStoredQueueSelection());
+  const [modeId, setModeId] = React.useState<MatchModeId>(() => readStoredModeSelection());
   const [whiteTicket, setWhiteTicket] = React.useState<QueueTicket | null>(null);
   const [blackTicket, setBlackTicket] = React.useState<QueueTicket | null>(null);
   const [queueTickets, setQueueTickets] = React.useState<QueueTicket[]>([]);
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [restoringTickets, setRestoringTickets] = React.useState(true);
+  const hostedAutoOpenMatchRef = React.useRef<string | null>(null);
+  const whiteStoredAccount = readStoredAccountSession('white');
+  const blackStoredAccount = readStoredAccountSession('black');
+  const whiteRatedReady = Boolean((whiteStoredAccount.accountId ?? '').trim() && (whiteStoredAccount.sessionToken ?? '').trim());
+  const blackRatedReady = Boolean((blackStoredAccount.accountId ?? '').trim() && (blackStoredAccount.sessionToken ?? '').trim());
 
-  const refreshQueue = React.useCallback(async (queueName: QueueName) => {
-    const tickets = await fetchQueueTickets(queueName);
+  const refreshQueue = React.useCallback(async (queueName: QueueName, nextModeId: MatchModeId) => {
+    const tickets = await fetchQueueTickets(queueName, nextModeId);
     setQueueTickets(tickets);
   }, []);
 
@@ -128,10 +176,10 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
   }, []);
 
   React.useEffect(() => {
-    void refreshQueue(queue).catch(err => {
+    void refreshQueue(queue, modeId).catch(err => {
       setError(err instanceof Error ? err.message : 'Failed to load queue state.');
     });
-  }, [queue, refreshQueue]);
+  }, [queue, modeId, refreshQueue]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') {
@@ -141,11 +189,24 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
   }, [queue]);
 
   React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(MODE_SELECTION_STORAGE_KEY, modeId);
+  }, [modeId]);
+
+  React.useEffect(() => {
     let cancelled = false;
 
     const restoreTickets = async () => {
       const whiteRef = readStoredTicketRef('white');
       const blackRef = readStoredTicketRef('black');
+      const activeRef = whiteRef ?? blackRef;
+
+      if (activeRef) {
+        setQueue(activeRef.queue);
+        setModeId(activeRef.modeId);
+      }
 
       if (!whiteRef && !blackRef) {
         setRestoringTickets(false);
@@ -214,6 +275,68 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
   }, [hostedRuntime]);
 
   React.useEffect(() => {
+    if (!preferredQueue || whiteTicket || blackTicket) {
+      return;
+    }
+    setQueue(preferredQueue);
+  }, [preferredQueue, whiteTicket, blackTicket]);
+
+  React.useEffect(() => {
+    if (!preferredModeId || whiteTicket || blackTicket) {
+      return;
+    }
+    setModeId(normalizeModeId(preferredModeId));
+  }, [preferredModeId, whiteTicket, blackTicket]);
+
+  const buildHostedAssignedRoomMeta = React.useCallback((ticket: QueueTicket, profile: GuestProfile | null): StoredRoomMeta | null => {
+    if (!ticket.assignedRoom || !ticket.seatColor || !profile) {
+      return null;
+    }
+    const existingRoomMeta = readStoredRoomMeta(ticket.assignedRoom);
+    const currentAccountId = readStoredAccountId('white') ?? undefined;
+    const viewerSeat = ticket.seatColor;
+    const opponentGuestId = ticket.matchedWith || undefined;
+    const opponentName = ticket.opponentName || existingRoomMeta?.[viewerSeat === 'white' ? 'blackName' : 'whiteName'];
+
+    return {
+      ...existingRoomMeta,
+      queue: ticket.queue,
+      modeId: ticket.modeId ?? existingRoomMeta?.modeId ?? DEFAULT_MATCH_MODE_ID,
+      viewerSeat,
+      whiteGuestId: viewerSeat === 'white' ? profile.guestId : opponentGuestId ?? existingRoomMeta?.whiteGuestId,
+      blackGuestId: viewerSeat === 'black' ? profile.guestId : opponentGuestId ?? existingRoomMeta?.blackGuestId,
+      whiteAccountId: viewerSeat === 'white' ? currentAccountId : existingRoomMeta?.whiteAccountId,
+      blackAccountId: viewerSeat === 'black' ? currentAccountId : existingRoomMeta?.blackAccountId,
+      whiteName: viewerSeat === 'white' ? profile.displayName : opponentName ?? existingRoomMeta?.whiteName,
+      blackName: viewerSeat === 'black' ? profile.displayName : opponentName ?? existingRoomMeta?.blackName,
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!hostedRuntime || restoringTickets) {
+      return;
+    }
+    const ticket = whiteTicket;
+    if (!ticket || ticket.status !== 'matched' || !ticket.assignedRoom || !ticket.seatColor || !whiteProfile) {
+      if (!ticket || ticket.status !== 'matched') {
+        hostedAutoOpenMatchRef.current = null;
+      }
+      return;
+    }
+    if (hostedAutoOpenMatchRef.current === ticket.assignedRoom) {
+      return;
+    }
+    const roomMeta = buildHostedAssignedRoomMeta(ticket, whiteProfile);
+    if (!roomMeta) {
+      return;
+    }
+    hostedAutoOpenMatchRef.current = ticket.assignedRoom;
+    writeStoredRoomMeta(ticket.assignedRoom, roomMeta);
+    clearStoredTicketRef('white');
+    window.location.href = `/?match=${encodeURIComponent(ticket.assignedRoom)}`;
+  }, [hostedRuntime, restoringTickets, whiteTicket, whiteProfile, buildHostedAssignedRoomMeta]);
+
+  React.useEffect(() => {
     if (restoringTickets) {
       return;
     }
@@ -237,14 +360,14 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
           })
         );
       }
-      tasks.push(refreshQueue(queue));
+      tasks.push(refreshQueue(queue, modeId));
       void Promise.all(tasks).catch(() => {
         // Keep last visible state if polling fails.
       });
     }, 2500);
 
     return () => window.clearInterval(interval);
-  }, [whiteTicket, blackTicket, queue, refreshQueue, restoringTickets]);
+  }, [whiteTicket, blackTicket, queue, modeId, refreshQueue, restoringTickets]);
 
   const handleJoin = React.useCallback(async (side: 'white' | 'black') => {
     const profile = side === 'white' ? whiteProfile : blackProfile;
@@ -252,22 +375,32 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
       setError('Guest profile is still loading. Try again in a moment.');
       return;
     }
+    const accountIdentity = readStoredAccountSession(side);
+    if (queue === 'rated' && (!(accountIdentity.accountId ?? '').trim() || !(accountIdentity.sessionToken ?? '').trim())) {
+      setError(hostedRuntime
+        ? 'Rated queue requires a signed-in Chess404 account. Sign in first, then join rated.'
+        : `${side === 'white' ? 'White' : 'Black'} needs a signed-in Chess404 account before joining rated queue.`);
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const result = await enqueueGuest(profile.guestId, queue, profile.rating);
+      const result = await enqueueGuest(profile.guestId, queue, modeId, profile.rating, profile.displayName, {
+        accountId: accountIdentity.accountId ?? undefined,
+        accountSessionToken: accountIdentity.sessionToken ?? undefined,
+      });
       if (side === 'white') {
         setWhiteTicket(result.ticket);
       } else {
         setBlackTicket(result.ticket);
       }
-      await refreshQueue(queue);
+      await refreshQueue(queue, modeId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to join queue.');
     } finally {
       setLoading(false);
     }
-  }, [whiteProfile, blackProfile, queue, refreshQueue]);
+  }, [whiteProfile, blackProfile, queue, modeId, refreshQueue, hostedRuntime]);
 
   const handleCancel = React.useCallback(async (side: 'white' | 'black') => {
     const ticket = side === 'white' ? whiteTicket : blackTicket;
@@ -283,16 +416,19 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
       } else {
         setBlackTicket(result.ticket);
       }
-      await refreshQueue(queue);
+      await refreshQueue(queue, modeId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to cancel queue ticket.');
     } finally {
       setLoading(false);
     }
-  }, [whiteTicket, blackTicket, queue, refreshQueue]);
+  }, [whiteTicket, blackTicket, queue, modeId, refreshQueue]);
 
   const handleOpenMatch = React.useCallback(async (ticket: QueueTicket) => {
     if (!ticket.assignedRoom) {
+      return;
+    }
+    if (hostedRuntime) {
       return;
     }
     setLoading(true);
@@ -302,6 +438,7 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
       const roomMeta = {
         ...existingRoomMeta,
         queue,
+        modeId: ticket.modeId ?? existingRoomMeta?.modeId ?? modeId,
         whiteGuestId: existingRoomMeta?.whiteGuestId ?? whiteProfile?.guestId,
         blackGuestId: existingRoomMeta?.blackGuestId ?? (hostedRuntime ? undefined : blackProfile?.guestId),
         whiteAccountId: existingRoomMeta?.whiteAccountId ?? readStoredAccountId('white') ?? undefined,
@@ -316,6 +453,7 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
         matchId: ticket.assignedRoom,
         clockSeconds: 600,
         queue: roomMeta.queue,
+        modeId: roomMeta.modeId,
         whiteGuestId: roomMeta.whiteGuestId,
         blackGuestId: roomMeta.blackGuestId,
         whiteAccountId: roomMeta.whiteAccountId,
@@ -335,28 +473,32 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
     } finally {
       setLoading(false);
     }
-  }, [queue, whiteProfile, blackProfile, hostedRuntime]);
+  }, [queue, modeId, whiteProfile, blackProfile, hostedRuntime]);
 
   const queueCard = (
     side: 'white' | 'black',
     profile: GuestProfile | null,
     ticket: QueueTicket | null,
     title?: string,
-  ): React.ReactElement => (
-    <div
-      style={{
-        padding: '18px',
-        borderRadius: '14px',
-        background: side === 'white'
-          ? 'linear-gradient(180deg, rgba(10,40,18,0.78) 0%, rgba(8,20,12,0.88) 100%)'
-          : 'linear-gradient(180deg, rgba(34,12,58,0.78) 0%, rgba(16,10,32,0.88) 100%)',
-        border: side === 'white'
-          ? '1px solid rgba(60,220,110,0.24)'
-          : '1px solid rgba(180,110,255,0.24)',
-        boxShadow: '0 12px 36px rgba(0,0,0,0.28)',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+  ): React.ReactElement => {
+    const ratedReady = side === 'white' ? whiteRatedReady : blackRatedReady;
+    const ratedBlocked = queue === 'rated' && !ratedReady;
+
+    return (
+      <div
+        style={{
+          padding: '18px',
+          borderRadius: '14px',
+          background: side === 'white'
+            ? 'linear-gradient(180deg, rgba(10,40,18,0.78) 0%, rgba(8,20,12,0.88) 100%)'
+            : 'linear-gradient(180deg, rgba(34,12,58,0.78) 0%, rgba(16,10,32,0.88) 100%)',
+          border: side === 'white'
+            ? '1px solid rgba(60,220,110,0.24)'
+            : '1px solid rgba(180,110,255,0.24)',
+          boxShadow: '0 12px 36px rgba(0,0,0,0.28)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
         <div>
           <div style={{ color: side === 'white' ? '#dcffe9' : '#eedcff', fontSize: '15px', fontWeight: 800 }}>{title ?? profile?.displayName ?? 'Loading...'}</div>
           <div style={{ color: side === 'white' ? '#7ce3aa' : '#c9a8ff', fontSize: '12px', marginTop: '4px' }}>♟ {profile?.rating ?? 1200}</div>
@@ -375,25 +517,30 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
         </div>
       </div>
 
-      <div style={{ marginTop: '14px', color: 'rgba(255,232,180,0.7)', fontSize: '12px', lineHeight: 1.5 }}>
+        <div style={{ marginTop: '14px', color: 'rgba(255,232,180,0.7)', fontSize: '12px', lineHeight: 1.5 }}>
         {ticket ? (
           <>
             <div>Queue: {ticket.queue}</div>
+            <div>Mode: {modeLabel(ticket.modeId)}</div>
             <div>Ticket: {ticket.ticketId}</div>
             <div>Updated: {formatDateTime(ticket.updatedAt)}</div>
+            {ticket.seatColor && <div>Seat: {ticket.seatColor}</div>}
+            {ticket.opponentName && <div>Opponent: {ticket.opponentName}</div>}
             {ticket.matchedWith && <div>Matched with: {ticket.matchedWith}</div>}
             {ticket.assignedRoom && <div>Assigned room: {ticket.assignedRoom}</div>}
           </>
+        ) : ratedBlocked ? (
+          <div>Rated queue requires this player seat to be signed in with a Chess404 account before it can join.</div>
         ) : (
           <div>{hostedRuntime ? 'Not in queue yet. Join the selected queue to wait for another online player.' : 'Not in queue yet. Join the selected queue to create a local matchmaking ticket.'}</div>
         )}
-      </div>
+        </div>
 
-      <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
+        <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
         {!ticket || ticket.status === 'cancelled' ? (
           <button
             onClick={() => void handleJoin(side)}
-            disabled={loading || restoringTickets || !profile}
+            disabled={loading || restoringTickets || !profile || ratedBlocked}
             style={{
               flex: 1,
               padding: '10px 12px',
@@ -402,12 +549,13 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
               background: 'linear-gradient(180deg, rgba(200,134,10,0.32) 0%, rgba(122,79,8,0.42) 100%)',
               color: '#fff2c8',
               fontWeight: 800,
-              cursor: loading || restoringTickets || !profile ? 'not-allowed' : 'pointer',
+              cursor: loading || restoringTickets || !profile || ratedBlocked ? 'not-allowed' : 'pointer',
+              opacity: ratedBlocked ? 0.72 : 1,
             }}
           >
             {!profile
               ? 'Preparing player...'
-              : `Join ${queue}`}
+              : `Join ${queue} · ${modeLabel(modeId)}`}
           </button>
         ) : ticket.status === 'queued' ? (
           <button
@@ -426,6 +574,21 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
           >
             Cancel Ticket
           </button>
+        ) : hostedRuntime ? (
+          <div
+            style={{
+              flex: 1,
+              padding: '10px 12px',
+              borderRadius: '9px',
+              border: '1px solid rgba(255,180,60,0.14)',
+              background: 'rgba(255,255,255,0.04)',
+              color: 'rgba(255,232,180,0.82)',
+              fontWeight: 800,
+              textAlign: 'center',
+            }}
+          >
+            Matched — opening game...
+          </div>
         ) : (
           <button
             onClick={() => void handleOpenMatch(ticket)}
@@ -444,9 +607,10 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
             Open match
           </button>
         )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, padding: '22px 28px 26px', gap: '18px' }}>
@@ -500,6 +664,49 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
               </button>
             ))}
           </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+            {OFFICIAL_MATCH_MODES.map(mode => (
+              <button
+                key={mode.id}
+                onClick={() => setModeId(mode.id)}
+                disabled={restoringTickets}
+                style={{
+                  flex: 1,
+                  padding: '9px 12px',
+                  borderRadius: '9px',
+                  border: modeId === mode.id ? '1px solid rgba(120,190,255,0.34)' : '1px solid rgba(255,255,255,0.08)',
+                  background: modeId === mode.id
+                    ? 'linear-gradient(180deg, rgba(54,102,184,0.24) 0%, rgba(24,40,82,0.34) 100%)'
+                    : 'rgba(255,255,255,0.03)',
+                  color: modeId === mode.id ? '#e5f0ff' : 'rgba(210,225,255,0.75)',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  cursor: restoringTickets ? 'not-allowed' : 'pointer',
+                  opacity: restoringTickets ? 0.7 : 1,
+                }}
+                title={mode.rulesSummary}
+              >
+                {mode.shortLabel}
+              </button>
+            ))}
+          </div>
+          <div style={{ color: 'rgba(210,225,255,0.68)', fontSize: '11px', marginTop: '8px', lineHeight: 1.45 }}>
+            {OFFICIAL_MATCH_MODES.find(mode => mode.id === modeId)?.rulesSummary}
+          </div>
+          {queue === 'rated' && (
+            <div style={{
+              marginTop: '10px',
+              padding: '10px 12px',
+              borderRadius: '10px',
+              border: '1px solid rgba(120,190,255,0.18)',
+              background: 'rgba(36,54,96,0.26)',
+              color: 'rgba(220,236,255,0.86)',
+              fontSize: '11px',
+              lineHeight: 1.5,
+            }}>
+              Rated queue is account-only for launch-quality matchmaking. Sign in each player seat before joining rated. Casual queue still allows guest play.
+            </div>
+          )}
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -536,13 +743,13 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
         <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid rgba(255,165,40,0.12)' }}>
           <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Live Queue Snapshot</div>
           <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-            Current tickets in the selected queue. This is the first real matchmaking surface before region routing and rating bands.
+            Current tickets in the selected queue and official mode. This is the first real matchmaking surface before region routing and rating bands.
           </div>
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px' }}>
           {queueTickets.length === 0 ? (
-            <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>No tickets in {queue} yet.</div>
+            <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>No tickets in {queue} · {modeLabel(modeId)} yet.</div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
               {queueTickets.map(ticket => (
@@ -563,6 +770,7 @@ export default function QueuePage({ whiteProfile, blackProfile }: QueuePageProps
                   </div>
                   <div style={{ marginTop: '8px', color: 'rgba(255,232,180,0.72)', fontSize: '12px', lineHeight: 1.5 }}>
                     <div>Guest: {ticket.guestId}</div>
+                    <div>Mode: {modeLabel(ticket.modeId)}</div>
                     <div>Rating: {ticket.rating}</div>
                     <div>Created: {formatDateTime(ticket.createdAt)}</div>
                     {ticket.assignedRoom && <div>Room: {ticket.assignedRoom}</div>}

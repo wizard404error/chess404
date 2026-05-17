@@ -42,6 +42,75 @@ func TestCreateMatchStartsActive(t *testing.T) {
 	}
 }
 
+func TestCreateMatchPreservesModeID(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 0, 30, 0, time.UTC)
+
+	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+		MatchID: "mode_match",
+		ModeID:  contracts.MatchModeHiddenCards,
+	}, now)
+
+	if snapshot.Match.ModeID != contracts.MatchModeHiddenCards {
+		t.Fatalf("expected match mode to be preserved, got %#v", snapshot.Match.ModeID)
+	}
+}
+
+func TestCreateMatchWithSingleSeatWaitsForOpponent(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 0, 45, 0, time.UTC)
+
+	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+		MatchID:      "private_waiting",
+		WhiteGuestID: "guest-white",
+		WhiteName:    "Aurora",
+	}, now)
+
+	if snapshot.Match.Status != "waiting" {
+		t.Fatalf("expected waiting private room, got %q", snapshot.Match.Status)
+	}
+	if snapshot.Match.Clock.RunningFor != "" || snapshot.Match.Clock.StartedAt != nil {
+		t.Fatalf("expected waiting room clock to stay idle, got %#v", snapshot.Match.Clock)
+	}
+}
+
+func TestJoinMatchSeatAssignsOpponentAndActivatesWaitingRoom(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 0, 50, 0, time.UTC)
+
+	service.CreateMatch(contracts.CreateMatchRequest{
+		MatchID:           "invite_room",
+		WhiteGuestID:      "guest-white",
+		WhiteName:         "Aurora",
+		WhitePlayerSecret: "white-room-secret",
+	}, now)
+
+	joined, err := service.JoinMatchSeat("invite_room", contracts.JoinMatchSeatRequest{
+		GuestID:      "guest-black",
+		DisplayName:  "Velvet",
+		PlayerSecret: "black-room-secret",
+	}, now.Add(10*time.Second))
+	if err != nil {
+		t.Fatalf("expected invite room join to succeed, got %v", err)
+	}
+
+	if joined.SeatColor != "black" || !joined.Joined {
+		t.Fatalf("expected join response to assign black seat, got %#v", joined)
+	}
+	if joined.WaitingForOpponent {
+		t.Fatalf("expected match to become active after second seat joined")
+	}
+	if joined.Match.Match.Status != "active" {
+		t.Fatalf("expected room to activate, got %q", joined.Match.Match.Status)
+	}
+	if joined.Match.Match.BlackGuestID != "guest-black" || joined.Match.Match.BlackName != "Velvet" {
+		t.Fatalf("expected black seat to be assigned, got %#v", joined.Match.Match)
+	}
+	if joined.Match.Match.Clock.RunningFor != "white" || joined.Match.Match.Clock.StartedAt == nil {
+		t.Fatalf("expected clock to start when opponent joins, got %#v", joined.Match.Match.Clock)
+	}
+}
+
 func TestCreateMatchStarterThreeModeStartsWithThreeCards(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 1, 0, 0, time.UTC)
@@ -337,6 +406,7 @@ func TestShieldedCaptureIsBlockedAndShieldRemoved(t *testing.T) {
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[3][3] = &contracts.Piece{Type: "bishop", Color: "white"}
+	state.Board[1][0] = &contracts.Piece{Type: "pawn", Color: "white"}
 	shieldTurn := 2
 	state.Board[4][4] = &contracts.Piece{Type: "knight", Color: "black", Shielded: true, ShieldTurn: &shieldTurn}
 
@@ -404,8 +474,8 @@ func TestAbortFinishesEarlyMatch(t *testing.T) {
 		t.Fatalf("expected early abort to succeed, got %v", err)
 	}
 
-	if snapshot.Match.Status != "finished" || snapshot.Match.Winner != "aborted" {
-		t.Fatalf("expected aborted finished match, got status=%q winner=%q", snapshot.Match.Status, snapshot.Match.Winner)
+	if snapshot.Match.Status != "finished" || snapshot.Match.Winner != "aborted" || snapshot.Match.FinishReason != "abort" {
+		t.Fatalf("expected aborted finished match, got status=%q winner=%q reason=%q", snapshot.Match.Status, snapshot.Match.Winner, snapshot.Match.FinishReason)
 	}
 	if len(snapshot.Events) != 1 || snapshot.Events[0].Type != "match_finished" || snapshot.Events[0].Payload["result"] != "abort" {
 		t.Fatalf("expected abort finish event, got %#v", snapshot.Events)
@@ -494,11 +564,218 @@ func TestClockTimeoutFinishesMatchBeforeLateIntent(t *testing.T) {
 		t.Fatalf("expected timeout resolution instead of validation error, got %v", err)
 	}
 
-	if snapshot.Match.Status != "finished" || snapshot.Match.Winner != "black" {
-		t.Fatalf("expected white to flag and black to win, got status=%q winner=%q", snapshot.Match.Status, snapshot.Match.Winner)
+	if snapshot.Match.Status != "finished" || snapshot.Match.Winner != "black" || snapshot.Match.FinishReason != "timeout" {
+		t.Fatalf("expected white to flag and black to win, got status=%q winner=%q reason=%q", snapshot.Match.Status, snapshot.Match.Winner, snapshot.Match.FinishReason)
 	}
 	if len(snapshot.Events) != 2 || snapshot.Events[1].Type != "match_finished" {
 		t.Fatalf("expected timeout events, got %#v", snapshot.Events)
+	}
+}
+
+func TestMoveCheckmateFinishesAuthoritatively(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 5, 0, 0, time.UTC)
+	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "mate_finish"}, now)
+
+	state := service.matches["mate_finish"]
+	state.Board = emptyBoard()
+	state.Board[5][5] = &contracts.Piece{Type: "king", Color: "white"}
+	state.Board[5][6] = &contracts.Piece{Type: "queen", Color: "white"}
+	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
+	state.Turn = "white"
+	state.Moved = nil
+	state.LastMove = nil
+	state.HalfMoveClock = 0
+	state.FullMoveNum = 1
+	state.MoveHistory = nil
+	state.History = []contracts.PositionState{capturePositionState(state)}
+
+	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+		Type:     "make_move",
+		MatchID:  "mate_finish",
+		PlayerID: "white_player",
+		From:     &contracts.Square{Row: 5, Col: 6},
+		To:       &contracts.Square{Row: 6, Col: 6},
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("expected mating move to succeed, got %v", err)
+	}
+
+	if snapshot.Match.Status != "finished" || snapshot.Match.Winner != "white" || snapshot.Match.FinishReason != "checkmate" {
+		t.Fatalf("expected authoritative checkmate, got status=%q winner=%q reason=%q", snapshot.Match.Status, snapshot.Match.Winner, snapshot.Match.FinishReason)
+	}
+	lastEvent := snapshot.Events[len(snapshot.Events)-1]
+	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "checkmate" {
+		t.Fatalf("expected checkmate finish event, got %#v", lastEvent)
+	}
+}
+
+func TestFiftyMoveRuleFinishesAuthoritatively(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 10, 0, 0, time.UTC)
+	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fifty_move_finish"}, now)
+
+	state := service.matches["fifty_move_finish"]
+	state.Board = emptyBoard()
+	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
+	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
+	state.Board[0][0] = &contracts.Piece{Type: "rook", Color: "white"}
+	state.Turn = "white"
+	state.HalfMoveClock = 99
+	state.FullMoveNum = 1
+	state.MoveHistory = nil
+	state.History = []contracts.PositionState{capturePositionState(state)}
+
+	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+		Type:     "make_move",
+		MatchID:  "fifty_move_finish",
+		PlayerID: "white_player",
+		From:     &contracts.Square{Row: 0, Col: 0},
+		To:       &contracts.Square{Row: 1, Col: 0},
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("expected non-capturing rook move to succeed, got %v", err)
+	}
+
+	if snapshot.Match.Status != "finished" || snapshot.Match.Winner != "draw" || snapshot.Match.FinishReason != "fifty_move_rule" {
+		t.Fatalf("expected 50-move draw, got status=%q winner=%q reason=%q", snapshot.Match.Status, snapshot.Match.Winner, snapshot.Match.FinishReason)
+	}
+	lastEvent := snapshot.Events[len(snapshot.Events)-1]
+	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "fifty_move_rule" {
+		t.Fatalf("expected 50-move finish event, got %#v", lastEvent)
+	}
+}
+
+func TestThreefoldRepetitionFinishesAuthoritatively(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 15, 0, 0, time.UTC)
+	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "threefold_finish"}, now)
+
+	state := service.matches["threefold_finish"]
+	state.Board = emptyBoard()
+	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
+	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
+	state.Board[1][0] = &contracts.Piece{Type: "rook", Color: "white"}
+	state.Turn = "white"
+	state.Moved = []string{"1-0"}
+	state.LastMove = nil
+	state.HalfMoveClock = 10
+	state.FullMoveNum = 1
+	state.MoveHistory = nil
+	repeated := contracts.PositionState{
+		Board: cloneBoard(emptyBoard()),
+		Turn:  "black",
+		Moved: []string{"1-0"},
+	}
+	repeated.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
+	repeated.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
+	repeated.Board[0][0] = &contracts.Piece{Type: "rook", Color: "white"}
+	state.History = []contracts.PositionState{
+		repeated,
+		repeated,
+	}
+
+	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+		Type:     "make_move",
+		MatchID:  "threefold_finish",
+		PlayerID: "white_player",
+		From:     &contracts.Square{Row: 1, Col: 0},
+		To:       &contracts.Square{Row: 0, Col: 0},
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("expected repetition move to succeed, got %v", err)
+	}
+
+	if snapshot.Match.Status != "finished" || snapshot.Match.Winner != "draw" || snapshot.Match.FinishReason != "threefold_repetition" {
+		t.Fatalf("expected threefold draw, got status=%q winner=%q reason=%q", snapshot.Match.Status, snapshot.Match.Winner, snapshot.Match.FinishReason)
+	}
+	lastEvent := snapshot.Events[len(snapshot.Events)-1]
+	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "threefold_repetition" {
+		t.Fatalf("expected threefold finish event, got %#v", lastEvent)
+	}
+}
+
+func TestPresenceHeartbeatMarksSeatsConnectedInSnapshot(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 30, 0, 0, time.UTC)
+	service.CreateMatch(contracts.CreateMatchRequest{
+		MatchID:      "presence_connected",
+		WhiteGuestID: "guest-white",
+		BlackGuestID: "guest-black",
+	}, now)
+
+	if err := service.HeartbeatPresence("presence_connected", contracts.MatchPresenceRequest{
+		PlayerID: "white_player",
+	}, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("expected white heartbeat to succeed, got %v", err)
+	}
+	if err := service.HeartbeatPresence("presence_connected", contracts.MatchPresenceRequest{
+		PlayerID: "black_player",
+	}, now.Add(4*time.Second)); err != nil {
+		t.Fatalf("expected black heartbeat to succeed, got %v", err)
+	}
+
+	snapshot, err := service.GetMatch("presence_connected")
+	if err != nil {
+		t.Fatalf("expected snapshot to load, got %v", err)
+	}
+	if !snapshot.Match.WhiteConnected || !snapshot.Match.BlackConnected {
+		t.Fatalf("expected both seats to be connected, got white=%v black=%v", snapshot.Match.WhiteConnected, snapshot.Match.BlackConnected)
+	}
+	if snapshot.Match.DisconnectGraceFor != "" || snapshot.Match.DisconnectGraceDeadline != nil {
+		t.Fatalf("expected no active disconnect grace, got %#v", snapshot.Match)
+	}
+}
+
+func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 8, 35, 0, 0, time.UTC)
+	service.CreateMatch(contracts.CreateMatchRequest{
+		MatchID:      "presence_abandon",
+		WhiteGuestID: "guest-white",
+		BlackGuestID: "guest-black",
+	}, now)
+
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "white_player"}, now); err != nil {
+		t.Fatalf("expected white heartbeat to succeed, got %v", err)
+	}
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "black_player"}, now); err != nil {
+		t.Fatalf("expected black heartbeat to succeed, got %v", err)
+	}
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "black_player"}, now.Add(20*time.Second)); err != nil {
+		t.Fatalf("expected follow-up black heartbeat to succeed, got %v", err)
+	}
+
+	service.collectBroadcasts(now.Add(30 * time.Second))
+	graceSnapshot, err := service.GetMatch("presence_abandon")
+	if err != nil {
+		t.Fatalf("expected grace snapshot to load, got %v", err)
+	}
+	if graceSnapshot.Match.DisconnectGraceFor != "white" || graceSnapshot.Match.DisconnectGraceDeadline == nil {
+		t.Fatalf("expected white disconnect grace to start, got %#v", graceSnapshot.Match)
+	}
+	if graceSnapshot.Match.Status != "active" {
+		t.Fatalf("expected match to stay active during grace, got %q", graceSnapshot.Match.Status)
+	}
+
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "black_player"}, now.Add(65*time.Second)); err != nil {
+		t.Fatalf("expected black heartbeat during grace to succeed, got %v", err)
+	}
+	service.collectBroadcasts(now.Add(80 * time.Second))
+
+	finishedSnapshot, err := service.GetMatch("presence_abandon")
+	if err != nil {
+		t.Fatalf("expected finished snapshot to load, got %v", err)
+	}
+	if finishedSnapshot.Match.Status != "finished" || finishedSnapshot.Match.Winner != "black" || finishedSnapshot.Match.FinishReason != "abandon" {
+		t.Fatalf("expected black to win abandoned match, got status=%q winner=%q reason=%q", finishedSnapshot.Match.Status, finishedSnapshot.Match.Winner, finishedSnapshot.Match.FinishReason)
+	}
+	if len(finishedSnapshot.Events) == 0 {
+		t.Fatalf("expected abandon finish event to be recorded")
+	}
+	lastEvent := finishedSnapshot.Events[len(finishedSnapshot.Events)-1]
+	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "abandon" || lastEvent.Payload["disconnected"] != "white" {
+		t.Fatalf("expected abandon finish payload, got %#v", lastEvent)
 	}
 }
 
@@ -692,6 +969,7 @@ func TestSelectTargetAppliesBadSniperAndConsumesCard(t *testing.T) {
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[2][2] = &contracts.Piece{Type: "knight", Color: "white"}
+	state.Board[6][6] = &contracts.Piece{Type: "rook", Color: "black"}
 
 	if _, err := service.ApplyIntent(contracts.PlayerIntent{
 		Type:     "play_card",

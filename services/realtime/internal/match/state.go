@@ -13,21 +13,37 @@ import (
 )
 
 const (
-	rulesVersion    = "v1-alpha-foundation"
-	defaultClock    = int64(10 * 60 * 1000)
-	maxHandSize     = 10
-	drawFromRound   = 8
-	drawEveryRounds = 3
+	rulesVersion             = "v1-alpha-foundation"
+	defaultClock             = int64(10 * 60 * 1000)
+	maxHandSize              = 10
+	drawFromRound            = 8
+	drawEveryRounds          = 3
+	presenceHeartbeatTimeout = 25 * time.Second
+	disconnectGracePeriod    = 45 * time.Second
 )
 
-var ErrMatchNotFound = errors.New("match not found")
+var (
+	ErrMatchNotFound     = errors.New("match not found")
+	ErrMatchSeatFull     = errors.New("match has no open seats")
+	ErrMatchJoinFinished = errors.New("match is finished")
+)
 
 type Service struct {
-	mu      sync.RWMutex
-	matches map[string]*contracts.MatchState
-	events  map[string][]contracts.ResolvedEvent
-	subs    map[string]map[chan contracts.MatchSnapshotResponse]struct{}
-	archive MatchArchiver
+	mu       sync.RWMutex
+	matches  map[string]*contracts.MatchState
+	events   map[string][]contracts.ResolvedEvent
+	subs     map[string]map[chan contracts.MatchSnapshotResponse]struct{}
+	presence map[string]*matchPresenceState
+	archive  MatchArchiver
+}
+
+type matchPresenceState struct {
+	WhiteLastSeenAt         time.Time
+	BlackLastSeenAt         time.Time
+	WhiteConnected          bool
+	BlackConnected          bool
+	DisconnectGraceFor      string
+	DisconnectGraceDeadline *time.Time
 }
 
 type MatchArchiver interface {
@@ -53,10 +69,11 @@ func NewService() *Service {
 
 func NewServiceWithArchive(archive MatchArchiver) *Service {
 	service := &Service{
-		matches: make(map[string]*contracts.MatchState),
-		events:  make(map[string][]contracts.ResolvedEvent),
-		subs:    make(map[string]map[chan contracts.MatchSnapshotResponse]struct{}),
-		archive: archive,
+		matches:  make(map[string]*contracts.MatchState),
+		events:   make(map[string][]contracts.ResolvedEvent),
+		subs:     make(map[string]map[chan contracts.MatchSnapshotResponse]struct{}),
+		presence: make(map[string]*matchPresenceState),
+		archive:  archive,
 	}
 
 	go service.startBroadcaster()
@@ -511,11 +528,24 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 	}
 
 	startedAt := now.UnixMilli()
+	hasWhiteSeat := strings.TrimSpace(req.WhiteGuestID) != ""
+	hasBlackSeat := strings.TrimSpace(req.BlackGuestID) != ""
+	hasPartialSeats := hasWhiteSeat != hasBlackSeat
+	runningFor := ""
+	var startedAtPtr *int64
+	status := "active"
+	if hasPartialSeats {
+		status = "waiting"
+	} else {
+		runningFor = "white"
+		startedAtPtr = &startedAt
+	}
 	state := &contracts.MatchState{
 		MatchID:           matchID,
 		RulesVersion:      rulesVersion,
 		RNGSeed:           chooseSeed(req.Seed, startedAt),
 		Queue:             req.Queue,
+		ModeID:            contracts.NormalizeMatchModeID(string(req.ModeID)),
 		WhiteGuestID:      req.WhiteGuestID,
 		BlackGuestID:      req.BlackGuestID,
 		WhiteAccountID:    req.WhiteAccountID,
@@ -536,10 +566,10 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 		Clock: contracts.MatchClock{
 			WhiteMS:    clockMS,
 			BlackMS:    clockMS,
-			RunningFor: "white",
-			StartedAt:  &startedAt,
+			RunningFor: runningFor,
+			StartedAt:  startedAtPtr,
 		},
-		Status:    "active",
+		Status:    status,
 		CreatedAt: now.UTC(),
 		UpdatedAt: now.UTC(),
 	}
@@ -552,10 +582,148 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 	s.matches[matchID] = state
 	s.events[matchID] = []contracts.ResolvedEvent{startEvent}
 	s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]struct{})
+	s.presence[matchID] = newMatchPresenceState(state, now)
 
-	snapshot := buildSnapshot(state, len(s.events[matchID]), s.events[matchID], now)
+	snapshot := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), s.events[matchID], now)
 	s.persistSnapshot(snapshot)
 	return snapshot
+}
+
+func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatRequest, now time.Time) (contracts.JoinMatchSeatResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.ensureMatchLoadedLocked(matchID)
+	if !ok {
+		return contracts.JoinMatchSeatResponse{}, ErrMatchNotFound
+	}
+	if state.Status == "finished" {
+		return contracts.JoinMatchSeatResponse{}, ErrMatchJoinFinished
+	}
+
+	guestID := strings.TrimSpace(req.GuestID)
+	if guestID == "" {
+		return contracts.JoinMatchSeatResponse{}, errors.New("guestId is required")
+	}
+
+	displayName := strings.TrimSpace(req.DisplayName)
+	accountID := strings.TrimSpace(req.AccountID)
+	playerSecret := strings.TrimSpace(req.PlayerSecret)
+	preferredSeat := strings.ToLower(strings.TrimSpace(req.PreferredSeat))
+	if preferredSeat != "" && preferredSeat != "white" && preferredSeat != "black" {
+		return contracts.JoinMatchSeatResponse{}, errors.New("preferredSeat must be white or black")
+	}
+
+	seatColor := ""
+	joined := false
+	updated := false
+
+	switch {
+	case strings.EqualFold(state.WhiteGuestID, guestID):
+		seatColor = "white"
+		if displayName != "" && state.WhiteName != displayName {
+			state.WhiteName = displayName
+			updated = true
+		}
+		if accountID != "" && state.WhiteAccountID != accountID {
+			state.WhiteAccountID = accountID
+			updated = true
+		}
+		if state.WhitePlayerSecret == "" && playerSecret != "" {
+			state.WhitePlayerSecret = playerSecret
+			updated = true
+		}
+	case strings.EqualFold(state.BlackGuestID, guestID):
+		seatColor = "black"
+		if displayName != "" && state.BlackName != displayName {
+			state.BlackName = displayName
+			updated = true
+		}
+		if accountID != "" && state.BlackAccountID != accountID {
+			state.BlackAccountID = accountID
+			updated = true
+		}
+		if state.BlackPlayerSecret == "" && playerSecret != "" {
+			state.BlackPlayerSecret = playerSecret
+			updated = true
+		}
+	default:
+		seatColor = chooseOpenSeat(state, preferredSeat)
+		if seatColor == "" {
+			return contracts.JoinMatchSeatResponse{}, ErrMatchSeatFull
+		}
+		if seatColor == "white" {
+			state.WhiteGuestID = guestID
+			state.WhiteName = displayName
+			state.WhiteAccountID = accountID
+			state.WhitePlayerSecret = playerSecret
+		} else {
+			state.BlackGuestID = guestID
+			state.BlackName = displayName
+			state.BlackAccountID = accountID
+			state.BlackPlayerSecret = playerSecret
+		}
+		joined = true
+		updated = true
+	}
+
+	events := make([]contracts.ResolvedEvent, 0, 2)
+	if joined {
+		events = append(events, makeEvent(matchID, "seat_joined", now, guestID, map[string]any{
+			"event":     "seat_joined",
+			"seatColor": seatColor,
+			"guestId":   guestID,
+		}))
+	}
+
+	if strings.TrimSpace(state.WhiteGuestID) != "" && strings.TrimSpace(state.BlackGuestID) != "" {
+		if state.Status != "active" {
+			startedAt := now.UnixMilli()
+			state.Status = "active"
+			state.Clock.RunningFor = "white"
+			state.Clock.StartedAt = &startedAt
+			updated = true
+			events = append(events, makeEvent(matchID, "match_started", now, guestID, map[string]any{
+				"turn": "white",
+			}))
+		}
+	} else {
+		if state.Status != "waiting" {
+			state.Status = "waiting"
+			updated = true
+		}
+		state.Clock.RunningFor = ""
+		state.Clock.StartedAt = nil
+	}
+
+	if updated {
+		state.UpdatedAt = now.UTC()
+	}
+
+	if len(events) > 0 {
+		s.events[matchID] = append(s.events[matchID], events...)
+		presence := s.ensurePresenceStateLocked(matchID, state, now)
+		snapshot := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), events, now)
+		s.persistSnapshot(buildSnapshotWithPresence(state, presence, len(s.events[matchID]), s.events[matchID], now))
+		s.broadcastLocked(matchID, snapshot)
+		return contracts.JoinMatchSeatResponse{
+			Match:              snapshot,
+			SeatColor:          seatColor,
+			Joined:             joined,
+			WaitingForOpponent: state.Status == "waiting",
+		}, nil
+	}
+
+	fullSnapshot := buildSnapshotWithPresence(state, s.ensurePresenceStateLocked(matchID, state, now), len(s.events[matchID]), nil, now)
+	if updated {
+		s.persistSnapshot(fullSnapshot)
+	}
+	return contracts.JoinMatchSeatResponse{
+		Match:              fullSnapshot,
+		SeatColor:          seatColor,
+		Joined:             joined,
+		WaitingForOpponent: state.Status == "waiting",
+	}, nil
 }
 
 func (s *Service) GetMatch(matchID string) (contracts.MatchSnapshotResponse, error) {
@@ -568,7 +736,35 @@ func (s *Service) GetMatch(matchID string) (contracts.MatchSnapshotResponse, err
 	}
 
 	events := s.events[matchID]
-	return buildSnapshot(state, len(events), events, time.Now().UTC()), nil
+	return buildSnapshotWithPresence(state, s.ensurePresenceStateLocked(matchID, state, time.Now().UTC()), len(events), events, time.Now().UTC()), nil
+}
+
+func (s *Service) HeartbeatPresence(matchID string, req contracts.MatchPresenceRequest, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.ensureMatchLoadedLocked(matchID)
+	if !ok {
+		return ErrMatchNotFound
+	}
+	if state.Status == "finished" {
+		return nil
+	}
+
+	color, err := requireIntentColor(state, strings.TrimSpace(req.PlayerID), strings.TrimSpace(req.PlayerSecret))
+	if err != nil {
+		return err
+	}
+
+	presence := s.ensurePresenceStateLocked(matchID, state, now)
+	changed := presenceHeartbeat(presence, color, now)
+	if !changed {
+		return nil
+	}
+
+	snapshot := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), nil, now)
+	s.broadcastLocked(matchID, snapshot)
+	return nil
 }
 
 func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (contracts.MatchSnapshotResponse, error) {
@@ -583,7 +779,8 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 	timeoutEvents := syncClockForMutation(state, now)
 	if len(timeoutEvents) > 0 {
 		s.events[intent.MatchID] = append(s.events[intent.MatchID], timeoutEvents...)
-		snapshot := buildSnapshot(state, len(s.events[intent.MatchID]), timeoutEvents, now)
+		presence := s.ensurePresenceStateLocked(intent.MatchID, state, now)
+		snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), timeoutEvents, now)
 		s.persistSnapshot(buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now))
 		s.broadcastLocked(intent.MatchID, snapshot)
 		return snapshot, nil
@@ -593,20 +790,135 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 	if err != nil {
 		return contracts.MatchSnapshotResponse{}, err
 	}
+	if shouldEvaluateAutomaticMatchFinish(state, intent) {
+		events = finalizeAutomaticMatchFinish(state, events, now, intent.PlayerID)
+	}
 
 	s.events[intent.MatchID] = append(s.events[intent.MatchID], events...)
-	snapshot := buildSnapshot(state, len(s.events[intent.MatchID]), events, now)
+	presence := s.ensurePresenceStateLocked(intent.MatchID, state, now)
+	snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), events, now)
 	s.persistSnapshot(buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now))
 	s.broadcastLocked(intent.MatchID, snapshot)
 
 	return snapshot, nil
 }
 
+func finalizeAutomaticMatchFinish(state *contracts.MatchState, events []contracts.ResolvedEvent, now time.Time, actorID string) []contracts.ResolvedEvent {
+	if state == nil || state.Status != "active" {
+		return events
+	}
+
+	winner, finishReason := evaluateAutomaticMatchFinish(state)
+	if finishReason == "" {
+		return events
+	}
+
+	markMatchFinished(state, winner, finishReason, now)
+
+	clockUpdated := false
+	for index := len(events) - 1; index >= 0; index-- {
+		if events[index].Type != "clock_updated" {
+			continue
+		}
+		if events[index].Payload == nil {
+			events[index].Payload = map[string]any{}
+		}
+		events[index].Payload["runningFor"] = ""
+		clockUpdated = true
+		break
+	}
+	if !clockUpdated {
+		events = append(events, makeEvent(state.MatchID, "clock_updated", now, actorID, map[string]any{
+			"runningFor": "",
+		}))
+	}
+
+	payload := map[string]any{
+		"result": finishReason,
+	}
+	if winner != "" {
+		payload["winner"] = winner
+	}
+	events = append(events, makeEvent(state.MatchID, "match_finished", now, actorID, payload))
+	return events
+}
+
+func shouldEvaluateAutomaticMatchFinish(state *contracts.MatchState, intent contracts.PlayerIntent) bool {
+	if state == nil || state.Status != "active" {
+		return false
+	}
+	if state.InvisiblePiece != nil {
+		return false
+	}
+	if state.DoubleMove != nil && state.DoubleMove.MovesLeft > 0 {
+		return false
+	}
+
+	switch intent.Type {
+	case "make_move":
+		return true
+	case "play_card", "select_target":
+		return state.PendingCard == nil
+	default:
+		return false
+	}
+}
+
+func evaluateAutomaticMatchFinish(state *contracts.MatchState) (string, string) {
+	if state == nil {
+		return "", ""
+	}
+
+	if state.HalfMoveClock >= 100 {
+		return "draw", "fifty_move_rule"
+	}
+
+	historyKeys := make([]string, 0, len(state.History))
+	for _, position := range state.History {
+		historyKeys = append(historyKeys, positionKey(position.Board, position.Turn, sliceToSet(position.Moved), position.LastMove))
+	}
+	currentKey := positionKey(state.Board, state.Turn, sliceToSet(state.Moved), state.LastMove)
+	if threefold(historyKeys, currentKey) {
+		return "draw", "threefold_repetition"
+	}
+
+	_, isMate, isStale := gameStatusWithFusion(state.Board, state.Turn, state.LastMove, sliceToSet(state.Moved))
+	if isMate {
+		return opposite(state.Turn), "checkmate"
+	}
+	if isStale {
+		return "draw", "stalemate"
+	}
+	if insufficientMaterial(state.Board) {
+		return "draw", "insufficient_material"
+	}
+
+	return "", ""
+}
+
+func markMatchFinished(state *contracts.MatchState, winner string, finishReason string, now time.Time) {
+	if state == nil {
+		return
+	}
+	state.Status = "finished"
+	state.Winner = winner
+	state.FinishReason = finishReason
+	state.DrawOfferedBy = ""
+	state.Clock.RunningFor = ""
+	state.Clock.StartedAt = nil
+	state.UpdatedAt = now.UTC()
+}
+
 func (s *Service) persistSnapshot(snapshot contracts.MatchSnapshotResponse) {
 	if s.archive == nil {
 		return
 	}
-	_ = s.archive.Upsert(snapshot)
+	persisted := snapshot
+	persisted.Match.WhiteConnected = false
+	persisted.Match.BlackConnected = false
+	persisted.Match.DisconnectGraceFor = ""
+	persisted.Match.DisconnectGraceDeadline = nil
+	_ = s.archive.Upsert(persisted)
 }
 
 func (s *Service) Subscribe(matchID string) (<-chan contracts.MatchSnapshotResponse, func(), contracts.MatchSnapshotResponse, error) {
@@ -626,7 +938,7 @@ func (s *Service) Subscribe(matchID string) (<-chan contracts.MatchSnapshotRespo
 	s.subs[matchID][ch] = struct{}{}
 
 	initial := contracts.MatchSnapshotResponse{
-		Match:      cloneStateAt(state, time.Now().UTC()),
+		Match:      cloneStateAt(state, s.ensurePresenceStateLocked(matchID, state, time.Now().UTC()), time.Now().UTC()),
 		ReplayHead: len(s.events[matchID]),
 		Events:     cloneEvents(s.events[matchID]),
 	}
@@ -670,6 +982,7 @@ func (s *Service) ensureMatchLoadedLocked(matchID string) (*contracts.MatchState
 	if s.subs[matchID] == nil {
 		s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]struct{})
 	}
+	s.presence[matchID] = newMatchPresenceState(state, time.Now().UTC())
 
 	return state, true
 }
@@ -691,6 +1004,127 @@ func (s *Service) Stats() ServiceStats {
 		stats.SubscriberCount += len(s.subs[matchID])
 	}
 	return stats
+}
+
+func newMatchPresenceState(state *contracts.MatchState, now time.Time) *matchPresenceState {
+	presence := &matchPresenceState{}
+	if strings.TrimSpace(state.WhiteGuestID) != "" {
+		presence.WhiteLastSeenAt = now
+		presence.WhiteConnected = true
+	}
+	if strings.TrimSpace(state.BlackGuestID) != "" {
+		presence.BlackLastSeenAt = now
+		presence.BlackConnected = true
+	}
+	return presence
+}
+
+func (s *Service) ensurePresenceStateLocked(matchID string, state *contracts.MatchState, now time.Time) *matchPresenceState {
+	if presence, ok := s.presence[matchID]; ok && presence != nil {
+		return presence
+	}
+	presence := newMatchPresenceState(state, now)
+	s.presence[matchID] = presence
+	return presence
+}
+
+func presenceHeartbeat(presence *matchPresenceState, color string, now time.Time) bool {
+	if presence == nil {
+		return false
+	}
+
+	changed := false
+	switch color {
+	case "white":
+		if !presence.WhiteConnected || !presence.WhiteLastSeenAt.Equal(now) {
+			changed = true
+		}
+		presence.WhiteConnected = true
+		presence.WhiteLastSeenAt = now
+	case "black":
+		if !presence.BlackConnected || !presence.BlackLastSeenAt.Equal(now) {
+			changed = true
+		}
+		presence.BlackConnected = true
+		presence.BlackLastSeenAt = now
+	}
+
+	if presence.DisconnectGraceFor == color {
+		presence.DisconnectGraceFor = ""
+		presence.DisconnectGraceDeadline = nil
+		changed = true
+	}
+
+	return changed
+}
+
+func evaluatePresenceRuntime(state *contracts.MatchState, presence *matchPresenceState, now time.Time) []contracts.ResolvedEvent {
+	if state == nil || presence == nil {
+		return nil
+	}
+	if state.Status == "finished" {
+		presence.DisconnectGraceFor = ""
+		presence.DisconnectGraceDeadline = nil
+		return nil
+	}
+
+	whiteOccupied := strings.TrimSpace(state.WhiteGuestID) != ""
+	blackOccupied := strings.TrimSpace(state.BlackGuestID) != ""
+
+	if whiteOccupied {
+		presence.WhiteConnected = now.Sub(presence.WhiteLastSeenAt) <= presenceHeartbeatTimeout
+	} else {
+		presence.WhiteConnected = false
+	}
+	if blackOccupied {
+		presence.BlackConnected = now.Sub(presence.BlackLastSeenAt) <= presenceHeartbeatTimeout
+	} else {
+		presence.BlackConnected = false
+	}
+
+	if state.Status != "active" || !whiteOccupied || !blackOccupied {
+		presence.DisconnectGraceFor = ""
+		presence.DisconnectGraceDeadline = nil
+		return nil
+	}
+
+	disconnectedColor := ""
+	switch {
+	case !presence.WhiteConnected && presence.BlackConnected:
+		disconnectedColor = "white"
+	case presence.WhiteConnected && !presence.BlackConnected:
+		disconnectedColor = "black"
+	default:
+		disconnectedColor = ""
+	}
+
+	if disconnectedColor == "" {
+		presence.DisconnectGraceFor = ""
+		presence.DisconnectGraceDeadline = nil
+		return nil
+	}
+
+	if presence.DisconnectGraceFor != disconnectedColor || presence.DisconnectGraceDeadline == nil {
+		deadline := now.Add(disconnectGracePeriod)
+		presence.DisconnectGraceFor = disconnectedColor
+		presence.DisconnectGraceDeadline = &deadline
+		return nil
+	}
+
+	if now.Before(*presence.DisconnectGraceDeadline) {
+		return nil
+	}
+
+	presence.DisconnectGraceFor = ""
+	presence.DisconnectGraceDeadline = nil
+	markMatchFinished(state, opposite(disconnectedColor), "abandon", now)
+	return []contracts.ResolvedEvent{
+		makeEvent(state.MatchID, "match_finished", now, "", map[string]any{
+			"result":       "abandon",
+			"winner":       state.Winner,
+			"disconnected": disconnectedColor,
+		}),
+	}
 }
 
 func (s *Service) broadcastLocked(matchID string, snapshot contracts.MatchSnapshotResponse) {
@@ -724,29 +1158,7 @@ func (s *Service) startBroadcaster() {
 	defer ticker.Stop()
 
 	for now := range ticker.C {
-		s.mu.RLock()
-		type broadcastItem struct {
-			matchID  string
-			snapshot contracts.MatchSnapshotResponse
-		}
-		items := make([]broadcastItem, 0, len(s.matches))
-
-		for matchID, state := range s.matches {
-			if state.Status != "active" || len(s.subs[matchID]) == 0 {
-				continue
-			}
-
-			items = append(items, broadcastItem{
-				matchID: matchID,
-				snapshot: buildSnapshot(
-					state,
-					len(s.events[matchID]),
-					nil,
-					now.UTC(),
-				),
-			})
-		}
-		s.mu.RUnlock()
+		items := s.collectBroadcasts(now.UTC())
 
 		if len(items) == 0 {
 			continue
@@ -761,6 +1173,40 @@ func (s *Service) startBroadcaster() {
 		}
 		s.mu.RUnlock()
 	}
+}
+
+type broadcastItem struct {
+	matchID  string
+	snapshot contracts.MatchSnapshotResponse
+}
+
+func (s *Service) collectBroadcasts(now time.Time) []broadcastItem {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	items := make([]broadcastItem, 0, len(s.matches))
+	for matchID, state := range s.matches {
+		presence := s.ensurePresenceStateLocked(matchID, state, now)
+		runtimeEvents := evaluatePresenceRuntime(state, presence, now)
+		if len(runtimeEvents) > 0 {
+			s.events[matchID] = append(s.events[matchID], runtimeEvents...)
+			s.persistSnapshot(buildSnapshot(state, len(s.events[matchID]), s.events[matchID], now))
+			items = append(items, broadcastItem{
+				matchID:  matchID,
+				snapshot: buildSnapshotWithPresence(state, presence, len(s.events[matchID]), runtimeEvents, now),
+			})
+			continue
+		}
+		if len(s.subs[matchID]) == 0 {
+			continue
+		}
+		items = append(items, broadcastItem{
+			matchID:  matchID,
+			snapshot: buildSnapshotWithPresence(state, presence, len(s.events[matchID]), nil, now),
+		})
+	}
+
+	return items
 }
 
 func applyIntent(state *contracts.MatchState, intent contracts.PlayerIntent, now time.Time) ([]contracts.ResolvedEvent, error) {
@@ -2263,15 +2709,10 @@ func applyRespondDraw(state *contracts.MatchState, intent contracts.PlayerIntent
 	}
 
 	if *intent.Accept {
-		state.Status = "finished"
-		state.Winner = "draw"
-		state.DrawOfferedBy = ""
-		state.Clock.RunningFor = ""
-		state.Clock.StartedAt = nil
-		state.UpdatedAt = now.UTC()
+		markMatchFinished(state, "draw", "draw_agreement", now)
 		return []contracts.ResolvedEvent{
 			makeEvent(state.MatchID, "draw_resolved", now, intent.PlayerID, map[string]any{"accept": true}),
-			makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "draw"}),
+			makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "draw_agreement", "winner": "draw"}),
 		}, nil
 	}
 
@@ -2293,12 +2734,7 @@ func applyAbort(state *contracts.MatchState, intent contracts.PlayerIntent, now 
 		return nil, errors.New("abort is only allowed before black completes the first reply")
 	}
 
-	state.Status = "finished"
-	state.Winner = "aborted"
-	state.DrawOfferedBy = ""
-	state.Clock.RunningFor = ""
-	state.Clock.StartedAt = nil
-	state.UpdatedAt = now.UTC()
+	markMatchFinished(state, "aborted", "abort", now)
 
 	return []contracts.ResolvedEvent{
 		makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{
@@ -2318,12 +2754,7 @@ func applyResign(state *contracts.MatchState, intent contracts.PlayerIntent, now
 		return nil, err
 	}
 	winner := opposite(resigningColor)
-	state.Status = "finished"
-	state.Winner = winner
-	state.DrawOfferedBy = ""
-	state.Clock.RunningFor = ""
-	state.Clock.StartedAt = nil
-	state.UpdatedAt = now.UTC()
+	markMatchFinished(state, winner, "resign", now)
 
 	return []contracts.ResolvedEvent{
 		makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{
@@ -2338,6 +2769,33 @@ func ensureActive(state *contracts.MatchState) error {
 		return errors.New("match is not active")
 	}
 	return nil
+}
+
+func chooseOpenSeat(state *contracts.MatchState, preferred string) string {
+	if state == nil {
+		return ""
+	}
+	isWhiteOpen := strings.TrimSpace(state.WhiteGuestID) == ""
+	isBlackOpen := strings.TrimSpace(state.BlackGuestID) == ""
+	switch preferred {
+	case "white":
+		if isWhiteOpen {
+			return "white"
+		}
+		return ""
+	case "black":
+		if isBlackOpen {
+			return "black"
+		}
+		return ""
+	}
+	if isWhiteOpen {
+		return "white"
+	}
+	if isBlackOpen {
+		return "black"
+	}
+	return ""
 }
 
 func inferColor(playerID, fallback string) string {
@@ -2650,15 +3108,35 @@ func starterCardTemplate(mechanic string) (contracts.GameCard, bool) {
 	return contracts.GameCard{}, false
 }
 
-func cloneStateAt(state *contracts.MatchState, now time.Time) contracts.MatchState {
+func cloneStateAt(state *contracts.MatchState, presence *matchPresenceState, now time.Time) contracts.MatchState {
 	clone := cloneState(state)
+	if presence != nil {
+		clone.WhiteConnected = presence.WhiteConnected
+		clone.BlackConnected = presence.BlackConnected
+		clone.DisconnectGraceFor = presence.DisconnectGraceFor
+		if presence.DisconnectGraceDeadline != nil {
+			deadline := *presence.DisconnectGraceDeadline
+			clone.DisconnectGraceDeadline = &deadline
+		} else {
+			clone.DisconnectGraceDeadline = nil
+		}
+	}
 	applyClockView(&clone, now)
 	return clone
 }
 
 func buildSnapshot(state *contracts.MatchState, replayHead int, events []contracts.ResolvedEvent, now time.Time) contracts.MatchSnapshotResponse {
 	return contracts.MatchSnapshotResponse{
-		Match:        cloneStateAt(state, now),
+		Match:        cloneStateAt(state, nil, now),
+		ReplayHead:   replayHead,
+		ReplayFrames: buildReplayFrames(state),
+		Events:       cloneEvents(events),
+	}
+}
+
+func buildSnapshotWithPresence(state *contracts.MatchState, presence *matchPresenceState, replayHead int, events []contracts.ResolvedEvent, now time.Time) contracts.MatchSnapshotResponse {
+	return contracts.MatchSnapshotResponse{
+		Match:        cloneStateAt(state, presence, now),
 		ReplayHead:   replayHead,
 		ReplayFrames: buildReplayFrames(state),
 		Events:       cloneEvents(events),
@@ -2706,20 +3184,14 @@ func syncClockForMutation(state *contracts.MatchState, now time.Time) []contract
 		state.Clock.WhiteMS -= elapsed
 		if state.Clock.WhiteMS <= 0 {
 			state.Clock.WhiteMS = 0
-			state.Status = "finished"
-			state.Winner = "black"
-			state.Clock.RunningFor = ""
-			state.Clock.StartedAt = nil
+			markMatchFinished(state, "black", "timeout", now)
 			return timeoutEvents(state.MatchID, now, "white", "black")
 		}
 	case "black":
 		state.Clock.BlackMS -= elapsed
 		if state.Clock.BlackMS <= 0 {
 			state.Clock.BlackMS = 0
-			state.Status = "finished"
-			state.Winner = "white"
-			state.Clock.RunningFor = ""
-			state.Clock.StartedAt = nil
+			markMatchFinished(state, "white", "timeout", now)
 			return timeoutEvents(state.MatchID, now, "black", "white")
 		}
 	}

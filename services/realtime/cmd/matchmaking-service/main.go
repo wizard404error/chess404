@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/matchmaking"
 )
 
@@ -57,19 +60,37 @@ func main() {
 		})
 	})
 
+	mux.HandleFunc("/api/queues/snapshots", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		queueFilter := parseOptionalQueueName(r.URL.Query().Get("queue"))
+		modeFilter := parseOptionalModeID(r.URL.Query().Get("modeId"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"snapshots": queueSnapshots(service, queueFilter, modeFilter),
+			"checkedAt": time.Now().UTC(),
+		})
+	})
+
 	mux.HandleFunc("/api/queues/tickets", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			queue := parseQueueName(r.URL.Query().Get("queue"))
+			modeID := parseModeID(r.URL.Query().Get("modeId"))
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"tickets": service.List(queue),
+				"tickets": service.List(queue, modeID),
 			})
 		case http.MethodPost:
 			var payload struct {
-				Queue   string `json:"queue"`
-				GuestID string `json:"guestId"`
-				Rating  int    `json:"rating"`
+				Queue       string `json:"queue"`
+				ModeID      string `json:"modeId"`
+				GuestID     string `json:"guestId"`
+				AccountID   string `json:"accountId"`
+				DisplayName string `json:"displayName"`
+				Rating      int    `json:"rating"`
 			}
 			if r.Body != nil {
 				defer r.Body.Close()
@@ -85,15 +106,34 @@ func main() {
 			if payload.Rating <= 0 {
 				payload.Rating = 1200
 			}
-			ticket, err := service.Enqueue(parseQueueName(payload.Queue), payload.GuestID, payload.Rating)
+			modeID := parseModeID(payload.ModeID)
+			ticket, err := service.EnqueueWithAccount(
+				parseQueueName(payload.Queue),
+				modeID,
+				payload.GuestID,
+				payload.Rating,
+				payload.DisplayName,
+				strings.TrimSpace(payload.AccountID),
+			)
 			if err != nil {
+				var activeErr matchmaking.ActiveTicketError
+				if errors.As(err, &activeErr) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusConflict)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"error":    err.Error(),
+						"ticket":   activeErr.Ticket,
+						"snapshot": service.Snapshot(activeErr.Ticket.Queue, activeErr.Ticket.ModeID),
+					})
+					return
+				}
 				http.Error(w, `{"error":"failed to persist queue ticket"}`, http.StatusInternalServerError)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ticket":   ticket,
-				"snapshot": service.Snapshot(ticket.Queue),
+				"snapshot": service.Snapshot(ticket.Queue, ticket.ModeID),
 			})
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -116,7 +156,7 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ticket":   ticket,
-				"snapshot": service.Snapshot(ticket.Queue),
+				"snapshot": service.Snapshot(ticket.Queue, ticket.ModeID),
 			})
 		case http.MethodDelete:
 			ticket, ok, err := service.Cancel(ticketID)
@@ -131,7 +171,7 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ticket":   ticket,
-				"snapshot": service.Snapshot(ticket.Queue),
+				"snapshot": service.Snapshot(ticket.Queue, ticket.ModeID),
 			})
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -175,15 +215,33 @@ func matchmakingTicketStoreRedisKey() string {
 	return envOrDefault("MATCHMAKING_TICKET_STORE_REDIS_KEY", "chess404:matchmaking:tickets")
 }
 
+func matchmakingMatchServiceURL() string {
+	return strings.TrimRight(envOrDefault("MATCH_SERVICE_INTERNAL_URL", "http://127.0.0.1:8082"), "/")
+}
+
 func openMatchmakingService() (*matchmaking.Service, error) {
+	serviceCreator := &httpMatchCreator{
+		baseURL: matchmakingMatchServiceURL(),
+		client:  &http.Client{Timeout: 3 * time.Second},
+	}
+
+	var (
+		service *matchmaking.Service
+		err     error
+	)
 	switch strings.ToLower(envOrDefault("MATCHMAKING_TICKET_STORE_BACKEND", "file")) {
 	case "sqlite":
-		return matchmaking.NewSQLitePersistentService(matchmakingTicketStoreSQLitePath())
+		service, err = matchmaking.NewSQLitePersistentService(matchmakingTicketStoreSQLitePath())
 	case "redis":
-		return matchmaking.NewRedisPersistentService(matchmakingTicketStoreRedisURL(), matchmakingTicketStoreRedisKey())
+		service, err = matchmaking.NewRedisPersistentService(matchmakingTicketStoreRedisURL(), matchmakingTicketStoreRedisKey())
 	default:
-		return matchmaking.NewPersistentService(envOrDefault("MATCHMAKING_TICKET_STORE_PATH", "data/matchmaking-tickets.json"))
+		service, err = matchmaking.NewPersistentService(envOrDefault("MATCHMAKING_TICKET_STORE_PATH", "data/matchmaking-tickets.json"))
 	}
+	if err != nil {
+		return nil, err
+	}
+	service.SetMatchCreator(serviceCreator)
+	return service, nil
 }
 
 func parseQueueName(value string) matchmaking.QueueName {
@@ -193,4 +251,93 @@ func parseQueueName(value string) matchmaking.QueueName {
 	default:
 		return matchmaking.QueueRated
 	}
+}
+
+func parseModeID(value string) contracts.MatchModeID {
+	return contracts.NormalizeMatchModeID(value)
+}
+
+func parseOptionalQueueName(value string) matchmaking.QueueName {
+	switch strings.TrimSpace(value) {
+	case "":
+		return ""
+	default:
+		return parseQueueName(value)
+	}
+}
+
+func parseOptionalModeID(value string) contracts.MatchModeID {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return contracts.NormalizeMatchModeID(value)
+}
+
+func queueSnapshots(service *matchmaking.Service, queueFilter matchmaking.QueueName, modeFilter contracts.MatchModeID) []matchmaking.QueueSnapshot {
+	queues := []matchmaking.QueueName{matchmaking.QueueCasual, matchmaking.QueueRated}
+	if queueFilter != "" {
+		queues = []matchmaking.QueueName{queueFilter}
+	}
+
+	modes := []contracts.MatchModeID{contracts.MatchModeOpenCards, contracts.MatchModeHiddenCards}
+	if modeFilter != "" {
+		modes = []contracts.MatchModeID{modeFilter}
+	}
+
+	snapshots := make([]matchmaking.QueueSnapshot, 0, len(queues)*len(modes))
+	for _, queue := range queues {
+		for _, modeID := range modes {
+			snapshots = append(snapshots, service.Snapshot(queue, modeID))
+		}
+	}
+	return snapshots
+}
+
+type httpMatchCreator struct {
+	baseURL string
+	client  *http.Client
+}
+
+func (c *httpMatchCreator) CreateMatch(assignment matchmaking.MatchAssignment) error {
+	if c == nil || strings.TrimSpace(c.baseURL) == "" {
+		return fmt.Errorf("match service URL is not configured")
+	}
+	client := c.client
+	if client == nil {
+		client = &http.Client{Timeout: 3 * time.Second}
+	}
+
+	payload := map[string]any{
+		"matchId":           assignment.RoomID,
+		"clockSeconds":      600,
+		"starterHandMode":   "starter_three",
+		"queue":             string(assignment.Queue),
+		"modeId":            string(assignment.ModeID),
+		"whiteGuestId":      assignment.WhiteGuestID,
+		"blackGuestId":      assignment.BlackGuestID,
+		"whiteAccountId":    assignment.WhiteAccountID,
+		"blackAccountId":    assignment.BlackAccountID,
+		"whiteName":         assignment.WhiteName,
+		"blackName":         assignment.BlackName,
+		"whitePlayerSecret": assignment.WhitePlayerSecret,
+		"blackPlayerSecret": assignment.BlackPlayerSecret,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/matches", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("match service create failed with status %d", resp.StatusCode)
+	}
+	return nil
 }

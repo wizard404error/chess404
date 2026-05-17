@@ -2,6 +2,7 @@ package match
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/chess404/realtime/internal/contracts"
 )
@@ -53,6 +54,78 @@ func legalMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *con
 	}
 
 	return legal
+}
+
+func legalMovesWithFusion(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}) []contracts.Square {
+	piece := pieceAt(board, from)
+	if piece == nil {
+		return nil
+	}
+	if piece.FusedWith == "" {
+		return legalMoves(board, from, lastMove, moved)
+	}
+
+	merged := make([]contracts.Square, 0, 16)
+	seen := make(map[string]struct{})
+	appendMoves := func(moves []contracts.Square) {
+		for _, move := range moves {
+			key := keyForSquare(move)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, move)
+		}
+	}
+
+	appendMoves(legalMoves(board, from, lastMove, moved))
+
+	transformedBoard := cloneBoard(board)
+	transformedBoard[from.Row][from.Col] = clonePieceAsType(piece, piece.FusedWith)
+	appendMoves(legalMoves(transformedBoard, from, lastMove, moved))
+
+	return merged
+}
+
+func hasLegalMoveWithFusion(board [][]*contracts.Piece, color string, lastMove *contracts.LastMove, moved map[string]struct{}) bool {
+	opponent := opposite(color)
+	for r := 0; r < 8; r++ {
+		for c := 0; c < 8; c++ {
+			piece := board[r][c]
+			if piece == nil || piece.Color != color {
+				continue
+			}
+
+			from := contracts.Square{Row: r, Col: c}
+			moves := legalMovesWithFusion(board, from, lastMove, moved)
+			for _, move := range moves {
+				testBoard := cloneBoard(board)
+				moving := testBoard[from.Row][from.Col]
+				if moving == nil {
+					continue
+				}
+				captureEmptyDiagonal := moving.Type == "pawn" && move.Col != from.Col && pieceAt(board, move) == nil
+				movePiece(testBoard, from, move, moving, captureEmptyDiagonal)
+				king := findKing(testBoard, color)
+				if king != nil && !isAttackedWithFusion(testBoard, *king, opponent) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func gameStatusWithFusion(board [][]*contracts.Piece, player string, lastMove *contracts.LastMove, moved map[string]struct{}) (bool, bool, bool) {
+	king := findKing(board, player)
+	if king == nil {
+		return false, false, false
+	}
+
+	inCheck := isAttackedWithFusion(board, *king, opposite(player))
+	hasLegal := hasLegalMoveWithFusion(board, player, lastMove, moved)
+	return inCheck, inCheck && !hasLegal, !inCheck && !hasLegal
 }
 
 func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}) []contracts.Square {
@@ -228,6 +301,73 @@ func findKing(board [][]*contracts.Piece, color string) *contracts.Square {
 	return nil
 }
 
+func insufficientMaterial(board [][]*contracts.Piece) bool {
+	nonKings := make([]*contracts.Piece, 0, 8)
+	for r := 0; r < 8; r++ {
+		for c := 0; c < 8; c++ {
+			piece := board[r][c]
+			if piece != nil && piece.Type != "king" {
+				nonKings = append(nonKings, piece)
+			}
+		}
+	}
+
+	switch len(nonKings) {
+	case 0:
+		return true
+	case 1:
+		return nonKings[0].Type == "bishop" || nonKings[0].Type == "knight"
+	case 2:
+		typeA, typeB := nonKings[0].Type, nonKings[1].Type
+		return (typeA == "knight" && typeB == "knight") ||
+			(typeA == "bishop" && typeB == "bishop") ||
+			(typeA == "bishop" && typeB == "knight") ||
+			(typeA == "knight" && typeB == "bishop")
+	default:
+		return false
+	}
+}
+
+func positionKey(board [][]*contracts.Piece, turn string, moved map[string]struct{}, lastMove *contracts.LastMove) string {
+	castling := ""
+	if _, movedWhiteKing := moved["0-4"]; !movedWhiteKing && pieceAt(board, contracts.Square{Row: 0, Col: 4}) != nil && pieceAt(board, contracts.Square{Row: 0, Col: 4}).Type == "king" {
+		if _, movedWhiteRookKing := moved["0-7"]; !movedWhiteRookKing && pieceAt(board, contracts.Square{Row: 0, Col: 7}) != nil && pieceAt(board, contracts.Square{Row: 0, Col: 7}).Type == "rook" {
+			castling += "K"
+		}
+		if _, movedWhiteRookQueen := moved["0-0"]; !movedWhiteRookQueen && pieceAt(board, contracts.Square{Row: 0, Col: 0}) != nil && pieceAt(board, contracts.Square{Row: 0, Col: 0}).Type == "rook" {
+			castling += "Q"
+		}
+	}
+	if _, movedBlackKing := moved["7-4"]; !movedBlackKing && pieceAt(board, contracts.Square{Row: 7, Col: 4}) != nil && pieceAt(board, contracts.Square{Row: 7, Col: 4}).Type == "king" {
+		if _, movedBlackRookKing := moved["7-7"]; !movedBlackRookKing && pieceAt(board, contracts.Square{Row: 7, Col: 7}) != nil && pieceAt(board, contracts.Square{Row: 7, Col: 7}).Type == "rook" {
+			castling += "k"
+		}
+		if _, movedBlackRookQueen := moved["7-0"]; !movedBlackRookQueen && pieceAt(board, contracts.Square{Row: 7, Col: 0}) != nil && pieceAt(board, contracts.Square{Row: 7, Col: 0}).Type == "rook" {
+			castling += "q"
+		}
+	}
+
+	enPassant := "-"
+	if lastMove != nil {
+		lastPiece := pieceAt(board, lastMove.To)
+		if lastPiece != nil && lastPiece.Type == "pawn" && abs(lastMove.From.Row-lastMove.To.Row) == 2 {
+			enPassant = fileLabels[lastMove.To.Col] + rankLabels[(lastMove.From.Row+lastMove.To.Row)/2]
+		}
+	}
+
+	return fmt.Sprintf("%s|%c|%s|%s", boardPositionString(board), turn[0], fallbackCastling(castling), enPassant)
+}
+
+func threefold(history []string, current string) bool {
+	count := 0
+	for _, entry := range history {
+		if entry == current {
+			count++
+		}
+	}
+	return count >= 3
+}
+
 func movePiece(board [][]*contracts.Piece, from, to contracts.Square, piece *contracts.Piece, captureEmptyDiagonal bool) {
 	board[to.Row][to.Col] = piece
 	board[from.Row][from.Col] = nil
@@ -293,6 +433,26 @@ func pieceAt(board [][]*contracts.Piece, square contracts.Square) *contracts.Pie
 	return board[square.Row][square.Col]
 }
 
+func clonePieceAsType(piece *contracts.Piece, pieceType string) *contracts.Piece {
+	if piece == nil {
+		return nil
+	}
+	return &contracts.Piece{
+		Type:           pieceType,
+		Color:          piece.Color,
+		Shielded:       piece.Shielded,
+		ShieldTurn:     piece.ShieldTurn,
+		Frozen:         piece.Frozen,
+		Borrowed:       piece.Borrowed,
+		ParasiteTarget: piece.ParasiteTarget,
+		Bomb:           piece.Bomb,
+		Invisible:      piece.Invisible,
+		InvisibleTurn:  piece.InvisibleTurn,
+		InvisibleOver:  piece.InvisibleOver,
+		FusedWith:      piece.FusedWith,
+	}
+}
+
 func inBounds(r, c int) bool {
 	return r >= 0 && r <= 7 && c >= 0 && c <= 7
 }
@@ -334,6 +494,35 @@ func nextHalfMoveClock(current int, pieceType string, captured bool) int {
 	}
 	return current + 1
 }
+
+func boardPositionString(board [][]*contracts.Piece) string {
+	var builder strings.Builder
+	for r := 0; r < 8; r++ {
+		if r > 0 {
+			builder.WriteByte('|')
+		}
+		for c := 0; c < 8; c++ {
+			piece := board[r][c]
+			if piece == nil {
+				builder.WriteByte('-')
+				continue
+			}
+			builder.WriteByte(piece.Color[0])
+			builder.WriteByte(piece.Type[0])
+		}
+	}
+	return builder.String()
+}
+
+func fallbackCastling(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+var fileLabels = [...]string{"a", "b", "c", "d", "e", "f", "g", "h"}
+var rankLabels = [...]string{"1", "2", "3", "4", "5", "6", "7", "8"}
 
 func abs(value int) int {
 	if value < 0 {

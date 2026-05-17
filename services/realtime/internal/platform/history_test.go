@@ -23,6 +23,7 @@ func TestMatchArchiveStoreUpsertAndReload(t *testing.T) {
 			RulesVersion: "v1-alpha-foundation",
 			Status:       "finished",
 			Winner:       "white",
+			FinishReason: "checkmate",
 			MoveHistory:  []string{"e4", "e5"},
 			CreatedAt:    now,
 			UpdatedAt:    now.Add(time.Minute),
@@ -41,7 +42,7 @@ func TestMatchArchiveStoreUpsertAndReload(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected archive entry to be reloadable")
 	}
-	if entry.MatchID != "archive_test" || entry.MoveCount != 2 || entry.LastMove != "e5" || entry.Winner != "white" {
+	if entry.MatchID != "archive_test" || entry.MoveCount != 2 || entry.LastMove != "e5" || entry.Winner != "white" || entry.FinishReason != "checkmate" {
 		t.Fatalf("unexpected archive entry %#v", entry)
 	}
 }
@@ -60,6 +61,7 @@ func TestMatchArchiveStorePreservesPlayerMetadata(t *testing.T) {
 			MatchID:        "archive_players",
 			RulesVersion:   "v1-alpha-foundation",
 			Queue:          "rated",
+			ModeID:         contracts.MatchModeHiddenCards,
 			WhiteGuestID:   "guest_white",
 			BlackGuestID:   "guest_black",
 			WhiteAccountID: "acct_white",
@@ -90,6 +92,9 @@ func TestMatchArchiveStorePreservesPlayerMetadata(t *testing.T) {
 	}
 	if entry.Queue != "rated" {
 		t.Fatalf("expected queue metadata to persist, got %#v", entry)
+	}
+	if entry.ModeID != contracts.MatchModeHiddenCards {
+		t.Fatalf("expected mode metadata to persist, got %#v", entry)
 	}
 }
 

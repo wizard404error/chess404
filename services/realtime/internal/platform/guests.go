@@ -129,6 +129,36 @@ func (s *GuestStore) EnsureGuest(guestID, sessionSecret string) (GuestSession, e
 	return buildGuestSession(entry, privateState), s.persistLocked()
 }
 
+func (s *GuestStore) IssueGuestSession(guestID string) (GuestSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	guestID = strings.TrimSpace(guestID)
+	if guestID == "" {
+		return GuestSession{}, os.ErrInvalid
+	}
+
+	entry, ok := s.entries[guestID]
+	if !ok {
+		return GuestSession{}, os.ErrNotExist
+	}
+
+	now := time.Now().UTC()
+	privateState := s.private[guestID]
+	if strings.TrimSpace(privateState.SessionSecret) == "" {
+		privateState.SessionSecret = "guestsess_" + randomToken(12)
+	}
+	privateState = renewGuestPrivateState(privateState, now)
+	entry.LastSeenAt = now
+	s.entries[guestID] = entry
+	s.private[guestID] = privateState
+	if err := s.persistLocked(); err != nil {
+		return GuestSession{}, err
+	}
+
+	return buildGuestSession(entry, privateState), nil
+}
+
 func (s *GuestStore) ResumeGuest(guestID, sessionSecret string) (GuestSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
