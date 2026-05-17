@@ -72,6 +72,25 @@ export function formatPlayerLabel(options: {
   return base;
 }
 
+export function formatMatchPlayers(options: {
+  whiteName?: string | null;
+  whiteHandle?: string | null;
+  blackName?: string | null;
+  blackHandle?: string | null;
+}): string {
+  const white = formatPlayerLabel({
+    name: options.whiteName,
+    handle: options.whiteHandle,
+    fallback: 'White player',
+  });
+  const black = formatPlayerLabel({
+    name: options.blackName,
+    handle: options.blackHandle,
+    fallback: 'Black player',
+  });
+  return `${white} vs ${black}`;
+}
+
 export function formatMatchResult(options: {
   status?: string | null;
   winner?: string | null;
@@ -97,5 +116,39 @@ export function formatMatchResult(options: {
 }
 
 export function formatMatchFormat(queue?: string | null, modeId?: string | null): string {
-  return `${formatQueueLabel(queue)} · ${formatModeLabel(modeId)}`;
+  return `${formatQueueLabel(queue)} - ${formatModeLabel(modeId)}`;
+}
+
+export function formatMoveCountLabel(moveCount?: number | null): string {
+  const safeCount = typeof moveCount === 'number' && moveCount > 0 ? moveCount : 0;
+  return `${safeCount} ${safeCount === 1 ? 'move' : 'moves'}`;
+}
+
+export function formatMatchSummary(options: {
+  status?: string | null;
+  winner?: string | null;
+  finishReason?: MatchFinishReason | null;
+  queue?: string | null;
+  modeId?: string | null;
+  moveCount?: number | null;
+  updatedAt?: string | null;
+  includeUpdatedAt?: boolean;
+}): string {
+  const parts = [
+    formatMatchResult({
+      status: options.status,
+      winner: options.winner,
+      finishReason: options.finishReason,
+    }),
+    formatMatchFormat(options.queue, options.modeId),
+    formatMoveCountLabel(options.moveCount),
+  ];
+  if (options.includeUpdatedAt && options.updatedAt) {
+    parts.push(`Updated ${formatDateTime(options.updatedAt)}`);
+  }
+  return parts.join(' - ');
+}
+
+export function formatLastSeenLabel(value?: string | null): string {
+  return `Seen ${formatDateTime(value)}`;
 }

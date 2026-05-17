@@ -1,100 +1,70 @@
 import React from 'react';
-import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
+import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { MatchFinishReason, MatchModeId } from '@chess404/contracts';
 import type { MatchArchiveEntry } from './lib/platform-service';
+import {
+  formatDateTime,
+  formatFinishReasonLabel,
+  formatMatchFormat,
+  formatMatchPlayers,
+  formatMatchResult,
+  formatPlayerLabel,
+} from './lib/display';
 import { fetchArchivedMatch, fetchArchivedMatches, fetchGuestArchivedMatches } from './lib/platform-service';
 
 const FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
+function parseModeFilterValue(value: string): MatchModeId | '' {
+  return OFFICIAL_MATCH_MODES.some((mode) => mode.id === value as MatchModeId) ? (value as MatchModeId) : '';
+}
+
+function publicPlayerSeatLabel(name?: string, accountHandle?: string, fallback = 'Player'): string {
+  return formatPlayerLabel({
+    name,
+    handle: accountHandle,
+    fallback,
+  });
 }
 
 function finishReasonLabel(reason?: MatchFinishReason): string | null {
-  switch (reason) {
-    case 'checkmate':
-      return 'checkmate';
-    case 'stalemate':
-      return 'stalemate';
-    case 'insufficient_material':
-      return 'insufficient material';
-    case 'threefold_repetition':
-      return 'threefold repetition';
-    case 'fifty_move_rule':
-      return '50-move rule';
-    case 'timeout':
-      return 'timeout';
-    case 'abandon':
-      return 'abandonment';
-    case 'resign':
-      return 'resignation';
-    case 'abort':
-      return 'early abort';
-    case 'draw_agreement':
-      return 'mutual agreement';
-    default:
-      return null;
+  const label = formatFinishReasonLabel(reason);
+  if (!label) {
+    return null;
   }
+  if (label === 'Draw agreement') {
+    return 'mutual agreement';
+  }
+  return label.toLowerCase();
 }
 
 function resultLabel(entry: MatchArchiveEntry): string {
-  if (entry.status !== 'finished') {
-    return entry.status;
-  }
-  const finishLabel = finishReasonLabel(entry.finishReason);
-  if (entry.winner === 'aborted') {
-    return finishLabel ? `aborted - ${finishLabel}` : 'aborted';
-  }
-  if (!entry.winner) {
-    return finishLabel ? `finished - ${finishLabel}` : 'finished';
-  }
-  if (entry.winner === 'draw') {
-    return finishLabel ? `draw - ${finishLabel}` : 'draw';
-  }
-  return finishLabel ? `${entry.winner} won - ${finishLabel}` : `${entry.winner} won`;
+  return formatMatchResult({
+    status: entry.status,
+    winner: entry.winner,
+    finishReason: entry.finishReason,
+  });
 }
 
 function playerIdentityLabel(
   name?: string,
-  guestId?: string,
+  _guestId?: string,
   accountHandle?: string,
   fallback = 'Guest',
 ): string {
-  const base = name ?? guestId ?? fallback;
-  return accountHandle ? `${base} (@${accountHandle})` : base;
+  return publicPlayerSeatLabel(name, accountHandle, fallback);
 }
 
 function playersLabel(entry: MatchArchiveEntry): string {
-  const white = playerIdentityLabel(entry.whiteName, entry.whiteGuestId, entry.whiteAccountHandle, 'White guest');
-  const black = playerIdentityLabel(entry.blackName, entry.blackGuestId, entry.blackAccountHandle, 'Black guest');
-  return `${white} vs ${black}`;
-}
-
-function queueLabel(entry: MatchArchiveEntry): string {
-  if (entry.queue === 'rated') {
-    return 'rated';
-  }
-  if (entry.queue === 'casual') {
-    return 'casual';
-  }
-  return 'direct';
-}
-
-function modeLabel(modeId?: string): string {
-  const normalizedModeId = modeId === 'hidden_cards' ? 'hidden_cards' : DEFAULT_MATCH_MODE_ID;
-  return OFFICIAL_MATCH_MODES.find(mode => mode.id === normalizedModeId)?.label ?? 'Open Cards';
+  return formatMatchPlayers({
+    whiteName: entry.whiteName,
+    whiteHandle: entry.whiteAccountHandle,
+    blackName: entry.blackName,
+    blackHandle: entry.blackAccountHandle,
+  });
 }
 
 function formatLabel(entry: MatchArchiveEntry): string {
-  return `${queueLabel(entry)} - ${modeLabel(entry.modeId)}`;
-}
-
-function parseModeFilterValue(value: string): MatchModeId | '' {
-  return OFFICIAL_MATCH_MODES.some((mode) => mode.id === value as MatchModeId) ? (value as MatchModeId) : '';
+  return formatMatchFormat(entry.queue, entry.modeId);
 }
 
 function formatClock(ms: number): string {
@@ -409,7 +379,9 @@ export default function HistoryPage({
             <div>
               <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Match History</div>
               <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-                {focusGuestId ? `Archived matches for ${focusGuestId}.` : 'Archived matches from the platform archive, grouped by official mode.'}
+                {focusGuestId
+                  ? 'Archived matches linked to the selected player seat.'
+                  : 'Archived matches from the public replay archive, grouped by official mode.'}
               </div>
             </div>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -475,7 +447,7 @@ export default function HistoryPage({
           ) : matches.length === 0 ? (
             <div style={{ padding: '16px', color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>
               {focusGuestId
-                ? 'No archived matches exist for this guest in the selected mode yet.'
+                ? 'No archived matches exist for this player seat in the selected mode yet.'
                 : 'No archived matches yet for the selected mode. Start a game and make a move to populate history.'}
             </div>
           ) : (
@@ -500,7 +472,14 @@ export default function HistoryPage({
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
-                    <div style={{ fontWeight: 800, fontSize: '12px', color: '#ffcf72' }}>{match.matchId}</div>
+                    <div style={{ fontWeight: 800, fontSize: '12px', color: '#ffcf72' }}>
+                      {formatMatchPlayers({
+                        whiteName: match.whiteName,
+                        whiteHandle: match.whiteAccountHandle,
+                        blackName: match.blackName,
+                        blackHandle: match.blackAccountHandle,
+                      })}
+                    </div>
                     <div
                       style={{
                         padding: '3px 8px',
@@ -513,7 +492,11 @@ export default function HistoryPage({
                         border: match.status === 'finished' ? '1px solid rgba(255,180,60,0.28)' : '1px solid rgba(78,210,132,0.28)',
                       }}
                     >
-                      {resultLabel(match)}
+                      {formatMatchResult({
+                        status: match.status,
+                        winner: match.winner,
+                        finishReason: match.finishReason,
+                      })}
                     </div>
                   </div>
                   <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(255,232,180,0.7)' }}>
@@ -662,7 +645,7 @@ export default function HistoryPage({
                           cursor: onOpenGuest ? 'pointer' : 'default',
                         }}
                       >
-                        {playerIdentityLabel(selectedMatch.whiteName, selectedMatch.whiteGuestId, selectedMatch.whiteAccountHandle, 'White guest')}
+                        {playerIdentityLabel(selectedMatch.whiteName, selectedMatch.whiteGuestId, selectedMatch.whiteAccountHandle, 'White player')}
                       </button>
                     )}
                     {selectedMatch.blackGuestId && (
@@ -679,7 +662,7 @@ export default function HistoryPage({
                           cursor: onOpenGuest ? 'pointer' : 'default',
                         }}
                       >
-                        {playerIdentityLabel(selectedMatch.blackName, selectedMatch.blackGuestId, selectedMatch.blackAccountHandle, 'Black guest')}
+                        {playerIdentityLabel(selectedMatch.blackName, selectedMatch.blackGuestId, selectedMatch.blackAccountHandle, 'Black player')}
                       </button>
                     )}
                   </div>

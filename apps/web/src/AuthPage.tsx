@@ -410,7 +410,7 @@ export default function AuthPage({
               Competitive online chess with curated card powers.
             </div>
             <div style={{ color:'rgba(255,234,194,0.76)', fontSize:'15px', lineHeight:1.75, maxWidth:'640px' }}>
-              Build one lasting identity for official modes, private invites, replays, and ranked progress. Sign in once, recover normally, and move between devices without losing your place in the competitive loop.
+              Create one Chess404 account for quick pair, private invites, replay history, and rated progress. Come back on any device and pick up from the same competitive home.
             </div>
           </div>
 
@@ -502,7 +502,7 @@ export default function AuthPage({
               {[
                 {
                   title: 'Rated lanes',
-                  detail: 'Account-backed progress for official modes instead of throwaway local identity.',
+                  detail: 'Climb official mode ladders with one account that keeps your rating, history, and profile together.',
                 },
                 {
                   title: 'Private invites',
@@ -538,7 +538,7 @@ export default function AuthPage({
             {[
               {
                 title: 'Quick pair stays clear',
-                detail: 'Official modes, rated choice, and match ownership now live under one competitive shell instead of scattered pages.',
+                detail: 'Official modes, rated choice, and private invites now begin from one clear competitive hub.',
               },
               {
                 title: 'Recovery feels normal',
@@ -551,8 +551,8 @@ export default function AuthPage({
               {
                 title: 'One browser, one seat',
                 detail: guestProfile?.displayName
-                  ? `${guestProfile.displayName} is the temporary live seat on this device, but your account remains the identity that carries across the product.`
-                  : 'The hosted runtime keeps seat ownership strict while your account becomes the identity players actually recognize.',
+                  ? `${guestProfile.displayName} is the live seat on this device, while your Chess404 account carries your long-term identity and progress.`
+                  : 'Hosted play keeps seat ownership clean while your Chess404 account stays recognizable across queue, replays, and profiles.',
               },
             ].map((item) => (
               <div

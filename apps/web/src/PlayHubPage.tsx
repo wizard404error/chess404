@@ -85,7 +85,7 @@ export default function PlayHubPage({
             Queue into a real match or create a private invite
           </div>
           <div style={{ color: 'rgba(244,232,200,0.72)', fontSize: '14px', lineHeight: 1.7, marginTop: '8px', maxWidth: '820px' }}>
-            Chess404 starts here now: choose an official mode, pick your competitive lane, or spin up one clean invite room for a friend. The board only opens when a real match exists.
+            Choose an official mode, enter casual or rated quick pair, or open one clean invite room for a friend. The live board only opens when a real match is ready.
           </div>
         </div>
 
@@ -161,7 +161,7 @@ export default function PlayHubPage({
               eyebrow="Live Match"
               title={hostedRuntime ? 'One browser, one seat' : 'Local sandbox still available'}
               detail={hostedRuntime
-                ? 'Hosted play keeps seat ownership strict so rated games, replays, and reconnect flows stay trustworthy.'
+                ? 'Hosted play keeps seat ownership strict so rated games, replays, and reconnects stay trustworthy.'
                 : 'Local play remains available here for quick testing without changing the hosted online flow.'}
             />
           </div>
