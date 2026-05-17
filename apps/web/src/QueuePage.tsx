@@ -522,19 +522,18 @@ export default function QueuePage({
         <div style={{ marginTop: '14px', color: 'rgba(255,232,180,0.7)', fontSize: '12px', lineHeight: 1.5 }}>
         {ticket ? (
           <>
-            <div>Queue: {ticket.queue}</div>
+            <div>Lane: {ticket.queue === 'rated' ? 'Rated Quick Pair' : 'Casual Quick Pair'}</div>
             <div>Mode: {modeLabel(ticket.modeId)}</div>
-            <div>Ticket: {ticket.ticketId}</div>
             <div>Updated: {formatDateTime(ticket.updatedAt)}</div>
-            {ticket.seatColor && <div>Seat: {ticket.seatColor}</div>}
+            {ticket.status === 'queued' ? <div>Searching for another player in this official mode now.</div> : null}
+            {ticket.seatColor && <div>Seat: {ticket.seatColor === 'white' ? 'White pieces' : 'Black pieces'}</div>}
             {ticket.opponentName && <div>Opponent: {ticket.opponentName}</div>}
-            {ticket.matchedWith && <div>Matched with: {ticket.matchedWith}</div>}
-            {ticket.assignedRoom && <div>Assigned room: {ticket.assignedRoom}</div>}
+            {ticket.assignedRoom && <div>Your match room is ready and opening.</div>}
           </>
         ) : ratedBlocked ? (
           <div>Rated queue requires this player seat to be signed in with a Chess404 account before it can join.</div>
         ) : (
-          <div>{hostedRuntime ? 'Not in queue yet. Join the selected queue to wait for another online player.' : 'Not in queue yet. Join the selected queue to create a local matchmaking ticket.'}</div>
+          <div>{hostedRuntime ? 'Not in queue yet. Choose a lane and join when you are ready to be paired.' : 'Not in queue yet. Choose a lane and create a local matchmaking ticket when ready.'}</div>
         )}
         </div>
 
@@ -749,9 +748,9 @@ export default function QueuePage({
         overflow: 'hidden',
       }}>
         <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid rgba(255,165,40,0.12)' }}>
-          <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Live Queue Snapshot</div>
+          <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Queue Activity</div>
           <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
-            Current tickets in the selected queue and official mode. This is the first real matchmaking surface before region routing and rating bands.
+            See how busy the selected lane is without exposing raw internal ticket details.
           </div>
         </div>
 
@@ -759,7 +758,22 @@ export default function QueuePage({
           {queueTickets.length === 0 ? (
             <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>No tickets in {queue} · {modeLabel(modeId)} yet.</div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+            <div style={{ display: 'grid', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+                <div style={{ padding: '12px 14px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)' }}>
+                  <div style={{ color: 'rgba(255,232,180,0.56)', fontSize: '10px', fontWeight: 800, letterSpacing: '1px', textTransform: 'uppercase' }}>Players visible</div>
+                  <div style={{ color: '#fff2c8', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{queueTickets.length}</div>
+                </div>
+                <div style={{ padding: '12px 14px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)' }}>
+                  <div style={{ color: 'rgba(255,232,180,0.56)', fontSize: '10px', fontWeight: 800, letterSpacing: '1px', textTransform: 'uppercase' }}>Waiting now</div>
+                  <div style={{ color: '#9ee6b8', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{queueTickets.filter((entry) => entry.status === 'queued').length}</div>
+                </div>
+                <div style={{ padding: '12px 14px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)' }}>
+                  <div style={{ color: 'rgba(255,232,180,0.56)', fontSize: '10px', fontWeight: 800, letterSpacing: '1px', textTransform: 'uppercase' }}>Matches forming</div>
+                  <div style={{ color: '#ffe4a0', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{queueTickets.filter((entry) => entry.status === 'matched').length}</div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
               {queueTickets.map(ticket => (
                 <div
                   key={ticket.ticketId}
@@ -771,21 +785,24 @@ export default function QueuePage({
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
-                    <div style={{ color: '#fff2c8', fontWeight: 800, fontSize: '12px' }}>{ticket.ticketId}</div>
+                    <div style={{ color: '#fff2c8', fontWeight: 800, fontSize: '12px' }}>
+                      {ticket.displayName?.trim() || (ticket.status === 'matched' ? 'Matched player' : 'Queued player')}
+                    </div>
                     <div style={{ color: ticket.status === 'matched' ? '#ffe4a0' : ticket.status === 'queued' ? '#9ee6b8' : 'rgba(255,255,255,0.7)', fontSize: '10px', fontWeight: 800, textTransform: 'uppercase' }}>
-                      {ticket.status}
+                      {ticket.status === 'matched' ? 'match ready' : ticket.status}
                     </div>
                   </div>
                   <div style={{ marginTop: '8px', color: 'rgba(255,232,180,0.72)', fontSize: '12px', lineHeight: 1.5 }}>
-                    <div>Guest: {ticket.guestId}</div>
+                    <div>Lane: {ticket.queue === 'rated' ? 'Rated Quick Pair' : 'Casual Quick Pair'}</div>
                     <div>Mode: {modeLabel(ticket.modeId)}</div>
                     <div>Rating: {ticket.rating}</div>
-                    <div>Created: {formatDateTime(ticket.createdAt)}</div>
-                    {ticket.assignedRoom && <div>Room: {ticket.assignedRoom}</div>}
-                    {ticket.matchedWith && <div>Vs: {ticket.matchedWith}</div>}
+                    <div>{ticket.status === 'matched' ? 'Paired' : 'Queued'}: {formatDateTime(ticket.updatedAt)}</div>
+                    {ticket.opponentName && <div>Opponent: {ticket.opponentName}</div>}
+                    {ticket.assignedRoom && <div>Board opening now.</div>}
                   </div>
                 </div>
               ))}
+              </div>
             </div>
           )}
         </div>

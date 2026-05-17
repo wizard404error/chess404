@@ -82,72 +82,90 @@ export default function PlayHubPage({
             Play
           </div>
           <div style={{ color: '#fff4d6', fontSize: '30px', fontWeight: 900 }}>
-            One place for matchmaking and private games
+            Queue into a real match or create a private invite
           </div>
           <div style={{ color: 'rgba(244,232,200,0.72)', fontSize: '14px', lineHeight: 1.7, marginTop: '8px', maxWidth: '820px' }}>
-            Queue, official modes, and private invites live together here now. The board is a real match destination, not the place where online play starts.
+            Chess404 starts here now: choose an official mode, pick your competitive lane, or spin up one clean invite room for a friend. The board only opens when a real match exists.
           </div>
         </div>
 
-        <div style={{
-          padding: '18px 20px',
-          borderRadius: '18px',
-          background: activeMatchId
-            ? 'linear-gradient(180deg, rgba(18,30,48,0.96) 0%, rgba(10,18,30,0.98) 100%)'
-            : 'linear-gradient(180deg, rgba(16,22,34,0.92) 0%, rgba(10,14,24,0.98) 100%)',
-          border: activeMatchId
-            ? '1px solid rgba(110,170,255,0.28)'
-            : '1px solid rgba(255,255,255,0.08)',
-          boxShadow: '0 16px 42px rgba(0,0,0,0.24)',
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ color: '#d9e7ff', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
-                Active Match
+        {activeMatchId ? (
+          <div style={{
+            padding: '18px 20px',
+            borderRadius: '18px',
+            background: 'linear-gradient(180deg, rgba(18,30,48,0.96) 0%, rgba(10,18,30,0.98) 100%)',
+            border: '1px solid rgba(110,170,255,0.28)',
+            boxShadow: '0 16px 42px rgba(0,0,0,0.24)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: '#d9e7ff', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
+                  Active Match
+                </div>
+                <div style={{ color: '#f4f7ff', fontSize: '24px', fontWeight: 900, marginTop: '6px' }}>
+                  {boardStatusLabel}
+                </div>
+                <div style={{ color: 'rgba(220,230,255,0.72)', fontSize: '13px', lineHeight: 1.6, marginTop: '8px', maxWidth: '760px' }}>
+                  Your live game stays separate from the play hub so you can queue again later, reopen the board instantly, or share the public match destination.
+                </div>
               </div>
-              <div style={{ color: '#f4f7ff', fontSize: '24px', fontWeight: 900, marginTop: '6px' }}>
-                {activeMatchId ? boardStatusLabel : 'No active match yet'}
-              </div>
-              <div style={{ color: 'rgba(220,230,255,0.72)', fontSize: '13px', lineHeight: 1.6, marginTop: '8px', maxWidth: '760px' }}>
-                {activeMatchId
-                  ? 'Your live game stays separate from the play hub so you can browse, queue again later, or return straight to the board.'
-                  : 'Choose a quick pair lane or create a private invite room. Once a real room exists, the board opens as the match destination.'}
-              </div>
-            </div>
 
-            {activeMatchId ? (
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <button onClick={onReturnToMatch} style={primaryActionStyle}>
                   Return To Match
                 </button>
                 <button onClick={() => onCopyMatchLink?.(activeMatchId)} style={secondaryActionStyle}>
-                  Copy Match Link
+                  Share Match Link
                 </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginTop: '16px' }}>
+              <MetaTile label="Lane" value={queueLabel(activeMatchQueue)} />
+              <MetaTile label="Mode" value={modeLabel(activeMatchModeId)} />
+              <MetaTile label="Role" value={viewerRoleLabel(viewerSeat)} />
+            </div>
+
+            {matchDestinationNotice ? (
+              <div style={{
+                marginTop: '14px',
+                padding: '11px 13px',
+                borderRadius: '12px',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: 'rgba(244,232,200,0.84)',
+                fontSize: '12px',
+                lineHeight: 1.55,
+              }}>
+                {matchDestinationNotice}
               </div>
             ) : null}
           </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginTop: '16px' }}>
-            <MetaTile label="Lane" value={activeMatchId ? queueLabel(activeMatchQueue) : 'Quick Pair or Private Invite'} />
-            <MetaTile label="Mode" value={activeMatchId ? modeLabel(activeMatchModeId) : 'Choose inside Play'} />
-            <MetaTile label="Role" value={activeMatchId ? viewerRoleLabel(viewerSeat) : (hostedRuntime ? 'One browser = one player' : 'Local sandbox available')} />
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+            gap: '14px',
+          }}>
+            <LaunchTile
+              eyebrow="Quick Pair"
+              title="Enter the official queue lanes"
+              detail="Pick the mode and choose casual or rated from one place. Once an opponent is assigned, the live board opens automatically."
+            />
+            <LaunchTile
+              eyebrow="Play A Friend"
+              title="Create one room and one clean invite"
+              detail="Open a private waiting room, share the link, and let the second device claim the empty seat without extra setup."
+            />
+            <LaunchTile
+              eyebrow="Live Match"
+              title={hostedRuntime ? 'One browser, one seat' : 'Local sandbox still available'}
+              detail={hostedRuntime
+                ? 'Hosted play keeps seat ownership strict so rated games, replays, and reconnect flows stay trustworthy.'
+                : 'Local play remains available here for quick testing without changing the hosted online flow.'}
+            />
           </div>
-
-          {matchDestinationNotice ? (
-            <div style={{
-              marginTop: '14px',
-              padding: '11px 13px',
-              borderRadius: '12px',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'rgba(244,232,200,0.84)',
-              fontSize: '12px',
-              lineHeight: 1.55,
-            }}>
-              {matchDestinationNotice}
-            </div>
-          ) : null}
-        </div>
+        )}
 
         <div style={{ display: 'grid', gap: '18px' }}>
           <div style={{
@@ -223,6 +241,28 @@ function MetaTile(props: { label: string; value: string }): React.ReactElement {
       </div>
       <div style={{ color: '#fff2c8', fontSize: '14px', fontWeight: 800, marginTop: '6px' }}>
         {props.value}
+      </div>
+    </div>
+  );
+}
+
+function LaunchTile(props: { eyebrow: string; title: string; detail: string }): React.ReactElement {
+  return (
+    <div style={{
+      padding: '18px',
+      borderRadius: '18px',
+      background: 'linear-gradient(180deg, rgba(12,18,28,0.94) 0%, rgba(9,12,20,0.98) 100%)',
+      border: '1px solid rgba(255,165,40,0.14)',
+      boxShadow: '0 14px 38px rgba(0,0,0,0.22)',
+    }}>
+      <div style={{ color: '#ffcf72', fontSize: '11px', fontWeight: 800, letterSpacing: '1.1px', textTransform: 'uppercase' }}>
+        {props.eyebrow}
+      </div>
+      <div style={{ color: '#fff4d6', fontSize: '18px', fontWeight: 800, marginTop: '8px' }}>
+        {props.title}
+      </div>
+      <div style={{ color: 'rgba(244,232,200,0.68)', fontSize: '13px', lineHeight: 1.6, marginTop: '8px' }}>
+        {props.detail}
       </div>
     </div>
   );

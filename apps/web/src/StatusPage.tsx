@@ -11,8 +11,8 @@ export default function StatusPage() {
     setError(null);
     try {
       setSnapshot(await fetchSystemStatus());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load service status');
+    } catch {
+      setError('Status checks are temporarily unavailable. This internal operator surface no longer exposes raw upstream errors in the public shell.');
     } finally {
       setLoading(false);
     }
@@ -32,10 +32,10 @@ export default function StatusPage() {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', gap: '16px', flexWrap: 'wrap' }}>
         <div>
-          <div style={{ color: '#ffb830', fontSize: '11px', fontWeight: 800, letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '6px' }}>System Status</div>
-          <h2 style={{ margin: 0, fontSize: '30px', color: '#fff4d6' }}>Operations snapshot</h2>
+          <div style={{ color: '#ffb830', fontSize: '11px', fontWeight: 800, letterSpacing: '2px', textTransform: 'uppercase', marginBottom: '6px' }}>Internal Status</div>
+          <h2 style={{ margin: 0, fontSize: '30px', color: '#fff4d6' }}>Operator health surface</h2>
           <div style={{ color: 'rgba(222, 210, 180, 0.7)', fontSize: '13px', marginTop: '6px' }}>
-            Live service health for match authority, platform data, and matchmaking.
+            Internal checks for match authority, platform state, and matchmaking readiness. This page is no longer part of the public-facing navigation story.
           </div>
         </div>
         <button
@@ -74,6 +74,19 @@ export default function StatusPage() {
         <>
           <div style={{
             marginBottom: '18px',
+            padding: '14px 16px',
+            borderRadius: '14px',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,190,90,0.12)',
+            color: 'rgba(244,232,200,0.74)',
+            fontSize: '13px',
+            lineHeight: 1.6,
+          }}>
+            Normal players should not need this page. It exists for internal verification, deploy checks, and operator triage.
+          </div>
+
+          <div style={{
+            marginBottom: '18px',
             padding: '16px 18px',
             borderRadius: '16px',
             background: snapshot.gateway.status === 'ok'
@@ -87,10 +100,10 @@ export default function StatusPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ color: '#fff4d6', fontSize: '20px', fontWeight: 800, marginBottom: '6px' }}>
-                  Gateway control plane: {snapshot.gateway.status === 'ok' ? 'ready' : 'degraded'}
+                  Service readiness: {snapshot.gateway.status === 'ok' ? 'stable' : 'attention needed'}
                 </div>
                 <div style={{ color: 'rgba(244, 232, 200, 0.74)', fontSize: '13px' }}>
-                  The gateway now aggregates backend readiness across realtime, platform, and matchmaking services.
+                  Gateway aggregation rolls up the internal health of realtime, platform, and matchmaking services.
                 </div>
               </div>
               <div style={{ color: 'rgba(244, 232, 200, 0.54)', fontSize: '11px' }}>
@@ -112,10 +125,10 @@ export default function StatusPage() {
                 }}>
                   <div style={{ color: '#ffcd67', fontSize: '11px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase', marginBottom: '6px' }}>{label}</div>
                   <div style={{ color: service.healthy ? '#9af4be' : '#ffd59a', fontSize: '14px', fontWeight: 700 }}>
-                    {service.healthy ? 'Healthy' : 'Unreachable'}
+                    {service.healthy ? 'Healthy' : 'Needs attention'}
                   </div>
                   <div style={{ color: 'rgba(244, 232, 200, 0.58)', fontSize: '11px', marginTop: '3px' }}>
-                    {service.error ? service.error : `HTTP ${service.statusCode ?? 0}`}
+                    {service.healthy ? 'Responding to gateway checks' : 'Operator check required'}
                   </div>
                 </div>
               ))}

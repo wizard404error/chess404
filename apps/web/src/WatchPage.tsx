@@ -3,6 +3,8 @@ import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts
 import type { MatchModeId } from '@chess404/contracts';
 import { fetchArchivedMatches, type MatchArchiveEntry, type PublicMatchStatusFilter } from './lib/platform-service';
 
+const FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+
 interface WatchPageProps {
   onWatchMatch?: (matchId: string) => void;
   onOpenReplay?: (matchId: string) => void;
@@ -90,6 +92,52 @@ function resultLabel(entry: MatchArchiveEntry): string {
     return `${entry.winner} won`;
   }
   return entry.status;
+}
+
+function renderBoardPreview(board: MatchArchiveEntry['snapshot']['match']['board']): React.ReactElement {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(8, 1fr)',
+        width: '100%',
+        maxWidth: '240px',
+        aspectRatio: '1',
+        borderRadius: '14px',
+        overflow: 'hidden',
+        border: '1px solid rgba(255,190,90,0.2)',
+        boxShadow: '0 10px 28px rgba(0,0,0,0.22)',
+      }}
+    >
+      {board.flatMap((row, rowIndex) =>
+        row.map((piece, colIndex) => {
+          const dark = (rowIndex + colIndex) % 2 === 1;
+          const src = piece ? `/pieces/${piece.color}_${piece.type}.svg` : null;
+          const square = `${FILE_LABELS[colIndex]}${8 - rowIndex}`;
+          return (
+            <div
+              key={square}
+              style={{
+                background: dark ? '#a97853' : '#ead4ad',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative',
+              }}
+            >
+              {piece ? (
+                <img
+                  src={src ?? ''}
+                  alt={`${piece.color} ${piece.type}`}
+                  style={{ width: '78%', height: '78%', objectFit: 'contain', pointerEvents: 'none' }}
+                />
+              ) : null}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
 }
 
 export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps): React.ReactElement {
@@ -318,9 +366,13 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
                     </div>
                   </div>
 
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0 2px' }}>
+                    {renderBoardPreview(entry.snapshot.match.board)}
+                  </div>
+
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{ color: 'rgba(255,232,180,0.62)', fontSize: '11px' }}>
-                      Match ID: <span style={{ color: '#fff2c8', fontWeight: 700 }}>{entry.matchId}</span>
+                      {entry.status === 'active' ? 'Spectate live now or share the public board destination.' : 'Replay is archived and ready to open or share.'}
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                       {entry.status === 'active' ? (
@@ -353,7 +405,7 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
                               cursor: 'pointer',
                             }}
                           >
-                            Copy Link
+                            Share Live
                           </button>
                         </>
                       ) : (
@@ -386,7 +438,7 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
                               cursor: 'pointer',
                             }}
                           >
-                            Copy Replay
+                            Share Replay
                           </button>
                         </>
                       )}

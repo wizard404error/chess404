@@ -588,8 +588,9 @@ export default function HistoryPage({
                     border: '1px solid rgba(255,165,40,0.1)',
                   }}
                 >
-                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#fff2c8' }}>{selectedMatch.matchId}</div>
+                  <div style={{ fontSize: '15px', fontWeight: 800, color: '#fff2c8' }}>{resultLabel(selectedMatch)}</div>
                   <div style={{ marginTop: '6px', fontSize: '12px', color: 'rgba(210,220,255,0.72)' }}>{playersLabel(selectedMatch)}</div>
+                  <div style={{ marginTop: '4px', fontSize: '11px', color: 'rgba(255,232,180,0.62)' }}>{formatLabel(selectedMatch)} · archived {formatDateTime(selectedMatch.updatedAt)}</div>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px' }}>
                     <button
                       onClick={() => void shareReplayLink()}
@@ -688,8 +689,8 @@ export default function HistoryPage({
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Finish:</span> <span style={{ color: '#fff4d0' }}>{finishReasonLabel(selectedMatch.finishReason) ?? 'unspecified'}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Format:</span> <span style={{ color: '#fff4d0' }}>{formatLabel(selectedMatch)}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Turn:</span> <span style={{ color: '#fff4d0' }}>{activeReplayFrame?.turn ?? snapshot.turn}</span></div>
-                    <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>White account:</span> <span style={{ color: '#fff4d0' }}>{selectedMatch.whiteAccountHandle ? `@${selectedMatch.whiteAccountHandle}` : selectedMatch.whiteAccountId ?? 'guest-only'}</span></div>
-                    <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Black account:</span> <span style={{ color: '#fff4d0' }}>{selectedMatch.blackAccountHandle ? `@${selectedMatch.blackAccountHandle}` : selectedMatch.blackAccountId ?? 'guest-only'}</span></div>
+                    <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>White:</span> <span style={{ color: '#fff4d0' }}>{selectedMatch.whiteAccountHandle ? `@${selectedMatch.whiteAccountHandle}` : selectedMatch.whiteName ?? 'Guest'}</span></div>
+                    <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Black:</span> <span style={{ color: '#fff4d0' }}>{selectedMatch.blackAccountHandle ? `@${selectedMatch.blackAccountHandle}` : selectedMatch.blackName ?? 'Guest'}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Moves:</span> <span style={{ color: '#fff4d0' }}>{selectedMatch.moveCount}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Created:</span> <span style={{ color: '#fff4d0' }}>{formatDateTime(selectedMatch.createdAt)}</span></div>
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Updated:</span> <span style={{ color: '#fff4d0' }}>{formatDateTime(selectedMatch.updatedAt)}</span></div>
@@ -880,8 +881,8 @@ export default function HistoryPage({
                 </div>
               </div>
 
-              <div
-                style={{
+                <div
+                  style={{
                   minWidth: 0,
                   padding: '16px',
                   borderRadius: '12px',
@@ -891,7 +892,7 @@ export default function HistoryPage({
                   flexDirection: 'column',
                 }}
               >
-                <div style={{ fontSize: '12px', fontWeight: 800, color: '#ffcf72', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>Chat & Snapshot JSON</div>
+                <div style={{ fontSize: '12px', fontWeight: 800, color: '#ffcf72', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>Chat Archive</div>
                 <div style={{ marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px solid rgba(255,165,40,0.08)' }}>
                   <div style={{ color: 'rgba(255,232,180,0.58)', marginBottom: '8px', fontSize: '12px' }}>Chat log</div>
                   {snapshot.chatMessages.length === 0 ? (
@@ -918,22 +919,12 @@ export default function HistoryPage({
                     </div>
                   )}
                 </div>
-                <pre
-                  style={{
-                    margin: 0,
-                    flex: 1,
-                    minHeight: '260px',
-                    overflow: 'auto',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    color: '#d9e9ff',
-                    fontSize: '11px',
-                    lineHeight: 1.45,
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                  }}
-                >
-                  {JSON.stringify(selectedMatch, null, 2)}
-                </pre>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  <div style={{ color: 'rgba(255,232,180,0.58)', fontSize: '12px' }}>Replay notes</div>
+                  <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)', color: '#d9e9ff', fontSize: '12px', lineHeight: 1.6 }}>
+                    Replay controls, move history, card events, and archived chat stay available here. Internal archive payloads are no longer shown directly in the public replay surface.
+                  </div>
+                </div>
               </div>
             </div>
           )}
