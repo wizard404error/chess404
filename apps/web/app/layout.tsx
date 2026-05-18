@@ -1,18 +1,18 @@
 import './globals.css';
 import type { Metadata } from 'next';
-import { Cinzel, Source_Sans_3 } from 'next/font/google';
+import { Inter, JetBrains_Mono } from 'next/font/google';
 
-const cinzel = Cinzel({
+const inter = Inter({
   subsets: ['latin'],
-  variable: '--font-cinzel',
-  weight: ['600', '700'],
+  variable: '--font-sans',
+  weight: ['400', '500', '600', '700', '800'],
   display: 'swap',
 });
 
-const sourceSans = Source_Sans_3({
+const jetBrainsMono = JetBrains_Mono({
   subsets: ['latin'],
-  variable: '--font-source-sans',
-  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-mono',
+  weight: ['500', '700'],
   display: 'swap',
 });
 
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${cinzel.variable} ${sourceSans.variable}`}>
+    <html lang="en" className={`${inter.variable} ${jetBrainsMono.variable}`}>
       <body>{children}</body>
     </html>
   );
