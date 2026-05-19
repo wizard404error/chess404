@@ -3,6 +3,8 @@ import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { MatchModeId } from '@chess404/contracts';
 import { fetchArchivedMatches, type MatchArchiveEntry, type PublicMatchStatusFilter } from './lib/platform-service';
 import { formatDateTime, formatMatchPlayers, formatMatchResult, formatModeLabel } from './lib/display';
+import { buildLiveMatchUrl, buildReplayPageUrl, copyTextToClipboard } from './lib/session-storage';
+import { modeLabel, queueLabel } from './lib/match-labels';
 
 const FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
@@ -11,63 +13,6 @@ interface WatchPageProps {
   onOpenReplay?: (matchId: string) => void;
 }
 
-function buildLiveMatchUrl(matchId: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const normalizedMatchId = matchId.trim();
-  if (!normalizedMatchId) {
-    return null;
-  }
-  const url = new URL(window.location.href);
-  url.searchParams.delete('profile');
-  url.searchParams.delete('replay');
-  url.searchParams.delete('guest');
-  url.searchParams.set('match', normalizedMatchId);
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
-}
-
-function buildReplayUrl(matchId: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const normalizedMatchId = matchId.trim();
-  if (!normalizedMatchId) {
-    return null;
-  }
-  const url = new URL(window.location.href);
-  url.searchParams.delete('profile');
-  url.searchParams.delete('match');
-  url.searchParams.delete('guest');
-  url.searchParams.set('replay', normalizedMatchId);
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
-}
-
-async function copyTextToClipboard(value: string): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return true;
-  }
-  return false;
-}
-
-function parseModeFilterValue(value: string): MatchModeId | '' {
-  return OFFICIAL_MATCH_MODES.some((mode) => mode.id === value as MatchModeId) ? (value as MatchModeId) : '';
-}
-
-function modeLabel(modeId?: string): string {
-  return formatModeLabel(modeId);
-}
-
-function queueLabel(queue?: string): string {
-  if (queue === 'rated') {
-    return 'Rated';
-  }
-  if (queue === 'casual') {
-    return 'Casual';
-  }
-  return 'Private';
-}
 
 function resultLabel(entry: MatchArchiveEntry): string {
   return formatMatchResult({
@@ -157,7 +102,7 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
   }, []);
 
   const copyReplayLink = React.useCallback(async (matchId: string) => {
-    const replayUrl = buildReplayUrl(matchId);
+    const replayUrl = buildReplayPageUrl(matchId);
     if (!replayUrl) {
       return;
     }
@@ -242,7 +187,7 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
             ))}
             <select
               value={modeId}
-              onChange={(event) => setModeId(parseModeFilterValue(event.target.value))}
+              onChange={(event) => setModeId(OFFICIAL_MATCH_MODES.some((mode) => mode.id === event.target.value) ? (event.target.value as MatchModeId) : '')}
               style={{
                 minWidth: '180px',
                 padding: '9px 12px',

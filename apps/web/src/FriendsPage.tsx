@@ -1,6 +1,7 @@
 import React from 'react';
 import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES, type MatchModeId, type PieceColor } from '@chess404/contracts';
 import { acceptDirectChallenge, sendDirectChallenge, type DirectChallengeLaunchResponse } from './lib/direct-challenge-service';
+import { modeLabel } from './lib/match-labels';
 import {
   type AccountProfile,
   cancelDirectChallenge,
@@ -36,9 +37,6 @@ function formatDateTime(value: string): string {
   return date.toLocaleString();
 }
 
-function modeLabel(modeId?: MatchModeId): string {
-  return OFFICIAL_MATCH_MODES.find(mode => mode.id === (modeId ?? DEFAULT_MATCH_MODE_ID))?.label ?? 'Open Cards';
-}
 
 function describePresence(account: AccountProfile): {
   label: string;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES, type MatchModeId } from '@chess404/contracts';
+import { type MatchModeId } from '@chess404/contracts';
 import {
   fetchAccountNotificationOverview,
   markAccountNotificationRead,
@@ -7,6 +7,7 @@ import {
   type AccountNotificationOverview,
   type AccountNotificationView,
 } from './lib/platform-service';
+import { modeLabel } from './lib/match-labels';
 
 interface InboxPageProps {
   accountId?: string | null;
@@ -28,9 +29,6 @@ function formatDateTime(value?: string): string {
   return date.toLocaleString();
 }
 
-function modeLabel(modeId?: MatchModeId): string {
-  return OFFICIAL_MATCH_MODES.find((mode) => mode.id === (modeId ?? DEFAULT_MATCH_MODE_ID))?.label ?? 'Open Cards';
-}
 
 function describeNotification(notification: AccountNotificationView): {
   title: string;
