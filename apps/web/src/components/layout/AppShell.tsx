@@ -134,26 +134,7 @@ export default function AppShell({
         </aside>
 
         <div className="app-shell__content">
-          <header className="app-shell__topbar">
-            <div className="app-shell__topbar-meta">
-              {pageMeta.eyebrow ? <div className="eyebrow">{pageMeta.eyebrow}</div> : null}
-              <div className="app-shell__topbar-title">{pageMeta.title}</div>
-              {pageMeta.description ? <div className="app-shell__topbar-description">{pageMeta.description}</div> : null}
-            </div>
-            <div className="app-shell__topbar-actions">
-              <button className="btn-ghost app-shell__mobile-tools" onClick={() => setMobileToolsOpen((current) => !current)}>
-                <span style={{ display: 'inline-flex', width: 16, height: 16 }}><ToolsIcon /></span>
-                Tools
-              </button>
-              {showReturnToMatch ? (
-                <button className="btn-secondary" onClick={onReturnToMatch}>
-                  <span style={{ display: 'inline-flex', width: 16, height: 16 }}><ReturnIcon /></span>
-                  Return to Match
-                </button>
-              ) : null}
-              <button className="btn-primary" onClick={onOpenAccount}>{accountLabel}</button>
-            </div>
-          </header>
+
 
           {topNotice}
 

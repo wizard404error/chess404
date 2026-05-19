@@ -914,7 +914,8 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
           }
         }}
       >
-      {(children && activePage !== 'Match') ? children : showPlayHub ? (
+      <div style={{ display: 'none' }}>{children}</div>
+      {showPlayHub ? (
         <PlayHubPage
           hostedRuntime={hostedRuntime}
           whiteProfile={whiteProfile}
@@ -1274,10 +1275,12 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
               </div>
             ) : selectedCard ? (() => {
               const ownerColor: PieceColor = whiteHand.some(c => c.id === selectedCard.id) ? 'white' : 'black';
-              const canUse = canUseCard(selectedCard, ownerColor);
+              const isViewerOwner = (hostedRuntime || authoritativeMatchId) ? viewerSeat === ownerColor : true;
+              const canUse = canUseCard(selectedCard, ownerColor) && isViewerOwner;
               const usedThisTurn = cardUsedBy[ownerColor];
               let blockReason = '';
               if (over)           blockReason = 'Game is over';
+              else if (!isViewerOwner) blockReason = "Not your card to use";
               else if (usedThisTurn) blockReason = 'Already used a card this turn';
               else if (selectedCard.type !== 'trap' && turn !== ownerColor) blockReason = `Only usable on ${ownerColor}'s turn`;
               return (
@@ -1390,87 +1393,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
 
         {/* ── Board column ── */}
       <div className="match-layout__center">
-          {authoritativeMatchId ? (
-            <div style={{ width:'100%', maxWidth:'660px', marginBottom:'10px', padding:'12px 14px', background:'linear-gradient(180deg, rgba(18,24,38,0.95) 0%, rgba(10,14,24,0.96) 100%)', border:'1px solid rgba(255,165,40,0.18)', borderRadius:'14px', boxShadow:'0 12px 36px rgba(0,0,0,0.24)', display:'grid', gap:'10px' }}>
-              <div style={{ display:'flex', justifyContent:'space-between', gap:'12px', alignItems:'flex-start', flexWrap:'wrap' }}>
-                <div style={{ minWidth:0 }}>
-                  <div style={{ color:'#ffcf72', fontSize:'11px', fontWeight:800, letterSpacing:'1.2px', textTransform:'uppercase' }}>Public Match Destination</div>
-                  <div style={{ color:'#fff2c8', fontSize:'16px', fontWeight:800, marginTop:'4px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                    {displayedWhiteName} vs {displayedBlackName}
-                  </div>
-                  <div style={{ display:'flex', gap:'8px', flexWrap:'wrap', marginTop:'7px' }}>
-                    <span style={{ padding:'4px 8px', borderRadius:'999px', background:'rgba(255,180,60,0.10)', border:'1px solid rgba(255,180,60,0.22)', color:'#ffe4a0', fontSize:'10px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>
-                      {activeMatchQueueLabel}
-                    </span>
-                    <span style={{ padding:'4px 8px', borderRadius:'999px', background:'rgba(110,170,255,0.10)', border:'1px solid rgba(110,170,255,0.20)', color:'#dcecff', fontSize:'10px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>
-                      {activeMatchModeLabel}
-                    </span>
-                    {activeMatchRoleLabel ? (
-                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:viewerSeat ? 'rgba(74,222,128,0.10)' : 'rgba(255,255,255,0.05)', border:viewerSeat ? '1px solid rgba(74,222,128,0.20)' : '1px solid rgba(255,255,255,0.10)', color:viewerSeat ? '#a7f3d0' : 'rgba(255,255,255,0.72)', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
-                        {activeMatchRoleLabel}
-                      </span>
-                    ) : null}
-                    {whitePresenceLabel ? (
-                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:authoritativeWhiteConnected ? 'rgba(74,222,128,0.10)' : 'rgba(248,113,113,0.10)', border:authoritativeWhiteConnected ? '1px solid rgba(74,222,128,0.20)' : '1px solid rgba(248,113,113,0.22)', color:authoritativeWhiteConnected ? '#bbf7d0' : '#fecaca', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
-                        White {whitePresenceLabel}
-                      </span>
-                    ) : null}
-                    {blackPresenceLabel ? (
-                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:authoritativeBlackConnected ? 'rgba(74,222,128,0.10)' : 'rgba(248,113,113,0.10)', border:authoritativeBlackConnected ? '1px solid rgba(74,222,128,0.20)' : '1px solid rgba(248,113,113,0.22)', color:authoritativeBlackConnected ? '#bbf7d0' : '#fecaca', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
-                        Black {blackPresenceLabel}
-                      </span>
-                    ) : null}
-                    {activeFinishReasonLabel ? (
-                      <span style={{ padding:'4px 8px', borderRadius:'999px', background:'rgba(255,212,138,0.10)', border:'1px solid rgba(255,212,138,0.22)', color:'#fff0c8', fontSize:'10px', fontWeight:800, letterSpacing:'0.4px' }}>
-                        {activeFinishReasonLabel}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                <div style={{ color:'rgba(160,184,216,0.55)', fontSize:'10px', fontWeight:700, textAlign:'right' }}>
-                  {authoritativeStatus?.toUpperCase() ?? 'MATCH'} · {authoritativeMatchId.slice(-8)}
-                </div>
-              </div>
-              <div style={{ color:'rgba(255,232,180,0.72)', fontSize:'11px', lineHeight:1.5 }}>
-                This board now behaves like a real public match page. Queue, lobbies, social alerts, and shared links can all land here directly, while replay/archive links route to the canonical history destination.
-              </div>
-              {disconnectGraceBanner ? (
-                <div style={{ padding:'9px 12px', borderRadius:'10px', background:'rgba(248,113,113,0.10)', border:'1px solid rgba(248,113,113,0.22)', color:'#fecaca', fontSize:'11px', lineHeight:1.5, fontWeight:700 }}>
-                  {disconnectGraceBanner}
-                </div>
-              ) : null}
-              <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
-                <button
-                  onClick={() => void copyLiveMatchLink(authoritativeMatchId)}
-                  style={{ padding:'8px 12px', borderRadius:'10px', border:'1px solid rgba(110,170,255,0.28)', background:'linear-gradient(180deg, rgba(54,102,184,0.24) 0%, rgba(24,40,82,0.34) 100%)', color:'#e5f0ff', fontSize:'11px', fontWeight:800, cursor:'pointer' }}
-                >
-                  Copy Live Link
-                </button>
-                <button
-                  onClick={() => openReplayMatch(authoritativeMatchId)}
-                  style={{ padding:'8px 12px', borderRadius:'10px', border:'1px solid rgba(255,180,60,0.24)', background:'rgba(255,180,60,0.08)', color:'#fff0c6', fontSize:'11px', fontWeight:800, cursor:'pointer' }}
-                >
-                  Open {activeMatchRouteLabel}
-                </button>
-                <button
-                  onClick={() => void copyReplayPageLink(authoritativeMatchId)}
-                  style={{ padding:'8px 12px', borderRadius:'10px', border:'1px solid rgba(255,255,255,0.12)', background:'rgba(255,255,255,0.04)', color:'rgba(255,236,194,0.88)', fontSize:'11px', fontWeight:800, cursor:'pointer' }}
-                >
-                  Copy Replay Link
-                </button>
-              </div>
-              {matchDestinationNotice ? (
-                <div style={{ color:'#9ee6b8', fontSize:'11px', fontWeight:700 }}>
-                  {matchDestinationNotice}
-                </div>
-              ) : activeLiveMatchUrl || activeReplayPageUrl ? (
-                <div style={{ display:'grid', gap:'4px', color:'rgba(160,184,216,0.62)', fontSize:'10px' }}>
-                  {activeLiveMatchUrl ? <div>Live: {activeLiveMatchUrl}</div> : null}
-                  {activeReplayPageUrl ? <div>Replay: {activeReplayPageUrl}</div> : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+
           {authoritativeLive && authoritativeStatus === 'waiting' && authoritativeMatchId ? (
             <div style={{ marginBottom:'8px', padding:'9px 14px', background:'rgba(255,212,135,0.10)', border:'1px solid rgba(255,212,135,0.28)', borderRadius:'8px', color:'#ffd487', fontSize:'11px', fontWeight:700, textAlign:'center' }}>
               Private room is waiting for the second player to open the invite link. This seat is reserved, but the game will only start once both seats are claimed.
@@ -1541,7 +1464,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                   if (cardPending || isReviewing || over || promo || (hostedRuntime && authoritativeStatus !== 'active')) return;
                   const p = board[r][c];
                   const ghostDs = ghostRef.current;
-                  const actingColor = hostedRuntime ? viewerSeat : turn;
+                  const actingColor = (hostedRuntime || authoritativeMatchId) ? viewerSeat : turn;
                   const isGhostDs = ghostDs && actingColor && ghostDs.ownerColor === actingColor && turn === actingColor && ghostDs.row === r && ghostDs.col === c;
                   if (!actingColor) return;
                   if (!isGhostDs && (!p || p.color !== actingColor || turn !== actingColor)) return;
@@ -1745,7 +1668,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
             )}
           </div>
 
-          <div className="match-layout__right">
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <GamePanel
               chatMessages={chatMessages}
               onSendMessage={(text) => {
