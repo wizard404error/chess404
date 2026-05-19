@@ -256,14 +256,19 @@ Completed:
 - starting a fresh game now clears old room-bound URL state instead of accidentally reopening the same matched room again
 - backend now resolves authoritative seat ownership from stored guest ids, not only `white` / `black` placeholder player ids
 - main app now submits authoritative moves, cards, draw/chat/resign intents using the match seat guest ids when available
+- `useMatchTimer` hook extracted from `useMatchEngine`: timer, clock, and abort countdown state are now managed in a dedicated reusable hook
+- `useMatchReplay` hook extracted from `useMatchEngine`: board review navigation (`reviewIdx`, `reviewBoard`, `goToSnap`, `reviewFirst/Prev/Next/Last`, `isReviewing`) are now managed in a dedicated reusable hook
+- `setup-postgres.ps1` added: one-shot script to create the `chess404` Postgres database and save local credentials to `.pg-creds.env`
+- `start-local-postgres.ps1` added: full local stack startup with Postgres backends for platform-service (guests, accounts, archive) and match-service (archive); matchmaking stays on file backend until Redis is available
 
 Still missing:
 
 - replace the remaining local match authority with server snapshots/events
 - isolate animation state from gameplay state more cleanly
-- split `apps/web/src/App.tsx` into smaller modules
 - shift focus from gameplay-card migration into platform work: persistence, matchmaking, auth, ratings, reconnects, and replay/history storage
 - support optimistic UI with rollback from authoritative backend events
+- switch `MATCH_CLAIM_STORE_BACKEND` from `memory` to `redis` once a local Redis instance is available
+- switch `MATCHMAKING_TICKET_STORE_BACKEND` from `file` to `redis` once a local Redis instance is available
 
 ### 5. Product Systems
 
