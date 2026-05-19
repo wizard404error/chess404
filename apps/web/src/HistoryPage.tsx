@@ -11,6 +11,11 @@ import {
   formatPlayerLabel,
 } from './lib/display';
 import { fetchArchivedMatch, fetchArchivedMatches, fetchGuestArchivedMatches } from './lib/platform-service';
+import {
+  buildReplayPageUrlWithGuest,
+  buildGuestHistoryUrl,
+  copyTextToClipboard,
+} from './lib/session-storage';
 
 const FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
@@ -112,49 +117,6 @@ function replayButtonStyle(disabled: boolean): React.CSSProperties {
   };
 }
 
-function buildReplayUrl(matchId: string, guestId?: string | null): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const normalizedMatchId = matchId.trim();
-  if (!normalizedMatchId) {
-    return null;
-  }
-  const url = new URL(window.location.href);
-  url.searchParams.delete('match');
-  url.searchParams.delete('profile');
-  url.searchParams.set('replay', normalizedMatchId);
-  if (guestId?.trim()) {
-    url.searchParams.set('guest', guestId.trim());
-  } else {
-    url.searchParams.delete('guest');
-  }
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
-}
-
-function buildGuestHistoryUrl(guestId: string): string | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  const normalizedGuestId = guestId.trim();
-  if (!normalizedGuestId) {
-    return null;
-  }
-  const url = new URL(window.location.href);
-  url.searchParams.delete('match');
-  url.searchParams.delete('profile');
-  url.searchParams.delete('replay');
-  url.searchParams.set('guest', normalizedGuestId);
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
-}
-
-async function copyTextToClipboard(value: string): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return true;
-  }
-  return false;
-}
 
 function renderBoardPreview(board: MatchArchiveEntry['snapshot']['match']['board']): React.ReactElement {
   return (
@@ -330,7 +292,7 @@ export default function HistoryPage({
     if (!selectedMatch) {
       return;
     }
-    const replayUrl = buildReplayUrl(selectedMatch.matchId, focusGuestId);
+    const replayUrl = buildReplayPageUrlWithGuest(selectedMatch.matchId, focusGuestId);
     if (!replayUrl) {
       return;
     }

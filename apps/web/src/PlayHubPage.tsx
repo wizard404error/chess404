@@ -1,8 +1,9 @@
 import React from 'react';
-import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES, type MatchModeId, type PieceColor } from '@chess404/contracts';
+import { type MatchModeId, type PieceColor } from '@chess404/contracts';
 import type { GuestProfile } from './lib/platform-service';
 import type { QueueName } from './lib/matchmaking-service';
 import type { PrivateMatchIdentity } from './lib/private-match-service';
+import { modeLabel, queueLabel } from './lib/match-labels';
 import QueuePage from './QueuePage';
 import LobbiesPage from './LobbiesPage';
 
@@ -24,22 +25,6 @@ interface PlayHubPageProps {
   onCopyMatchLink?: (matchId: string) => void;
 }
 
-function queueLabel(queue?: QueueName | 'direct' | null): string {
-  if (queue === 'rated') {
-    return 'Rated Quick Pair';
-  }
-  if (queue === 'casual') {
-    return 'Casual Quick Pair';
-  }
-  if (queue === 'direct') {
-    return 'Private Invite Match';
-  }
-  return 'Competitive Play';
-}
-
-function modeLabel(modeId?: MatchModeId | null): string {
-  return OFFICIAL_MATCH_MODES.find((mode) => mode.id === (modeId ?? DEFAULT_MATCH_MODE_ID))?.label ?? 'Open Cards';
-}
 
 function viewerRoleLabel(viewerSeat?: PieceColor | null): string {
   if (viewerSeat === 'white') {
