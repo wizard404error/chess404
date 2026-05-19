@@ -139,6 +139,7 @@ import {
   type SocialAlert,
 } from '../lib/match-labels';
 import { useMatchTimer } from './useMatchTimer';
+import { useMatchReplay } from './useMatchReplay';
 
 function buildStoredRoomMeta(
   base: StoredRoomMeta | null | undefined,
@@ -259,7 +260,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const [authoritativeFinishReason, setAuthoritativeFinishReason] = React.useState<MatchFinishReason | null>(null);
   const [movHist,   setMovHist]   = React.useState<{ n: string; w?: string; b?: string }[]>([]);
   const [snapshots, setSnapshots] = React.useState<Snapshot[]>([]);
-  const [reviewIdx, setReviewIdx] = React.useState<number>(-1);
   const [analysisArrows, setAnalysisArrows] = React.useState<BoardArrow[]>([]);
 
   const openProfileHandle = React.useCallback((handle: string) => {
@@ -1144,7 +1144,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   }, [over, winner, hostedRuntime]);
   const blackMovedRef  = React.useRef(false);
 
-  const [reviewBoard, setReviewBoard] = React.useState<Board | null>(null);
   const [engineOn,    setEngineOn]    = React.useState(false);
   const [authoritativeLive, setAuthoritativeLive] = React.useState(false);
 
@@ -1265,6 +1264,23 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const [fogZones, setFogZones] = React.useState<{ centerRow: number; centerCol: number; ownerColor: PieceColor; turnsLeft: number }[]>([]);
 
   const { isReady: sfReady, isThinking, ev, sfErr, analyse, stop, resetEval } = useStockfish();
+
+  const {
+    reviewIdx,
+    setReviewIdx,
+    reviewBoard,
+    setReviewBoard,
+    isReviewing,
+    goToSnap,
+    reviewFirst,
+    reviewPrev,
+    reviewNext,
+    reviewLast,
+  } = useMatchReplay({
+    snapshots,
+    over,
+    resetEval,
+  });
   const movRef = React.useRef<HTMLDivElement>(null);
   const finalPositionRef = React.useRef<{ fen: string; turn: PieceColor } | null>(null);
 
@@ -4760,25 +4776,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     returnToQueueHome();
   }, [authoritativeMatchId, newGame, returnToQueueHome]);
 
-  // ── Review navigation ───────────────────────────────────────────────────────
-  const goToSnap = React.useCallback((idx: number) => {
-    if (idx < 0 || idx >= snapshots.length) return;
-    const s = snapshots[idx];
-    setReviewIdx(idx);
-    setReviewBoard(s.board);
-    resetEval();
-  }, [snapshots, resetEval]);
-
-  const reviewFirst = React.useCallback(() => goToSnap(0), [goToSnap]);
-  const reviewPrev  = React.useCallback(() => goToSnap(reviewIdx <= 0 ? 0 : reviewIdx - 1), [goToSnap, reviewIdx]);
-  const reviewNext  = React.useCallback(() => {
-    if (reviewIdx < snapshots.length - 1) goToSnap(reviewIdx + 1);
-    else { setReviewIdx(-1); setReviewBoard(null); resetEval(); }
-  }, [goToSnap, reviewIdx, snapshots.length, resetEval]);
-  const reviewLast  = React.useCallback(() => { setReviewIdx(-1); setReviewBoard(null); resetEval(); }, [resetEval]);
-
   // ── Computed values ─────────────────────────────────────────────────────────
-  const isReviewing  = reviewIdx >= 0 && over;
   const kingPos      = check && !isReviewing ? findKing(board, turn) : null;
 
   // Filter moves that would leave own king attacked by any fused enemy piece
