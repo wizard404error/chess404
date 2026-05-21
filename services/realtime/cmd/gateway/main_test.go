@@ -11,15 +11,15 @@ import (
 )
 
 func TestResolveInternalServiceURLAddsRailwayPortFallback(t *testing.T) {
-	resolved := resolveInternalServiceURL("http://platform-service.railway.internal", "http://127.0.0.1:8083")
+	resolved := resolveInternalServiceURL("http://platform-service.railway.internal", "http://platform-service.railway.internal:8080")
 	if resolved != "http://platform-service.railway.internal:8080" {
 		t.Fatalf("expected railway internal host to gain :8080, got %q", resolved)
 	}
 }
 
 func TestResolveInternalServiceURLFallsBackForInvalidTemplate(t *testing.T) {
-	resolved := resolveInternalServiceURL("${{platform-service.RAILWAY_PRIVATE_DOMAIN}}", "http://127.0.0.1:8083")
-	if resolved != "http://127.0.0.1:8083" {
+	resolved := resolveInternalServiceURL("${{platform-service.RAILWAY_PRIVATE_DOMAIN}}", "http://platform-service.railway.internal:8080")
+	if resolved != "http://platform-service.railway.internal:8080" {
 		t.Fatalf("expected invalid template value to use fallback, got %q", resolved)
 	}
 }

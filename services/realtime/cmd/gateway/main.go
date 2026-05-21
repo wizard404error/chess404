@@ -1111,9 +1111,9 @@ func bootstrapMessage(status GatewaySystemStatus) string {
 
 func gatewayConfigFromEnv() GatewayConfig {
 	return GatewayConfig{
-		MatchServiceURL:       resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8082"),
-		PlatformServiceURL:    resolveInternalServiceURL(os.Getenv("PLATFORM_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8083"),
-		MatchmakingServiceURL: resolveInternalServiceURL(os.Getenv("MATCHMAKING_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8084"),
+		MatchServiceURL:       resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://match-service.railway.internal:8080"),
+		PlatformServiceURL:    resolveInternalServiceURL(os.Getenv("PLATFORM_SERVICE_INTERNAL_URL"), "http://platform-service.railway.internal:8080"),
+		MatchmakingServiceURL: resolveInternalServiceURL(os.Getenv("MATCHMAKING_SERVICE_INTERNAL_URL"), "http://matchmaking-service.railway.internal:8080"),
 	}
 }
 

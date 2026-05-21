@@ -31,7 +31,7 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
         preferredSeat,
         clockSeconds: 600,
       });
-      const inviteUrl = `${window.location.origin}/?match=${encodeURIComponent(result.matchId)}`;
+      const inviteUrl = `${window.location.origin}/match/${encodeURIComponent(result.matchId)}`;
       writeStoredRoomMeta(result.matchId, {
         queue: 'direct',
         modeId,
@@ -69,7 +69,7 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
 
   const openRoom = React.useCallback(() => {
     if (!created?.matchId) return;
-    window.location.href = `/?match=${encodeURIComponent(created.matchId)}`;
+    window.location.href = `/match/${encodeURIComponent(created.matchId)}`;
   }, [created?.matchId]);
 
   return (

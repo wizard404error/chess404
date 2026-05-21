@@ -40,6 +40,30 @@ export const MATCH_PRESENCE_HEARTBEAT_INTERVAL_MS = 10_000;
 export const STREAM_RECONNECT_MESSAGE = 'Reconnecting to live match stream...';
 export const PRESENCE_RETRY_MESSAGE = 'Live match presence sync is delayed.';
 
+const PLAY_ROUTE = '/play';
+const HISTORY_ROUTE = '/history';
+const PROFILES_ROUTE = '/profiles';
+const MATCH_ROUTE_PREFIX = '/match/';
+
+function isMatchRoute(pathname: string): boolean {
+  return pathname.startsWith(MATCH_ROUTE_PREFIX);
+}
+
+function buildUrlWithQuery(pathname: string, params: URLSearchParams, hash: string): string {
+  const query = params.toString();
+  return `${pathname}${query ? `?${query}` : ''}${hash}`;
+}
+
+function replaceUrl(pathname: string, params: URLSearchParams, hash: string): void {
+  window.history.replaceState({}, '', buildUrlWithQuery(pathname, params, hash));
+}
+
+function buildAbsoluteUrl(pathname: string, params?: URLSearchParams): string | null {
+  if (typeof window === 'undefined') return null;
+  const query = params?.toString();
+  return `${window.location.origin}${pathname}${query ? `?${query}` : ''}`;
+}
+
 // ── Active match ID ───────────────────────────────────────────────────────────
 
 export function readStoredActiveMatchId(): string | null {
@@ -218,25 +242,32 @@ export function clearStoredAccountIdentity(side: 'white' | 'black'): void {
 export function clearRequestedMatchQuery(): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
-  if (!url.searchParams.has('match')) return;
+  const hasMatchQuery = url.searchParams.has('match');
+  const nextPathname = isMatchRoute(url.pathname) ? PLAY_ROUTE : url.pathname;
+  if (!hasMatchQuery && nextPathname === url.pathname) return;
   url.searchParams.delete('match');
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  replaceUrl(nextPathname, url.searchParams, url.hash);
 }
 
 export function syncRequestedProfileQuery(handle: string | null): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
+  url.searchParams.delete('match');
+  url.searchParams.delete('replay');
+  url.searchParams.delete('guest');
   if (handle && handle.trim()) {
     url.searchParams.set('profile', handle.trim().toLowerCase());
   } else {
     url.searchParams.delete('profile');
   }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  replaceUrl(PROFILES_ROUTE, url.searchParams, url.hash);
 }
 
 export function syncRequestedHistoryQuery(matchId: string | null, guestId: string | null): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
+  url.searchParams.delete('match');
+  url.searchParams.delete('profile');
   if (matchId && matchId.trim()) {
     url.searchParams.set('replay', matchId.trim());
   } else {
@@ -247,46 +278,46 @@ export function syncRequestedHistoryQuery(matchId: string | null, guestId: strin
   } else {
     url.searchParams.delete('guest');
   }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  replaceUrl(HISTORY_ROUTE, url.searchParams, url.hash);
 }
 
 export function syncRequestedMatchQuery(matchId: string | null): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
+  url.searchParams.delete('replay');
+  url.searchParams.delete('guest');
+  url.searchParams.delete('profile');
   if (matchId && matchId.trim()) {
-    url.searchParams.set('match', matchId.trim());
-    url.searchParams.delete('replay');
-    url.searchParams.delete('guest');
+    const normalizedMatchId = matchId.trim();
+    if (isMatchRoute(url.pathname)) {
+      url.searchParams.delete('match');
+      replaceUrl(`${MATCH_ROUTE_PREFIX}${encodeURIComponent(normalizedMatchId)}`, url.searchParams, url.hash);
+      return;
+    }
+    url.searchParams.set('match', normalizedMatchId);
   } else {
     url.searchParams.delete('match');
+    if (isMatchRoute(url.pathname)) {
+      replaceUrl(PLAY_ROUTE, url.searchParams, url.hash);
+      return;
+    }
   }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  replaceUrl(url.pathname, url.searchParams, url.hash);
 }
 
 // ── URL builders ──────────────────────────────────────────────────────────────
 
 export function buildLiveMatchUrl(matchId: string): string | null {
-  if (typeof window === 'undefined') return null;
   const normalizedMatchId = matchId.trim();
   if (!normalizedMatchId) return null;
-  const url = new URL(window.location.href);
-  url.searchParams.set('match', normalizedMatchId);
-  url.searchParams.delete('replay');
-  url.searchParams.delete('guest');
-  url.searchParams.delete('profile');
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+  return buildAbsoluteUrl(`${MATCH_ROUTE_PREFIX}${encodeURIComponent(normalizedMatchId)}`);
 }
 
 export function buildReplayPageUrl(matchId: string): string | null {
-  if (typeof window === 'undefined') return null;
   const normalizedMatchId = matchId.trim();
   if (!normalizedMatchId) return null;
-  const url = new URL(window.location.href);
-  url.searchParams.set('replay', normalizedMatchId);
-  url.searchParams.delete('match');
-  url.searchParams.delete('guest');
-  url.searchParams.delete('profile');
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+  const params = new URLSearchParams({ replay: normalizedMatchId });
+  return buildAbsoluteUrl(HISTORY_ROUTE, params);
 }
 
 // ── Clipboard ─────────────────────────────────────────────────────────────────
@@ -306,30 +337,19 @@ export function buildReplayPageUrlWithGuest(
   matchId: string,
   guestId?: string | null,
 ): string | null {
-  if (typeof window === 'undefined') return null;
   const normalizedMatchId = matchId.trim();
   if (!normalizedMatchId) return null;
-  const url = new URL(window.location.href);
-  url.searchParams.delete('match');
-  url.searchParams.delete('profile');
-  url.searchParams.set('replay', normalizedMatchId);
+  const params = new URLSearchParams({ replay: normalizedMatchId });
   if (guestId?.trim()) {
-    url.searchParams.set('guest', guestId.trim());
-  } else {
-    url.searchParams.delete('guest');
+    params.set('guest', guestId.trim());
   }
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+  return buildAbsoluteUrl(HISTORY_ROUTE, params);
 }
 
 /** Builds a URL pointing at the guest's full history by guestId. */
 export function buildGuestHistoryUrl(guestId: string): string | null {
-  if (typeof window === 'undefined') return null;
   const normalizedGuestId = guestId.trim();
   if (!normalizedGuestId) return null;
-  const url = new URL(window.location.href);
-  url.searchParams.delete('match');
-  url.searchParams.delete('profile');
-  url.searchParams.delete('replay');
-  url.searchParams.set('guest', normalizedGuestId);
-  return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+  const params = new URLSearchParams({ guest: normalizedGuestId });
+  return buildAbsoluteUrl(HISTORY_ROUTE, params);
 }

@@ -335,7 +335,7 @@ export default function QueuePage({
     hostedAutoOpenMatchRef.current = ticket.assignedRoom;
     writeStoredRoomMeta(ticket.assignedRoom, roomMeta);
     clearStoredTicketRef('white');
-    window.location.href = `/?match=${encodeURIComponent(ticket.assignedRoom)}`;
+    window.location.href = `/match/${encodeURIComponent(ticket.assignedRoom)}`;
   }, [hostedRuntime, restoringTickets, whiteTicket, whiteProfile, buildHostedAssignedRoomMeta]);
 
   React.useEffect(() => {
@@ -469,7 +469,7 @@ export default function QueuePage({
       if (!hostedRuntime) {
         clearStoredTicketRef('black');
       }
-      window.location.href = `/?match=${encodeURIComponent(ticket.assignedRoom)}`;
+      window.location.href = `/match/${encodeURIComponent(ticket.assignedRoom)}`;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to open matched room.');
     } finally {

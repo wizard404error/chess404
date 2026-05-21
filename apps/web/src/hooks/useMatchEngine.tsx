@@ -940,8 +940,10 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     if (typeof window === 'undefined') return;
     const hostname = window.location.hostname.toLowerCase();
     const nextHosted = hostname !== 'localhost' && hostname !== '127.0.0.1';
+    const pathMatch = window.location.pathname.match(/^\/match\/([^/]+)$/);
+    const requestedPathMatchId = pathMatch?.[1] ? decodeURIComponent(pathMatch[1]) : null;
     const query = new URLSearchParams(window.location.search);
-    const requestedMatchId = query.get('match');
+    const requestedMatchId = requestedPathMatchId ?? query.get('match');
     const requestedReplayMatchId = query.get('replay');
     const requestedGuestId = query.get('guest');
     const requestedProfileHandle = query.get('profile');
@@ -958,7 +960,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     if (requestedAuthLink) {
       setActivePage('Account');
     } else if (requestedMatchId?.trim()) {
-      setActivePage(nextHosted ? 'Match' : 'Play');
+      setActivePage(nextHosted || requestedPathMatchId ? 'Match' : 'Play');
     } else if (!requestedMatchId && ((requestedReplayMatchId?.trim() ?? '') || (requestedGuestId?.trim() ?? ''))) {
       setHistoryFocusMatchId(requestedReplayMatchId?.trim() ? requestedReplayMatchId.trim() : null);
       setHistoryFocusGuestId(requestedGuestId?.trim() ? requestedGuestId.trim() : null);
