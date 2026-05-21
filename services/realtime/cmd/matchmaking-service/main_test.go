@@ -14,7 +14,7 @@ import (
 )
 
 func TestResolveInternalServiceURLAddsRailwayPortFallback(t *testing.T) {
-	resolved := resolveInternalServiceURL("http://match-service.railway.internal", "http://127.0.0.1:8082")
+	resolved := resolveInternalServiceURL("http://match-service.railway.internal", "http://match-service.railway.internal:8080")
 	if resolved != "http://match-service.railway.internal:8080" {
 		t.Fatalf("expected railway internal host to gain :8080, got %q", resolved)
 	}

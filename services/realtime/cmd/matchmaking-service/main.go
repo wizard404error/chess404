@@ -97,11 +97,13 @@ func main() {
 			if r.Body != nil {
 				defer r.Body.Close()
 				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					log.Printf("[matchmaking] ERROR: invalid queue payload: %v", err)
 					http.Error(w, `{"error":"invalid queue payload"}`, http.StatusBadRequest)
 					return
 				}
 			}
 			if payload.GuestID == "" {
+				log.Printf("[matchmaking] ERROR: guestId is required")
 				http.Error(w, `{"error":"guestId is required"}`, http.StatusBadRequest)
 				return
 			}
@@ -109,8 +111,13 @@ func main() {
 				payload.Rating = 1200
 			}
 			modeID := parseModeID(payload.ModeID)
+			queue := parseQueueName(payload.Queue)
+			
+			log.Printf("[matchmaking] Enqueue request: guest=%s, queue=%s, mode=%s, rating=%d", 
+				payload.GuestID, queue, modeID, payload.Rating)
+			
 			ticket, err := service.EnqueueWithAccount(
-				parseQueueName(payload.Queue),
+				queue,
 				modeID,
 				payload.GuestID,
 				payload.Rating,
@@ -120,6 +127,7 @@ func main() {
 			if err != nil {
 				var activeErr matchmaking.ActiveTicketError
 				if errors.As(err, &activeErr) {
+					log.Printf("[matchmaking] Guest %s already has active ticket %s", payload.GuestID, activeErr.Ticket.TicketID)
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusConflict)
 					_ = json.NewEncoder(w).Encode(map[string]any{
@@ -129,9 +137,14 @@ func main() {
 					})
 					return
 				}
-				http.Error(w, `{"error":"failed to persist queue ticket"}`, http.StatusInternalServerError)
+				log.Printf("[matchmaking] ERROR: failed to enqueue guest %s: %v", payload.GuestID, err)
+				http.Error(w, fmt.Sprintf(`{"error":"failed to persist queue ticket: %s"}`, err.Error()), http.StatusInternalServerError)
 				return
 			}
+			
+			log.Printf("[matchmaking] Created ticket %s for guest %s (status=%s, room=%s)", 
+				ticket.TicketID, ticket.GuestID, ticket.Status, ticket.AssignedRoom)
+			
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ticket":   ticket,
@@ -218,7 +231,7 @@ func matchmakingTicketStoreRedisKey() string {
 }
 
 func matchmakingMatchServiceURL() string {
-	return resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://127.0.0.1:8082")
+	return resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://match-service.railway.internal:8080")
 }
 
 func resolveInternalServiceURL(explicit string, fallback string) string {
@@ -238,8 +251,11 @@ func resolveInternalServiceURL(explicit string, fallback string) string {
 }
 
 func openMatchmakingService() (*matchmaking.Service, error) {
+	matchServiceURL := matchmakingMatchServiceURL()
+	log.Printf("[matchmaking] Initializing with match service URL: %s", matchServiceURL)
+	
 	serviceCreator := &httpMatchCreator{
-		baseURL: matchmakingMatchServiceURL(),
+		baseURL: matchServiceURL,
 		client:  &http.Client{Timeout: 3 * time.Second},
 	}
 
@@ -247,11 +263,16 @@ func openMatchmakingService() (*matchmaking.Service, error) {
 		service *matchmaking.Service
 		err     error
 	)
-	switch strings.ToLower(envOrDefault("MATCHMAKING_TICKET_STORE_BACKEND", "file")) {
+	backend := strings.ToLower(envOrDefault("MATCHMAKING_TICKET_STORE_BACKEND", "file"))
+	log.Printf("[matchmaking] Using ticket store backend: %s", backend)
+	
+	switch backend {
 	case "sqlite":
 		service, err = matchmaking.NewSQLitePersistentService(matchmakingTicketStoreSQLitePath())
 	case "redis":
-		service, err = matchmaking.NewRedisPersistentService(matchmakingTicketStoreRedisURL(), matchmakingTicketStoreRedisKey())
+		redisURL := matchmakingTicketStoreRedisURL()
+		log.Printf("[matchmaking] Connecting to Redis at: %s", redisURL)
+		service, err = matchmaking.NewRedisPersistentService(redisURL, matchmakingTicketStoreRedisKey())
 	default:
 		service, err = matchmaking.NewPersistentService(envOrDefault("MATCHMAKING_TICKET_STORE_PATH", "data/matchmaking-tickets.json"))
 	}
@@ -259,6 +280,7 @@ func openMatchmakingService() (*matchmaking.Service, error) {
 		return nil, err
 	}
 	service.SetMatchCreator(serviceCreator)
+	log.Printf("[matchmaking] Service initialized successfully")
 	return service, nil
 }
 
@@ -318,6 +340,7 @@ type httpMatchCreator struct {
 
 func (c *httpMatchCreator) CreateMatch(assignment matchmaking.MatchAssignment) error {
 	if c == nil || strings.TrimSpace(c.baseURL) == "" {
+		log.Printf("[matchmaking] ERROR: match service URL is not configured - cannot create match for room %s", assignment.RoomID)
 		return fmt.Errorf("match service URL is not configured")
 	}
 	client := c.client
@@ -342,20 +365,33 @@ func (c *httpMatchCreator) CreateMatch(assignment matchmaking.MatchAssignment) e
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
+		log.Printf("[matchmaking] ERROR: failed to marshal match payload for room %s: %v", assignment.RoomID, err)
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/api/matches", bytes.NewReader(body))
+	
+	targetURL := c.baseURL + "/api/matches"
+	log.Printf("[matchmaking] Creating match room %s at %s (white=%s, black=%s, queue=%s, mode=%s)", 
+		assignment.RoomID, targetURL, assignment.WhiteGuestID, assignment.BlackGuestID, assignment.Queue, assignment.ModeID)
+	
+	req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
+		log.Printf("[matchmaking] ERROR: failed to create HTTP request for room %s: %v", assignment.RoomID, err)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[matchmaking] ERROR: failed to send match creation request for room %s: %v", assignment.RoomID, err)
 		return err
 	}
 	defer resp.Body.Close()
+	
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := json.Marshal(payload)
+		log.Printf("[matchmaking] ERROR: match service create failed for room %s with status %d, payload: %s", assignment.RoomID, resp.StatusCode, string(bodyBytes))
 		return fmt.Errorf("match service create failed with status %d", resp.StatusCode)
 	}
+	
+	log.Printf("[matchmaking] Successfully created match room %s", assignment.RoomID)
 	return nil
 }
