@@ -176,6 +176,19 @@ func (s *MatchClaimStore) Put(claim MatchSeatClaim) error {
 	return s.persistLocked()
 }
 
+func (s *MatchClaimStore) Delete(matchID, guestID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	s.pruneExpiredLocked(now)
+	key := matchClaimKey(matchID, guestID)
+	if _, ok := s.claims[key]; !ok {
+		return nil
+	}
+	delete(s.claims, key)
+	return s.persistLocked()
+}
+
 func matchClaimKey(matchID, guestID string) string {
 	return matchID + "::" + guestID
 }

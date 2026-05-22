@@ -227,6 +227,11 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		}
 
 		if claim, ok := claims.Get(payload.MatchID, session.Guest.GuestID); ok {
+			claim, ok = refreshStoredMatchClaim(archive, claims, claim, session.SessionSecret)
+			if !ok {
+				http.Error(w, `{"error":"unknown active match claim"}`, http.StatusNotFound)
+				return
+			}
 			if strings.TrimSpace(claim.PlayerSecret) == "" {
 				claim.PlayerSecret = session.SessionSecret
 			}
@@ -245,37 +250,15 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			http.Error(w, `{"error":"unknown match archive"}`, http.StatusNotFound)
 			return
 		}
-
-		seatColor := ""
-		playerSecret := ""
-		switch session.Guest.GuestID {
-		case matchState.WhiteGuestID:
-			seatColor = "white"
-			playerSecret = matchState.WhitePlayerSecret
-		case matchState.BlackGuestID:
-			seatColor = "black"
-			playerSecret = matchState.BlackPlayerSecret
-		default:
-			http.Error(w, `{"error":"guest does not own a seat in this match"}`, http.StatusForbidden)
+		if !isRecoverableMatchStatus(matchState.Status) {
+			http.Error(w, `{"error":"match is no longer active"}`, http.StatusNotFound)
 			return
 		}
-		if strings.TrimSpace(playerSecret) == "" {
-			playerSecret = session.SessionSecret
-		}
 
-		claim := platform.MatchSeatClaim{
-			MatchID:      matchState.MatchID,
-			GuestID:      session.Guest.GuestID,
-			SeatColor:    seatColor,
-			PlayerID:     session.Guest.GuestID,
-			PlayerSecret: playerSecret,
-			Queue:        matchState.Queue,
-			ModeID:       matchState.ModeID,
-			WhiteGuestID: matchState.WhiteGuestID,
-			BlackGuestID: matchState.BlackGuestID,
-			WhiteName:    matchState.WhiteName,
-			BlackName:    matchState.BlackName,
-			Status:       matchState.Status,
+		claim, ok := buildMatchSeatClaim(matchState, session.Guest.GuestID, session.SessionSecret)
+		if !ok {
+			http.Error(w, `{"error":"guest does not own a seat in this match"}`, http.StatusForbidden)
+			return
 		}
 		if err := claims.Put(claim); err != nil {
 			http.Error(w, `{"error":"failed to cache match claim"}`, http.StatusInternalServerError)
@@ -311,6 +294,11 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		}
 
 		claim, ok := claims.GetByToken(payload.MatchID, payload.ClaimToken)
+		if !ok {
+			http.Error(w, `{"error":"unknown room claim token"}`, http.StatusNotFound)
+			return
+		}
+		claim, ok = refreshStoredMatchClaim(archive, claims, claim, claim.PlayerSecret)
 		if !ok {
 			http.Error(w, `{"error":"unknown room claim token"}`, http.StatusNotFound)
 			return
@@ -356,22 +344,29 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 
-		claim, ok := claims.FindByGuest(session.Guest.GuestID)
-		if !ok {
-			http.Error(w, `{"error":"no active match claim"}`, http.StatusNotFound)
+		for {
+			claim, ok := claims.FindByGuest(session.Guest.GuestID)
+			if !ok {
+				http.Error(w, `{"error":"no active match claim"}`, http.StatusNotFound)
+				return
+			}
+			claim, ok = refreshStoredMatchClaim(archive, claims, claim, session.SessionSecret)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(claim.PlayerSecret) == "" {
+				claim.PlayerSecret = session.SessionSecret
+			}
+			if err := claims.Put(claim); err == nil {
+				if renewedClaim, renewed := claims.Get(claim.MatchID, claim.GuestID); renewed {
+					claim = renewedClaim
+				}
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(claim)
 			return
 		}
-		if strings.TrimSpace(claim.PlayerSecret) == "" {
-			claim.PlayerSecret = session.SessionSecret
-		}
-		if err := claims.Put(claim); err == nil {
-			if renewedClaim, renewed := claims.Get(claim.MatchID, claim.GuestID); renewed {
-				claim = renewedClaim
-			}
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(claim)
 	})
 
 	mux.HandleFunc("/api/platform/accounts/claim", func(w http.ResponseWriter, r *http.Request) {
@@ -2351,12 +2346,38 @@ func filterArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, status 
 	filtered := make([]platform.MatchArchiveEntry, 0, len(matches))
 	for _, entry := range matches {
 		entryStatus := strings.TrimSpace(entry.Status)
+		
+		// Skip waiting matches when filtering for active
 		if status == "active" && entryStatus == "waiting" {
 			continue
 		}
-		if entryStatus != status {
-			continue
+		
+		// When filtering for "active", exclude matches that are actually finished
+		// (have a winner or finish reason) even if their status field says "active"
+		if status == "active" {
+			isActuallyFinished := entry.Winner != "" || entry.FinishReason != ""
+			if isActuallyFinished {
+				continue
+			}
+			// Only include matches with status "active" that aren't finished
+			if entryStatus != "active" {
+				continue
+			}
+		} else if status == "finished" {
+			// When filtering for "finished", include matches that:
+			// 1. Have status "finished", OR
+			// 2. Have a winner/finishReason (actually finished) even if status is still "active"
+			isActuallyFinished := entry.Winner != "" || entry.FinishReason != ""
+			if entryStatus != "finished" && !isActuallyFinished {
+				continue
+			}
+		} else {
+			// For other status filters, use exact match
+			if entryStatus != status {
+				continue
+			}
 		}
+		
 		filtered = append(filtered, entry)
 	}
 	return filtered
@@ -2688,6 +2709,68 @@ func accountSecurityAuditPostgresURL() string {
 
 func matchClaimStoreRedisURL() string {
 	return envOrDefault("MATCH_CLAIM_STORE_REDIS_URL", "redis://127.0.0.1:6379/0")
+}
+
+func isRecoverableMatchStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "waiting", "active":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildMatchSeatClaim(matchState contracts.MatchState, guestID, fallbackSecret string) (platform.MatchSeatClaim, bool) {
+	seatColor := ""
+	playerSecret := ""
+	switch guestID {
+	case matchState.WhiteGuestID:
+		seatColor = "white"
+		playerSecret = matchState.WhitePlayerSecret
+	case matchState.BlackGuestID:
+		seatColor = "black"
+		playerSecret = matchState.BlackPlayerSecret
+	default:
+		return platform.MatchSeatClaim{}, false
+	}
+	if strings.TrimSpace(playerSecret) == "" {
+		playerSecret = strings.TrimSpace(fallbackSecret)
+	}
+	return platform.MatchSeatClaim{
+		MatchID:      matchState.MatchID,
+		GuestID:      guestID,
+		SeatColor:    seatColor,
+		PlayerID:     guestID,
+		PlayerSecret: playerSecret,
+		Queue:        matchState.Queue,
+		ModeID:       matchState.ModeID,
+		WhiteGuestID: matchState.WhiteGuestID,
+		BlackGuestID: matchState.BlackGuestID,
+		WhiteName:    matchState.WhiteName,
+		BlackName:    matchState.BlackName,
+		Status:       matchState.Status,
+	}, true
+}
+
+func refreshStoredMatchClaim(
+	archive *platform.MatchArchiveStore,
+	claims *platform.MatchClaimStore,
+	claim platform.MatchSeatClaim,
+	fallbackSecret string,
+) (platform.MatchSeatClaim, bool) {
+	matchState, _, ok := archive.LoadMatch(claim.MatchID)
+	if !ok || !isRecoverableMatchStatus(matchState.Status) {
+		_ = claims.Delete(claim.MatchID, claim.GuestID)
+		return platform.MatchSeatClaim{}, false
+	}
+	refreshed, ok := buildMatchSeatClaim(matchState, claim.GuestID, fallbackSecret)
+	if !ok {
+		_ = claims.Delete(claim.MatchID, claim.GuestID)
+		return platform.MatchSeatClaim{}, false
+	}
+	refreshed.ClaimToken = claim.ClaimToken
+	refreshed.ExpiresAt = claim.ExpiresAt
+	return refreshed, true
 }
 
 func matchClaimStoreRedisKey() string {

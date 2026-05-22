@@ -731,10 +731,10 @@ func recoveredMatchFromClaims(claims *GatewayBootstrapMatchClaims) *GatewayBoots
 	}
 
 	primary := claims.White
-	if primary == nil {
+	if primary == nil || !isGatewayRecoverableClaimStatus(primary.Status) {
 		primary = claims.Black
 	}
-	if primary == nil || strings.TrimSpace(primary.MatchID) == "" {
+	if primary == nil || !isGatewayRecoverableClaimStatus(primary.Status) || strings.TrimSpace(primary.MatchID) == "" {
 		return nil
 	}
 
@@ -805,6 +805,15 @@ func recoveredMatchFromQueueTickets(
 	}
 
 	return nil
+}
+
+func isGatewayRecoverableClaimStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "waiting", "active":
+		return true
+	default:
+		return false
+	}
 }
 
 func guestSessionsSide(sessions *GatewayBootstrapGuestSessions, side string) *platform.GuestSession {

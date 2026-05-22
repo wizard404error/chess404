@@ -20,6 +20,7 @@ const (
 	drawEveryRounds          = 3
 	presenceHeartbeatTimeout = 25 * time.Second
 	disconnectGracePeriod    = 45 * time.Second
+	disconnectGraceBoth      = "both"
 )
 
 var (
@@ -55,6 +56,11 @@ type MatchArchiveLoader interface {
 	LoadMatch(matchID string) (contracts.MatchState, []contracts.ResolvedEvent, bool)
 }
 
+type MatchArchiveBootstrapper interface {
+	MatchArchiveLoader
+	ListUnfinishedMatchIDs(limit int) []string
+}
+
 type ServiceStats struct {
 	LoadedMatches     int `json:"loadedMatches"`
 	ActiveMatches     int `json:"activeMatches"`
@@ -74,6 +80,11 @@ func NewServiceWithArchive(archive MatchArchiver) *Service {
 		subs:     make(map[string]map[chan contracts.MatchSnapshotResponse]struct{}),
 		presence: make(map[string]*matchPresenceState),
 		archive:  archive,
+	}
+	if loader, ok := archive.(MatchArchiveBootstrapper); ok {
+		service.mu.Lock()
+		service.restoreArchivedMatchesLocked(loader)
+		service.mu.Unlock()
 	}
 
 	go service.startBroadcaster()
@@ -976,15 +987,34 @@ func (s *Service) ensureMatchLoadedLocked(matchID string) (*contracts.MatchState
 		restored.History = []contracts.PositionState{capturePositionState(&restored)}
 	}
 
+	return s.loadArchivedMatchLocked(matchID, restored, events), true
+}
+
+func (s *Service) restoreArchivedMatchesLocked(loader MatchArchiveBootstrapper) {
+	for _, matchID := range loader.ListUnfinishedMatchIDs(0) {
+		if _, ok := s.matches[matchID]; ok {
+			continue
+		}
+		restored, events, ok := loader.LoadMatch(matchID)
+		if !ok {
+			continue
+		}
+		if len(restored.History) == 0 {
+			restored.History = []contracts.PositionState{capturePositionState(&restored)}
+		}
+		s.loadArchivedMatchLocked(matchID, restored, events)
+	}
+}
+
+func (s *Service) loadArchivedMatchLocked(matchID string, restored contracts.MatchState, events []contracts.ResolvedEvent) *contracts.MatchState {
 	state := &restored
 	s.matches[matchID] = state
 	s.events[matchID] = append([]contracts.ResolvedEvent{}, events...)
 	if s.subs[matchID] == nil {
 		s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]struct{})
 	}
-	s.presence[matchID] = newMatchPresenceState(state, time.Now().UTC())
-
-	return state, true
+	s.presence[matchID] = newRecoveredMatchPresenceState(state)
+	return state
 }
 
 func (s *Service) Stats() ServiceStats {
@@ -1019,6 +1049,33 @@ func newMatchPresenceState(state *contracts.MatchState, now time.Time) *matchPre
 	return presence
 }
 
+func newRecoveredMatchPresenceState(state *contracts.MatchState) *matchPresenceState {
+	presence := &matchPresenceState{}
+	lastSeen := recoveredPresenceSeedTime(state)
+	if strings.TrimSpace(state.WhiteGuestID) != "" {
+		presence.WhiteLastSeenAt = lastSeen
+		presence.WhiteConnected = false
+	}
+	if strings.TrimSpace(state.BlackGuestID) != "" {
+		presence.BlackLastSeenAt = lastSeen
+		presence.BlackConnected = false
+	}
+	return presence
+}
+
+func recoveredPresenceSeedTime(state *contracts.MatchState) time.Time {
+	if state == nil {
+		return time.Time{}
+	}
+	if !state.UpdatedAt.IsZero() {
+		return state.UpdatedAt.UTC()
+	}
+	if !state.CreatedAt.IsZero() {
+		return state.CreatedAt.UTC()
+	}
+	return time.Time{}
+}
+
 func (s *Service) ensurePresenceStateLocked(matchID string, state *contracts.MatchState, now time.Time) *matchPresenceState {
 	if presence, ok := s.presence[matchID]; ok && presence != nil {
 		return presence
@@ -1049,7 +1106,7 @@ func presenceHeartbeat(presence *matchPresenceState, color string, now time.Time
 		presence.BlackLastSeenAt = now
 	}
 
-	if presence.DisconnectGraceFor == color {
+	if presence.DisconnectGraceFor == color || presence.DisconnectGraceFor == disconnectGraceBoth {
 		presence.DisconnectGraceFor = ""
 		presence.DisconnectGraceDeadline = nil
 		changed = true
@@ -1094,6 +1151,8 @@ func evaluatePresenceRuntime(state *contracts.MatchState, presence *matchPresenc
 		disconnectedColor = "white"
 	case presence.WhiteConnected && !presence.BlackConnected:
 		disconnectedColor = "black"
+	case !presence.WhiteConnected && !presence.BlackConnected:
+		disconnectedColor = disconnectGraceBoth
 	default:
 		disconnectedColor = ""
 	}
@@ -1104,11 +1163,16 @@ func evaluatePresenceRuntime(state *contracts.MatchState, presence *matchPresenc
 		return nil
 	}
 
-	if presence.DisconnectGraceFor != disconnectedColor || presence.DisconnectGraceDeadline == nil {
-		deadline := now.Add(disconnectGracePeriod)
+	deadline := presenceDisconnectDeadline(presence, disconnectedColor)
+	if deadline.IsZero() {
+		deadline = now.Add(disconnectGracePeriod)
+	}
+	if presence.DisconnectGraceFor != disconnectedColor || presence.DisconnectGraceDeadline == nil || !presence.DisconnectGraceDeadline.Equal(deadline) {
 		presence.DisconnectGraceFor = disconnectedColor
 		presence.DisconnectGraceDeadline = &deadline
-		return nil
+		if now.Before(deadline) {
+			return nil
+		}
 	}
 
 	if now.Before(*presence.DisconnectGraceDeadline) {
@@ -1117,6 +1181,24 @@ func evaluatePresenceRuntime(state *contracts.MatchState, presence *matchPresenc
 
 	presence.DisconnectGraceFor = ""
 	presence.DisconnectGraceDeadline = nil
+	if disconnectedColor == disconnectGraceBoth {
+		winner := "draw"
+		finishReason := "abandon"
+		result := "abandon"
+		if len(state.MoveHistory) == 0 {
+			winner = "aborted"
+			finishReason = "abort"
+			result = "abort"
+		}
+		markMatchFinished(state, winner, finishReason, now)
+		return []contracts.ResolvedEvent{
+			makeEvent(state.MatchID, "match_finished", now, "", map[string]any{
+				"result":       result,
+				"winner":       state.Winner,
+				"disconnected": disconnectedColor,
+			}),
+		}
+	}
 	markMatchFinished(state, opposite(disconnectedColor), "abandon", now)
 	return []contracts.ResolvedEvent{
 		makeEvent(state.MatchID, "match_finished", now, "", map[string]any{
@@ -1124,6 +1206,35 @@ func evaluatePresenceRuntime(state *contracts.MatchState, presence *matchPresenc
 			"winner":       state.Winner,
 			"disconnected": disconnectedColor,
 		}),
+	}
+}
+
+func presenceDisconnectDeadline(presence *matchPresenceState, disconnectedColor string) time.Time {
+	if presence == nil {
+		return time.Time{}
+	}
+	switch disconnectedColor {
+	case "white":
+		if presence.WhiteLastSeenAt.IsZero() {
+			return time.Time{}
+		}
+		return presence.WhiteLastSeenAt.Add(presenceHeartbeatTimeout + disconnectGracePeriod)
+	case "black":
+		if presence.BlackLastSeenAt.IsZero() {
+			return time.Time{}
+		}
+		return presence.BlackLastSeenAt.Add(presenceHeartbeatTimeout + disconnectGracePeriod)
+	case disconnectGraceBoth:
+		lastSeen := presence.WhiteLastSeenAt
+		if presence.BlackLastSeenAt.After(lastSeen) {
+			lastSeen = presence.BlackLastSeenAt
+		}
+		if lastSeen.IsZero() {
+			return time.Time{}
+		}
+		return lastSeen.Add(presenceHeartbeatTimeout + disconnectGracePeriod)
+	default:
+		return time.Time{}
 	}
 }
 
@@ -3113,8 +3224,13 @@ func cloneStateAt(state *contracts.MatchState, presence *matchPresenceState, now
 	if presence != nil {
 		clone.WhiteConnected = presence.WhiteConnected
 		clone.BlackConnected = presence.BlackConnected
-		clone.DisconnectGraceFor = presence.DisconnectGraceFor
-		if presence.DisconnectGraceDeadline != nil {
+		hideDisconnectGrace := presence.DisconnectGraceFor == disconnectGraceBoth
+		if hideDisconnectGrace {
+			clone.DisconnectGraceFor = ""
+		} else {
+			clone.DisconnectGraceFor = presence.DisconnectGraceFor
+		}
+		if !hideDisconnectGrace && presence.DisconnectGraceDeadline != nil {
 			deadline := *presence.DisconnectGraceDeadline
 			clone.DisconnectGraceDeadline = &deadline
 		} else {

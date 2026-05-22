@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
 )
@@ -159,6 +160,71 @@ func TestQueueFindActiveTicketSupportsGuestAndAccountRecovery(t *testing.T) {
 	foundByAccount, ok := service.FindActiveTicket("", "acct_bravo")
 	if !ok || foundByAccount.TicketID != accountTicket.TicketID {
 		t.Fatalf("expected account lookup to recover the active ticket, got %#v ok=%v", foundByAccount, ok)
+	}
+}
+
+func TestQueuePrunesTerminalTicketsAfterRecoveryTTL(t *testing.T) {
+	service := NewService()
+	base := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return base }
+
+	firstMatched, err := service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha")
+	if err != nil {
+		t.Fatalf("enqueue first matched ticket: %v", err)
+	}
+	secondMatched, err := service.Enqueue(QueueRated, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo")
+	if err != nil {
+		t.Fatalf("enqueue second matched ticket: %v", err)
+	}
+	queued, err := service.Enqueue(QueueCasual, contracts.MatchModeOpenCards, "guest_c", 1190, "Charlie")
+	if err != nil {
+		t.Fatalf("enqueue queued ticket: %v", err)
+	}
+	cancelled, err := service.Enqueue(QueueCasual, contracts.MatchModeHiddenCards, "guest_d", 1185, "Delta")
+	if err != nil {
+		t.Fatalf("enqueue cancellable ticket: %v", err)
+	}
+	if _, _, err := service.Cancel(cancelled.TicketID); err != nil {
+		t.Fatalf("cancel queued ticket: %v", err)
+	}
+
+	service.now = func() time.Time { return base.Add(defaultCancelledTicketTTL - time.Second) }
+	if _, ok := service.Get(cancelled.TicketID); !ok {
+		t.Fatalf("expected cancelled ticket to remain visible before TTL expires")
+	}
+
+	service.now = func() time.Time { return base.Add(defaultCancelledTicketTTL + time.Second) }
+	if _, ok := service.Get(cancelled.TicketID); ok {
+		t.Fatalf("expected cancelled ticket to be pruned after TTL")
+	}
+	if snapshot := service.Snapshot(QueueCasual, contracts.MatchModeOpenCards); snapshot.QueuedCount != 1 {
+		t.Fatalf("expected open-cards queued ticket to remain, got %#v", snapshot)
+	}
+	if snapshot := service.Snapshot(QueueCasual, contracts.MatchModeHiddenCards); snapshot.CancelledCount != 0 {
+		t.Fatalf("expected hidden-cards cancelled ticket to be pruned, got %#v", snapshot)
+	}
+	if recovered, ok := service.FindActiveTicket("guest_a", ""); !ok || recovered.TicketID != firstMatched.TicketID {
+		t.Fatalf("expected matched ticket to stay recoverable during TTL, got %#v ok=%v", recovered, ok)
+	}
+
+	service.now = func() time.Time { return base.Add(defaultMatchedRecoveryTTL + time.Second) }
+	if _, ok := service.Get(firstMatched.TicketID); ok {
+		t.Fatalf("expected first matched ticket to be pruned after recovery TTL")
+	}
+	if _, ok := service.Get(secondMatched.TicketID); ok {
+		t.Fatalf("expected second matched ticket to be pruned after recovery TTL")
+	}
+	if _, ok := service.FindActiveTicket("guest_a", ""); ok {
+		t.Fatalf("expected matched recovery to disappear after TTL")
+	}
+	if stats := service.Stats(); stats.TotalTickets != 1 || stats.Casual.QueuedCount != 1 || stats.Rated.MatchedCount != 0 {
+		t.Fatalf("expected only queued ticket to remain after pruning, got %#v", stats)
+	}
+	if items := service.List(QueueRated, contracts.MatchModeOpenCards); len(items) != 0 {
+		t.Fatalf("expected stale matched tickets removed from list, got %#v", items)
+	}
+	if queuedTicket, ok := service.Get(queued.TicketID); !ok || queuedTicket.Status != StatusQueued {
+		t.Fatalf("expected queued ticket to survive pruning, got %#v ok=%v", queuedTicket, ok)
 	}
 }
 

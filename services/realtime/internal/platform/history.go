@@ -3,6 +3,7 @@ package platform
 import (
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -208,6 +209,25 @@ func (s *MatchArchiveStore) List(limit int) []MatchArchiveEntry {
 		items = items[:limit]
 	}
 	return items
+}
+
+func (s *MatchArchiveStore) ListUnfinishedMatchIDs(limit int) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	items := sortEntriesByUpdatedAt(s.entries)
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+
+	ids := make([]string, 0, len(items))
+	for _, entry := range items {
+		if strings.EqualFold(strings.TrimSpace(entry.Status), "finished") {
+			continue
+		}
+		ids = append(ids, entry.MatchID)
+	}
+	return ids
 }
 
 func (s *MatchArchiveStore) ListByGuest(guestID string, limit int) []MatchArchiveEntry {

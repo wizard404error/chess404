@@ -2484,7 +2484,7 @@ func TestMatchClaimsRejectUnauthorizedGuestSession(t *testing.T) {
 	}
 }
 
-func TestMatchClaimsRecoverFromCachedClaimWithoutArchiveEntry(t *testing.T) {
+func TestMatchClaimsRejectCachedClaimWithoutArchiveEntry(t *testing.T) {
 	tempDir := t.TempDir()
 	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
 	if err != nil {
@@ -2519,21 +2519,69 @@ func TestMatchClaimsRecoverFromCachedClaimWithoutArchiveEntry(t *testing.T) {
 
 	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected cached match claim to succeed, got status %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected cached match claim without archive to be rejected, got status %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := claims.Get("room_cached_claim", session.Guest.GuestID); ok {
+		t.Fatalf("expected stale cached claim to be deleted after validation failure")
+	}
+}
+
+func TestActiveMatchClaimsRejectFinishedRooms(t *testing.T) {
+	tempDir := t.TempDir()
+	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
+	if err != nil {
+		t.Fatalf("expected archive store to initialize, got %v", err)
+	}
+	defer func() { _ = archive.Close() }()
+	guests, err := platform.NewGuestStore(filepath.Join(tempDir, "guests.json"))
+	if err != nil {
+		t.Fatalf("expected guest store to initialize, got %v", err)
+	}
+	defer func() { _ = guests.Close() }()
+	claims := platform.NewMatchClaimStore()
+
+	session, err := guests.EnsureGuest("guest_finished_claim", "")
+	if err != nil {
+		t.Fatalf("expected guest session creation to succeed, got %v", err)
+	}
+	if err := archive.Upsert(contracts.MatchSnapshotResponse{
+		Match: contracts.MatchState{
+			MatchID:           "room_finished_claim",
+			Status:            "finished",
+			Queue:             "rated",
+			ModeID:            contracts.MatchModeOpenCards,
+			WhiteGuestID:      session.Guest.GuestID,
+			WhitePlayerSecret: "white-seat-secret",
+			WhiteName:         "White Guest",
+			BlackGuestID:      "guest_other",
+			BlackName:         "Other Guest",
+		},
+	}); err != nil {
+		t.Fatalf("expected archived finished match to persist, got %v", err)
+	}
+	if err := claims.Put(platform.MatchSeatClaim{
+		MatchID:      "room_finished_claim",
+		GuestID:      session.Guest.GuestID,
+		SeatColor:    "white",
+		PlayerID:     session.Guest.GuestID,
+		PlayerSecret: "cached_room_secret",
+		Queue:        "rated",
+		Status:       "active",
+	}); err != nil {
+		t.Fatalf("expected cached claim write to succeed, got %v", err)
 	}
 
-	var response struct {
-		SeatColor    string `json:"seatColor"`
-		PlayerSecret string `json:"playerSecret"`
-		ClaimToken   string `json:"claimToken"`
-		ExpiresAt    string `json:"expiresAt"`
+	req := httptest.NewRequest(http.MethodPost, "/api/platform/match-claims/active", strings.NewReader(`{"guestId":"`+session.Guest.GuestID+`","sessionSecret":"`+session.SessionSecret+`"}`))
+	rec := httptest.NewRecorder()
+
+	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected finished-room active claim to be rejected, got status %d body=%s", rec.Code, rec.Body.String())
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("expected cached match claim response to decode, got %v", err)
-	}
-	if response.SeatColor != "white" || response.PlayerSecret != "cached_room_secret" || response.ClaimToken == "" || response.ExpiresAt == "" {
-		t.Fatalf("expected cached claim to be returned even without archive, got %#v", response)
+	if _, ok := claims.Get("room_finished_claim", session.Guest.GuestID); ok {
+		t.Fatalf("expected finished-room claim to be deleted after validation failure")
 	}
 }
 
@@ -2554,6 +2602,21 @@ func TestMatchClaimResolveReturnsCachedTokenClaim(t *testing.T) {
 	session, err := guests.EnsureGuest("guest_resolve", "")
 	if err != nil {
 		t.Fatalf("expected guest session creation to succeed, got %v", err)
+	}
+	if err := archive.Upsert(contracts.MatchSnapshotResponse{
+		Match: contracts.MatchState{
+			MatchID:           "room_resolve",
+			Status:            "active",
+			Queue:             "rated",
+			ModeID:            contracts.MatchModeOpenCards,
+			WhiteGuestID:      session.Guest.GuestID,
+			WhitePlayerSecret: "resolve_secret",
+			WhiteName:         "Resolve Guest",
+			BlackGuestID:      "guest_other",
+			BlackName:         "Other Guest",
+		},
+	}); err != nil {
+		t.Fatalf("expected archived match to persist, got %v", err)
 	}
 	if err := claims.Put(platform.MatchSeatClaim{
 		MatchID:      "room_resolve",
