@@ -558,6 +558,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const authoritativeSeatSecretsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
   const authoritativeClaimExpiresAtRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
   const authoritativeClaimTokensRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
+  const gatewayRecoveredMatchIdRef = React.useRef<string | null>(null);
   const gatewayBootstrapClaimsRef = React.useRef<{
     matchId: string | null;
     whiteSecret: string | null;
@@ -767,6 +768,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
     writeStoredActiveMatchId(input.matchId);
     writeStoredRoomMeta(input.matchId, nextRoomMeta);
+    gatewayRecoveredMatchIdRef.current = input.matchId;
     if (input.viewerSeat) {
       setViewerSeat(input.viewerSeat);
     }
@@ -810,6 +812,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
 
     if (options.hosted && !options.requestedMatchId) {
+      gatewayRecoveredMatchIdRef.current = null;
       writeStoredActiveMatchId(null);
     }
   }, [applyGatewayRecoveredMatch, setBootstrapQueueRecovery]);
@@ -1662,7 +1665,8 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     authoritativeBootstrapRef.current = bootstrapId;
     try {
       const explicitMatchId = requestedMatchIdRef.current;
-      const restoredMatchId = explicitMatchId ?? readStoredActiveMatchId();
+      const restoredMatchId = explicitMatchId
+        ?? (hostedRuntime ? gatewayRecoveredMatchIdRef.current : readStoredActiveMatchId());
       if (hostedRuntime && !explicitMatchId && !restoredMatchId) {
         authoritativeMatchIdRef.current = null;
         setAuthoritativeMatchId(null);
@@ -1735,6 +1739,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           if ((explicitMatchId || roomMeta) && err instanceof Error && /404|not found/i.test(err.message)) {
             if (hostedRuntime) {
               writeStoredActiveMatchId(null);
+              gatewayRecoveredMatchIdRef.current = null;
               clearRequestedMatchQuery();
               requestedMatchIdRef.current = null;
               authoritativeMatchIdRef.current = null;
@@ -1778,6 +1783,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
             });
           } else if (!explicitMatchId && err instanceof Error && /404|not found/i.test(err.message)) {
             writeStoredActiveMatchId(null);
+            gatewayRecoveredMatchIdRef.current = null;
             if (hostedRuntime) {
               authoritativeMatchIdRef.current = null;
               setAuthoritativeMatchId(null);
@@ -4861,8 +4867,9 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       authoritativeMatchIdRef.current = null;
       authoritativeSeatSecretsRef.current = { white: null, black: null };
       authoritativeClaimExpiresAtRef.current = { white: null, black: null };
-      authoritativeClaimTokensRef.current = { white: null, black: null };
-      gatewayBootstrapClaimsRef.current = { matchId: null, whiteSecret: null, blackSecret: null, whiteToken: null, blackToken: null, whiteExpiresAt: null, blackExpiresAt: null };
+    authoritativeClaimTokensRef.current = { white: null, black: null };
+    gatewayBootstrapClaimsRef.current = { matchId: null, whiteSecret: null, blackSecret: null, whiteToken: null, blackToken: null, whiteExpiresAt: null, blackExpiresAt: null };
+    gatewayRecoveredMatchIdRef.current = null;
     requestedMatchIdRef.current = null;
     finalizedResultRef.current = null;
     writeStoredActiveMatchId(null);

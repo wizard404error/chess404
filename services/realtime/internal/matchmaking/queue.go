@@ -19,6 +19,11 @@ const (
 	QueueRated  QueueName = "rated"
 )
 
+const (
+	defaultMatchedRecoveryTTL = 3 * time.Minute
+	defaultCancelledTicketTTL = 30 * time.Second
+)
+
 type TicketStatus string
 
 const (
@@ -54,10 +59,13 @@ type QueueSnapshot struct {
 }
 
 type Service struct {
-	mu      sync.Mutex
-	store   ticketStore
-	tickets map[string]Ticket
-	creator MatchCreator
+	mu                  sync.Mutex
+	store               ticketStore
+	tickets             map[string]Ticket
+	creator             MatchCreator
+	now                 func() time.Time
+	matchedRecoveryTTL  time.Duration
+	cancelledTicketTTL  time.Duration
 }
 
 type MatchAssignment struct {
@@ -130,8 +138,11 @@ func newPersistentService(store ticketStore) (*Service, error) {
 
 func newService(store ticketStore) *Service {
 	return &Service{
-		store:   store,
-		tickets: make(map[string]Ticket),
+		store:              store,
+		tickets:            make(map[string]Ticket),
+		now:                time.Now,
+		matchedRecoveryTTL: defaultMatchedRecoveryTTL,
+		cancelledTicketTTL: defaultCancelledTicketTTL,
 	}
 }
 
@@ -167,6 +178,13 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := s.nowUTC()
+	if s.pruneExpiredLocked(now) {
+		if err := s.persistLocked(); err != nil {
+			return Ticket{}, err
+		}
+	}
+
 	modeID = normalizeModeID(modeID)
 	if active, ok := s.findActiveTicketForGuestLocked(guestID); ok {
 		if active.Queue == queue && normalizeModeID(active.ModeID) == modeID {
@@ -175,7 +193,6 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 		return Ticket{}, ActiveTicketError{Ticket: active}
 	}
 
-	now := time.Now().UTC()
 	ticket := Ticket{
 		TicketID:    "ticket_" + randomToken(6),
 		GuestID:     guestID,
@@ -238,6 +255,9 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 func (s *Service) Get(ticketID string) (Ticket, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.pruneExpiredLocked(s.nowUTC()) {
+		_ = s.persistLocked()
+	}
 	ticket, ok := s.tickets[ticketID]
 	return ticket, ok
 }
@@ -245,19 +265,28 @@ func (s *Service) Get(ticketID string) (Ticket, bool) {
 func (s *Service) FindActiveTicket(guestID, accountID string) (Ticket, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.pruneExpiredLocked(s.nowUTC()) {
+		_ = s.persistLocked()
+	}
 	return s.findActiveTicketLocked(guestID, accountID)
 }
 
 func (s *Service) Cancel(ticketID string) (Ticket, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.nowUTC()
+	if s.pruneExpiredLocked(now) {
+		if err := s.persistLocked(); err != nil {
+			return Ticket{}, false, err
+		}
+	}
 	ticket, ok := s.tickets[ticketID]
 	if !ok {
 		return Ticket{}, false, nil
 	}
 	if ticket.Status == StatusQueued {
 		ticket.Status = StatusCancelled
-		ticket.UpdatedAt = time.Now().UTC()
+		ticket.UpdatedAt = now
 		s.tickets[ticketID] = ticket
 		if err := s.persistLocked(); err != nil {
 			return Ticket{}, true, err
@@ -269,6 +298,9 @@ func (s *Service) Cancel(ticketID string) (Ticket, bool, error) {
 func (s *Service) Snapshot(queue QueueName, modeID contracts.MatchModeID) QueueSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.pruneExpiredLocked(s.nowUTC()) {
+		_ = s.persistLocked()
+	}
 
 	modeID = normalizeModeID(modeID)
 	snapshot := QueueSnapshot{Queue: queue, ModeID: modeID}
@@ -294,6 +326,9 @@ func (s *Service) Snapshot(queue QueueName, modeID contracts.MatchModeID) QueueS
 func (s *Service) List(queue QueueName, modeID contracts.MatchModeID) []Ticket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.pruneExpiredLocked(s.nowUTC()) {
+		_ = s.persistLocked()
+	}
 
 	modeID = normalizeModeID(modeID)
 	items := make([]Ticket, 0)
@@ -315,6 +350,9 @@ func (s *Service) List(queue QueueName, modeID contracts.MatchModeID) []Ticket {
 func (s *Service) Stats() ServiceStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.pruneExpiredLocked(s.nowUTC()) {
+		_ = s.persistLocked()
+	}
 
 	stats := ServiceStats{
 		Backend:      "memory",
@@ -423,7 +461,41 @@ func (s *Service) loadLocked() error {
 		tickets[ticketID] = ticket
 	}
 	s.tickets = tickets
+	if s.pruneExpiredLocked(s.nowUTC()) {
+		return s.persistLocked()
+	}
 	return nil
+}
+
+func (s *Service) nowUTC() time.Time {
+	if s.now == nil {
+		return time.Now().UTC()
+	}
+	return s.now().UTC()
+}
+
+func (s *Service) pruneExpiredLocked(now time.Time) bool {
+	changed := false
+	for ticketID, ticket := range s.tickets {
+		if !s.ticketRecoverableLocked(ticket, now) {
+			delete(s.tickets, ticketID)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (s *Service) ticketRecoverableLocked(ticket Ticket, now time.Time) bool {
+	switch ticket.Status {
+	case StatusQueued:
+		return true
+	case StatusMatched:
+		return ticket.UpdatedAt.Add(s.matchedRecoveryTTL).After(now)
+	case StatusCancelled:
+		return ticket.UpdatedAt.Add(s.cancelledTicketTTL).After(now)
+	default:
+		return false
+	}
 }
 
 func (s *Service) persistLocked() error {

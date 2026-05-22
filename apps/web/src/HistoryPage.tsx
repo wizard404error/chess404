@@ -1,6 +1,7 @@
 import React from 'react';
 import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
-import type { MatchFinishReason, MatchModeId } from '@chess404/contracts';
+import type { Board, MatchFinishReason, MatchModeId } from '@chess404/contracts';
+import BoardPreview from './components/match/BoardPreview';
 import type { MatchArchiveEntry } from './lib/platform-service';
 import {
   formatDateTime,
@@ -16,8 +17,6 @@ import {
   buildGuestHistoryUrl,
   copyTextToClipboard,
 } from './lib/session-storage';
-
-const FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
 function parseModeFilterValue(value: string): MatchModeId | '' {
   return OFFICIAL_MATCH_MODES.some((mode) => mode.id === value as MatchModeId) ? (value as MatchModeId) : '';
@@ -117,64 +116,6 @@ function replayButtonStyle(disabled: boolean): React.CSSProperties {
   };
 }
 
-
-function renderBoardPreview(board: MatchArchiveEntry['snapshot']['match']['board']): React.ReactElement {
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(8, 34px)',
-        gridTemplateRows: 'repeat(8, 34px)',
-        width: '272px',
-        border: '1px solid rgba(255,190,90,0.26)',
-        borderRadius: '10px',
-        overflow: 'hidden',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.26)',
-      }}
-    >
-      {board.flatMap((row, rowIndex) =>
-        row.map((piece, colIndex) => {
-          const dark = (rowIndex + colIndex) % 2 === 1;
-          const label = `${FILE_LABELS[colIndex]}${8 - rowIndex}`;
-          const src = piece ? `/pieces/${piece.color}_${piece.type}.svg` : null;
-          return (
-            <div
-              key={label}
-              title={label}
-              style={{
-                width: '34px',
-                height: '34px',
-                position: 'relative',
-                background: dark ? '#b88a62' : '#efd7af',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              {piece && (
-                <img
-                  src={src ?? ''}
-                  alt={`${piece.color} ${piece.type}`}
-                  style={{ width: '28px', height: '28px', objectFit: 'contain', pointerEvents: 'none' }}
-                />
-              )}
-              {colIndex === 0 && (
-                <span style={{ position: 'absolute', top: '2px', left: '3px', fontSize: '8px', fontWeight: 700, color: dark ? 'rgba(255,245,220,0.85)' : 'rgba(120,72,22,0.82)' }}>
-                  {8 - rowIndex}
-                </span>
-              )}
-              {rowIndex === 7 && (
-                <span style={{ position: 'absolute', right: '3px', bottom: '2px', fontSize: '8px', fontWeight: 700, color: dark ? 'rgba(255,245,220,0.85)' : 'rgba(120,72,22,0.82)' }}>
-                  {FILE_LABELS[colIndex]}
-                </span>
-              )}
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-}
 
 interface HistoryPageProps {
   focusMatchId?: string | null;
@@ -282,7 +223,7 @@ export default function HistoryPage({
   const snapshot = selectedMatch?.snapshot.match;
   const replayFrames = selectedMatch?.snapshot.replayFrames ?? [];
   const activeReplayFrame = replayFrames[selectedReplayIndex] ?? null;
-  const previewBoard = activeReplayFrame?.board ?? snapshot?.board ?? [];
+  const previewBoard: Board | null = activeReplayFrame?.board ?? snapshot?.board ?? null;
   const replayLastMove = activeReplayFrame && activeReplayFrame.moveHistory.length > 0
     ? activeReplayFrame.moveHistory[activeReplayFrame.moveHistory.length - 1]
     : null;
@@ -643,7 +584,7 @@ export default function HistoryPage({
                     <div><span style={{ color: 'rgba(255,232,180,0.58)' }}>Rules:</span> <span style={{ color: '#fff4d0' }}>{snapshot.rulesVersion}</span></div>
                   </div>
                   <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'center' }}>
-                    {renderBoardPreview(previewBoard)}
+                    {previewBoard ? <BoardPreview board={previewBoard} /> : null}
                   </div>
                   <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>

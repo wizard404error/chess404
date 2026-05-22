@@ -2,8 +2,8 @@ import React from 'react';
 import type { MatchModeId } from '@chess404/contracts';
 import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { GuestProfile } from './lib/platform-service';
-import type { QueueName, QueueTicket } from './lib/matchmaking-service';
-import { cancelTicket, enqueueGuest, fetchQueueTickets, fetchTicket } from './lib/matchmaking-service';
+import type { QueueName, QueueSnapshot, QueueTicket } from './lib/matchmaking-service';
+import { cancelTicket, enqueueGuest, fetchQueueSnapshots, fetchQueueTickets, fetchTicket } from './lib/matchmaking-service';
 import { ensureMatch, readStoredRoomMeta, resolveSeatSecret, writeStoredRoomMeta, type StoredRoomMeta } from './lib/match-service';
 
 interface QueuePageProps {
@@ -161,6 +161,7 @@ export default function QueuePage({
   const [whiteTicket, setWhiteTicket] = React.useState<QueueTicket | null>(null);
   const [blackTicket, setBlackTicket] = React.useState<QueueTicket | null>(null);
   const [queueTickets, setQueueTickets] = React.useState<QueueTicket[]>([]);
+  const [queueSnapshot, setQueueSnapshot] = React.useState<QueueSnapshot | null>(null);
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [restoringTickets, setRestoringTickets] = React.useState(true);
@@ -172,8 +173,18 @@ export default function QueuePage({
   const hostedRatedReady = whiteRatedReady;
 
   const refreshQueue = React.useCallback(async (queueName: QueueName, nextModeId: MatchModeId) => {
-    const tickets = await fetchQueueTickets(queueName, nextModeId);
+    const [tickets, snapshotPayload] = await Promise.all([
+      fetchQueueTickets(queueName, nextModeId),
+      fetchQueueSnapshots(queueName, nextModeId),
+    ]);
     setQueueTickets(tickets);
+    setQueueSnapshot(snapshotPayload.snapshots[0] ?? {
+      queue: queueName,
+      modeId: nextModeId,
+      queuedCount: 0,
+      matchedCount: 0,
+      cancelledCount: 0,
+    });
   }, []);
 
   React.useEffect(() => {
@@ -677,6 +688,17 @@ export default function QueuePage({
     );
   };
 
+  const visiblePlayerCount = hostedRuntime
+    ? (queueSnapshot?.queuedCount ?? 0) + (queueSnapshot?.matchedCount ?? 0)
+    : queueTickets.length;
+  const waitingCount = hostedRuntime
+    ? (queueSnapshot?.queuedCount ?? 0)
+    : queueTickets.filter((entry) => entry.status === 'queued').length;
+  const matchesFormingCount = hostedRuntime
+    ? (queueSnapshot?.matchedCount ?? 0)
+    : queueTickets.filter((entry) => entry.status === 'matched').length;
+  const showEmptyActivity = hostedRuntime ? visiblePlayerCount === 0 : queueTickets.length === 0;
+
   return (
     <div style={{
       display: 'grid',
@@ -839,22 +861,22 @@ export default function QueuePage({
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px' }}>
-          {queueTickets.length === 0 ? (
+          {showEmptyActivity ? (
             <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>No tickets in {queue} - {modeLabel(modeId)} yet.</div>
           ) : (
             <div style={{ display: 'grid', gap: '14px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
                 <div style={{ padding: '12px 14px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)' }}>
                   <div style={{ color: 'rgba(255,232,180,0.56)', fontSize: '10px', fontWeight: 800, letterSpacing: '1px', textTransform: 'uppercase' }}>Players visible</div>
-                  <div style={{ color: '#fff2c8', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{queueTickets.length}</div>
+                  <div style={{ color: '#fff2c8', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{visiblePlayerCount}</div>
                 </div>
                 <div style={{ padding: '12px 14px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)' }}>
                   <div style={{ color: 'rgba(255,232,180,0.56)', fontSize: '10px', fontWeight: 800, letterSpacing: '1px', textTransform: 'uppercase' }}>Waiting now</div>
-                  <div style={{ color: '#9ee6b8', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{queueTickets.filter((entry) => entry.status === 'queued').length}</div>
+                  <div style={{ color: '#9ee6b8', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{waitingCount}</div>
                 </div>
                 <div style={{ padding: '12px 14px', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)' }}>
                   <div style={{ color: 'rgba(255,232,180,0.56)', fontSize: '10px', fontWeight: 800, letterSpacing: '1px', textTransform: 'uppercase' }}>Matches forming</div>
-                  <div style={{ color: '#ffe4a0', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{queueTickets.filter((entry) => entry.status === 'matched').length}</div>
+                  <div style={{ color: '#ffe4a0', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{matchesFormingCount}</div>
                 </div>
               </div>
               {hostedRuntime ? (

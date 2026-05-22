@@ -779,6 +779,83 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 	}
 }
 
+func TestDisconnectGraceFinishesBothDisconnectedNoMoveMatchAsAbort(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
+	service.CreateMatch(contracts.CreateMatchRequest{
+		MatchID:      "presence_both_abort",
+		WhiteGuestID: "guest-white",
+		BlackGuestID: "guest-black",
+	}, now)
+
+	service.collectBroadcasts(now.Add(presenceHeartbeatTimeout + disconnectGracePeriod + time.Second))
+
+	finishedSnapshot, err := service.GetMatch("presence_both_abort")
+	if err != nil {
+		t.Fatalf("expected finished snapshot to load, got %v", err)
+	}
+	if finishedSnapshot.Match.Status != "finished" || finishedSnapshot.Match.Winner != "aborted" || finishedSnapshot.Match.FinishReason != "abort" {
+		t.Fatalf("expected both-disconnected no-move room to abort, got status=%q winner=%q reason=%q", finishedSnapshot.Match.Status, finishedSnapshot.Match.Winner, finishedSnapshot.Match.FinishReason)
+	}
+	lastEvent := finishedSnapshot.Events[len(finishedSnapshot.Events)-1]
+	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "abort" || lastEvent.Payload["disconnected"] != disconnectGraceBoth {
+		t.Fatalf("expected both-disconnected abort payload, got %#v", lastEvent)
+	}
+}
+
+func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "reconcile-archive.json")
+	archive, err := platform.NewMatchArchiveStore(archivePath)
+	if err != nil {
+		t.Fatalf("expected archive store to initialize, got %v", err)
+	}
+	defer func() { _ = archive.Close() }()
+
+	base := time.Now().Add(-2 * time.Hour).UTC()
+	service := NewServiceWithArchive(archive)
+	service.CreateMatch(contracts.CreateMatchRequest{
+		MatchID:      "reconcile_room",
+		WhiteGuestID: "guest-white",
+		BlackGuestID: "guest-black",
+	}, base)
+	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+		Type:     "make_move",
+		MatchID:  "reconcile_room",
+		PlayerID: "white_player",
+		From:     &contracts.Square{Row: 1, Col: 4},
+		To:       &contracts.Square{Row: 3, Col: 4},
+	}, base.Add(10*time.Second)); err != nil {
+		t.Fatalf("expected archived match move to succeed, got %v", err)
+	}
+
+	restartedArchive, err := platform.NewMatchArchiveStore(archivePath)
+	if err != nil {
+		t.Fatalf("expected archive reload to succeed, got %v", err)
+	}
+	defer func() { _ = restartedArchive.Close() }()
+	restarted := NewServiceWithArchive(restartedArchive)
+
+	stats := restarted.Stats()
+	if stats.LoadedMatches != 1 || stats.ActiveMatches != 1 {
+		t.Fatalf("expected unfinished archived room to preload on startup, got %#v", stats)
+	}
+
+	restarted.collectBroadcasts(time.Now().UTC())
+
+	reconciled, err := restarted.GetMatch("reconcile_room")
+	if err != nil {
+		t.Fatalf("expected reconciled match to load, got %v", err)
+	}
+	if reconciled.Match.Status != "finished" || reconciled.Match.Winner != "draw" || reconciled.Match.FinishReason != "abandon" {
+		t.Fatalf("expected restarted active room to reconcile into a draw abandon, got status=%q winner=%q reason=%q", reconciled.Match.Status, reconciled.Match.Winner, reconciled.Match.FinishReason)
+	}
+	lastEvent := reconciled.Events[len(reconciled.Events)-1]
+	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "abandon" || lastEvent.Payload["disconnected"] != disconnectGraceBoth {
+		t.Fatalf("expected reconciled finish payload to reflect both disconnected players, got %#v", lastEvent)
+	}
+}
+
 func TestPlayCardCreatesPendingFreezeSelection(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)

@@ -1,12 +1,11 @@
 import React from 'react';
 import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { MatchModeId } from '@chess404/contracts';
+import BoardPreview from './components/match/BoardPreview';
 import { fetchArchivedMatches, type MatchArchiveEntry, type PublicMatchStatusFilter } from './lib/platform-service';
 import { formatDateTime, formatMatchPlayers, formatMatchResult, formatModeLabel } from './lib/display';
 import { buildLiveMatchUrl, buildReplayPageUrl, copyTextToClipboard } from './lib/session-storage';
 import { modeLabel, queueLabel } from './lib/match-labels';
-
-const FILE_LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
 interface WatchPageProps {
   onWatchMatch?: (matchId: string) => void;
@@ -21,53 +20,6 @@ function resultLabel(entry: MatchArchiveEntry): string {
     finishReason: entry.finishReason,
   });
 }
-
-function renderBoardPreview(board: MatchArchiveEntry['snapshot']['match']['board']): React.ReactElement {
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(8, 1fr)',
-        width: '100%',
-        maxWidth: '240px',
-        aspectRatio: '1',
-        borderRadius: '14px',
-        overflow: 'hidden',
-        border: '1px solid rgba(255,190,90,0.2)',
-        boxShadow: '0 10px 28px rgba(0,0,0,0.22)',
-      }}
-    >
-      {board.flatMap((row, rowIndex) =>
-        row.map((piece, colIndex) => {
-          const dark = (rowIndex + colIndex) % 2 === 1;
-          const src = piece ? `/pieces/${piece.color}_${piece.type}.svg` : null;
-          const square = `${FILE_LABELS[colIndex]}${8 - rowIndex}`;
-          return (
-            <div
-              key={square}
-              style={{
-                background: dark ? '#a97853' : '#ead4ad',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                position: 'relative',
-              }}
-            >
-              {piece ? (
-                <img
-                  src={src ?? ''}
-                  alt={`${piece.color} ${piece.type}`}
-                  style={{ width: '78%', height: '78%', objectFit: 'contain', pointerEvents: 'none' }}
-                />
-              ) : null}
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-}
-
 export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps): React.ReactElement {
   const [status, setStatus] = React.useState<PublicMatchStatusFilter>('active');
   const [modeId, setModeId] = React.useState<MatchModeId | ''>('');
@@ -302,7 +254,7 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0 2px' }}>
-                    {renderBoardPreview(entry.snapshot.match.board)}
+                    <BoardPreview board={entry.snapshot.match.board} />
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
