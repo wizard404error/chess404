@@ -1716,9 +1716,12 @@ export function useMatchEngine(props: UseMatchEngineProps) {
                       black: joined.claim.seatColor === 'black' ? joined.claim : undefined,
                     }
                   : null);
+                if (!joined.claim && joined.seatColor) {
+                  setViewerSeat(joined.seatColor);
+                }
                 snapshot = joined.snapshot;
               } catch (joinErr) {
-                if (!(joinErr instanceof Error) || !/no open seats|finished|forbidden|conflict/i.test(joinErr.message)) {
+                if (!(joinErr instanceof Error) || !/no open seats|finished|forbidden|conflict|unknown match/i.test(joinErr.message)) {
                   throw joinErr;
                 }
                 snapshot = await fetchMatch(restoredMatchId);
@@ -1936,6 +1939,16 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       };
       authoritativeSeatSecretsRef.current = nextSeatSecrets;
       applyAuthoritativeSnapshot(snapshot);
+      if (hostedRuntime && !viewerSeat && snapshot.match.status !== 'waiting') {
+        const hostedId = whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId;
+        if (hostedId) {
+          if (snapshot.match.whiteGuestId === hostedId) {
+            setViewerSeat('white');
+          } else if (snapshot.match.blackGuestId === hostedId) {
+            setViewerSeat('black');
+          }
+        }
+      }
     } catch (err) {
       if (authoritativeBootstrapRef.current !== bootstrapId) return;
       const message = err instanceof Error ? err.message : 'Failed to create backend match';

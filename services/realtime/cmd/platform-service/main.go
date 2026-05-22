@@ -2350,7 +2350,11 @@ func filterArchivedMatchesByMode(matches []platform.MatchArchiveEntry, modeID co
 func filterArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, status string) []platform.MatchArchiveEntry {
 	filtered := make([]platform.MatchArchiveEntry, 0, len(matches))
 	for _, entry := range matches {
-		if strings.TrimSpace(entry.Status) != status {
+		entryStatus := strings.TrimSpace(entry.Status)
+		if status == "active" && entryStatus == "waiting" {
+			continue
+		}
+		if entryStatus != status {
 			continue
 		}
 		filtered = append(filtered, entry)

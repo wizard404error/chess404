@@ -969,12 +969,21 @@ func createGatewayPrivateMatchForSession(
 
 	claim, claimErr := bootstrapMatchClaimForSide(config, client, snapshot.Match.MatchID, session)
 	if claimErr != "" {
-		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(claimErr)
+		log.Printf("warning: failed to bootstrap claim for private match %s: %s", snapshot.Match.MatchID, claimErr)
+	}
+
+	seatColor := ""
+	if claim != nil {
+		seatColor = claim.SeatColor
+	} else if preferredSeat == "black" {
+		seatColor = "black"
+	} else {
+		seatColor = "white"
 	}
 
 	return GatewayPrivateMatchResponse{
 		MatchID:            snapshot.Match.MatchID,
-		SeatColor:          claim.SeatColor,
+		SeatColor:          seatColor,
 		WaitingForOpponent: snapshot.Match.Status == "waiting",
 		Snapshot:           snapshot,
 		Claim:              claim,
@@ -1012,12 +1021,17 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 
 	claim, claimErr := bootstrapMatchClaimForSide(config, client, matchID, session)
 	if claimErr != "" {
-		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(claimErr)
+		log.Printf("warning: failed to bootstrap claim for joined match %s: %s", matchID, claimErr)
+	}
+
+	seatColor := joined.SeatColor
+	if claim != nil {
+		seatColor = claim.SeatColor
 	}
 
 	return GatewayPrivateMatchResponse{
 		MatchID:            joined.Match.Match.MatchID,
-		SeatColor:          claim.SeatColor,
+		SeatColor:          seatColor,
 		WaitingForOpponent: joined.WaitingForOpponent,
 		Snapshot:           joined.Match,
 		Claim:              claim,
