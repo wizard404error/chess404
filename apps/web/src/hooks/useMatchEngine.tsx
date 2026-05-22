@@ -1677,6 +1677,9 @@ export function useMatchEngine(props: UseMatchEngineProps) {
         return;
       }
       let roomMeta = restoredMatchId ? readStoredRoomMeta(restoredMatchId) : null;
+      if (roomMeta?.viewerSeat) {
+        setViewerSeat(roomMeta.viewerSeat);
+      }
       let nextSeatSecrets = {
         white: roomMeta?.whitePlayerSecret ?? null,
         black: roomMeta?.blackPlayerSecret ?? null,
@@ -1939,7 +1942,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       };
       authoritativeSeatSecretsRef.current = nextSeatSecrets;
       applyAuthoritativeSnapshot(snapshot);
-      if (hostedRuntime && !viewerSeat && snapshot.match.status !== 'waiting') {
+      if (hostedRuntime && !viewerSeat) {
         const hostedId = whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId;
         if (hostedId) {
           if (snapshot.match.whiteGuestId === hostedId) {
