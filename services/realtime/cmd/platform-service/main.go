@@ -325,6 +325,55 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		_ = json.NewEncoder(w).Encode(claim)
 	})
 
+	mux.HandleFunc("/api/platform/match-claims/active", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			GuestID       string `json:"guestId"`
+			SessionSecret string `json:"sessionSecret"`
+			SessionToken  string `json:"sessionToken"`
+		}
+		if r.Body != nil {
+			defer r.Body.Close()
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, `{"error":"invalid active match claim payload"}`, http.StatusBadRequest)
+				return
+			}
+		}
+
+		session, err := resumeGuestFromPayload(guests, payload.GuestID, payload.SessionSecret, payload.SessionToken)
+		if err != nil {
+			switch err {
+			case platform.ErrUnauthorizedGuestSession:
+				http.Error(w, `{"error":"unauthorized guest session"}`, http.StatusUnauthorized)
+			case os.ErrNotExist:
+				http.Error(w, `{"error":"unknown guest"}`, http.StatusNotFound)
+			default:
+				http.Error(w, `{"error":"failed to resume guest session"}`, http.StatusBadRequest)
+			}
+			return
+		}
+
+		claim, ok := claims.FindByGuest(session.Guest.GuestID)
+		if !ok {
+			http.Error(w, `{"error":"no active match claim"}`, http.StatusNotFound)
+			return
+		}
+		if strings.TrimSpace(claim.PlayerSecret) == "" {
+			claim.PlayerSecret = session.SessionSecret
+		}
+		if err := claims.Put(claim); err == nil {
+			if renewedClaim, renewed := claims.Get(claim.MatchID, claim.GuestID); renewed {
+				claim = renewedClaim
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(claim)
+	})
+
 	mux.HandleFunc("/api/platform/accounts/claim", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)

@@ -11,6 +11,9 @@ interface QueuePageProps {
   blackProfile: GuestProfile | null;
   preferredQueue?: QueueName | null;
   preferredModeId?: MatchModeId | null;
+  recoveredWhiteTicket?: QueueTicket | null;
+  recoveredBlackTicket?: QueueTicket | null;
+  recoveryReady?: boolean;
   embedded?: boolean;
 }
 
@@ -147,6 +150,9 @@ export default function QueuePage({
   blackProfile,
   preferredQueue = null,
   preferredModeId = null,
+  recoveredWhiteTicket = null,
+  recoveredBlackTicket = null,
+  recoveryReady = false,
   embedded = false,
 }: QueuePageProps): React.ReactElement {
   const [hostedRuntime, setHostedRuntime] = React.useState(false);
@@ -163,6 +169,7 @@ export default function QueuePage({
   const blackStoredAccount = readStoredAccountSession('black');
   const whiteRatedReady = Boolean((whiteStoredAccount.accountId ?? '').trim() && (whiteStoredAccount.sessionToken ?? '').trim());
   const blackRatedReady = Boolean((blackStoredAccount.accountId ?? '').trim() && (blackStoredAccount.sessionToken ?? '').trim());
+  const hostedRatedReady = whiteRatedReady;
 
   const refreshQueue = React.useCallback(async (queueName: QueueName, nextModeId: MatchModeId) => {
     const tickets = await fetchQueueTickets(queueName, nextModeId);
@@ -267,6 +274,49 @@ export default function QueuePage({
   React.useEffect(() => {
     writeStoredTicketRef('black', blackTicket);
   }, [blackTicket]);
+
+  React.useEffect(() => {
+    if (!recoveryReady) {
+      return;
+    }
+
+    const nextWhite = recoveredWhiteTicket && recoveredWhiteTicket.status === 'queued' ? recoveredWhiteTicket : null;
+    const nextBlack = recoveredBlackTicket && recoveredBlackTicket.status === 'queued' ? recoveredBlackTicket : null;
+
+    setWhiteTicket(current => {
+      if (nextWhite) {
+        if (current?.ticketId === nextWhite.ticketId && current.status === nextWhite.status) {
+          return current;
+        }
+        return nextWhite;
+      }
+      if (current?.status === 'queued') {
+        clearStoredTicketRef('white');
+        return null;
+      }
+      return current;
+    });
+
+    setBlackTicket(current => {
+      if (nextBlack) {
+        if (current?.ticketId === nextBlack.ticketId && current.status === nextBlack.status) {
+          return current;
+        }
+        return nextBlack;
+      }
+      if (current?.status === 'queued') {
+        clearStoredTicketRef('black');
+        return null;
+      }
+      return current;
+    });
+
+    const activeTicket = nextWhite ?? nextBlack;
+    if (activeTicket) {
+      setQueue(activeTicket.queue);
+      setModeId(normalizeModeId(activeTicket.modeId));
+    }
+  }, [recoveryReady, recoveredWhiteTicket, recoveredBlackTicket]);
 
   React.useEffect(() => {
     if (!hostedRuntime) {
@@ -426,6 +476,13 @@ export default function QueuePage({
     }
   }, [whiteTicket, blackTicket, queue, modeId, refreshQueue]);
 
+  const openAccount = React.useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.location.href = '/account';
+  }, []);
+
   const handleOpenMatch = React.useCallback(async (ticket: QueueTicket) => {
     if (!ticket.assignedRoom) {
       return;
@@ -485,25 +542,32 @@ export default function QueuePage({
   ): React.ReactElement => {
     const ratedReady = side === 'white' ? whiteRatedReady : blackRatedReady;
     const ratedBlocked = queue === 'rated' && !ratedReady;
+    const playerTitle = title ?? (hostedRuntime ? 'Your player' : profile?.displayName ?? 'Loading...');
+    const cardBackground = hostedRuntime
+      ? 'linear-gradient(180deg, rgba(16,28,44,0.78) 0%, rgba(8,16,28,0.9) 100%)'
+      : side === 'white'
+        ? 'linear-gradient(180deg, rgba(10,40,18,0.78) 0%, rgba(8,20,12,0.88) 100%)'
+        : 'linear-gradient(180deg, rgba(34,12,58,0.78) 0%, rgba(16,10,32,0.88) 100%)';
+    const cardBorder = hostedRuntime
+      ? '1px solid rgba(120,190,255,0.22)'
+      : side === 'white'
+        ? '1px solid rgba(60,220,110,0.24)'
+        : '1px solid rgba(180,110,255,0.24)';
 
     return (
       <div
         style={{
           padding: '18px',
           borderRadius: '14px',
-          background: side === 'white'
-            ? 'linear-gradient(180deg, rgba(10,40,18,0.78) 0%, rgba(8,20,12,0.88) 100%)'
-            : 'linear-gradient(180deg, rgba(34,12,58,0.78) 0%, rgba(16,10,32,0.88) 100%)',
-          border: side === 'white'
-            ? '1px solid rgba(60,220,110,0.24)'
-            : '1px solid rgba(180,110,255,0.24)',
+          background: cardBackground,
+          border: cardBorder,
           boxShadow: '0 12px 36px rgba(0,0,0,0.28)',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
         <div>
-          <div style={{ color: side === 'white' ? '#dcffe9' : '#eedcff', fontSize: '15px', fontWeight: 800 }}>{title ?? profile?.displayName ?? 'Loading...'}</div>
-          <div style={{ color: side === 'white' ? '#7ce3aa' : '#c9a8ff', fontSize: '12px', marginTop: '4px' }}>♟ {profile?.rating ?? 1200}</div>
+          <div style={{ color: hostedRuntime ? '#e8f2ff' : side === 'white' ? '#dcffe9' : '#eedcff', fontSize: '15px', fontWeight: 800 }}>{playerTitle}</div>
+          <div style={{ color: hostedRuntime ? '#9ed0ff' : side === 'white' ? '#7ce3aa' : '#c9a8ff', fontSize: '12px', marginTop: '4px' }}>Rating {profile?.rating ?? 1200}</div>
         </div>
         <div style={{
           padding: '4px 9px',
@@ -528,10 +592,10 @@ export default function QueuePage({
             {ticket.status === 'queued' ? <div>Searching for another player in this official mode now.</div> : null}
             {ticket.seatColor && <div>Seat: {ticket.seatColor === 'white' ? 'White pieces' : 'Black pieces'}</div>}
             {ticket.opponentName && <div>Opponent: {ticket.opponentName}</div>}
-            {ticket.assignedRoom && <div>Your match room is ready and opening.</div>}
+            {ticket.assignedRoom && <div>Your live match is ready.</div>}
           </>
         ) : ratedBlocked ? (
-          <div>Rated queue requires this player seat to be signed in with a Chess404 account before it can join.</div>
+          <div>Rated quick pair is locked until this player is signed in with a Chess404 account.</div>
         ) : (
           <div>{hostedRuntime ? 'Not in queue yet. Choose a lane and join when you are ready to be paired.' : 'Not in queue yet. Choose a lane and create a local matchmaking ticket when ready.'}</div>
         )}
@@ -556,7 +620,7 @@ export default function QueuePage({
           >
             {!profile
               ? 'Preparing player...'
-              : `Join ${queue} · ${modeLabel(modeId)}`}
+              : `Join ${queue === 'rated' ? 'Rated' : 'Casual'} - ${modeLabel(modeId)}`}
           </button>
         ) : ticket.status === 'queued' ? (
           <button
@@ -588,7 +652,7 @@ export default function QueuePage({
               textAlign: 'center',
             }}
           >
-            Matched — opening game...
+            Matched - opening game...
           </div>
         ) : (
           <button
@@ -637,12 +701,12 @@ export default function QueuePage({
           <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Queue Control</div>
           <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>
             {hostedRuntime
-              ? 'Online queue control for this browser session. One browser now behaves like one player by default.'
+              ? 'Quick pair for one hosted player. Casual stays open to guests, and rated unlocks after account sign-in.'
               : 'Local platform queue tickets with simple auto-match when a second player joins.'}
           </div>
           {restoringTickets && (
             <div style={{ color: 'rgba(255,232,180,0.62)', fontSize: '11px', marginTop: '8px' }}>
-              Resuming saved queue tickets from this browser...
+              Resuming queue state from backend recovery...
             </div>
           )}
           <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
@@ -667,7 +731,7 @@ export default function QueuePage({
                   opacity: restoringTickets ? 0.7 : 1,
                 }}
               >
-                {name}
+                {hostedRuntime && name === 'rated' && !hostedRatedReady ? 'rated (sign in)' : name}
               </button>
             ))}
           </div>
@@ -711,7 +775,27 @@ export default function QueuePage({
               fontSize: '11px',
               lineHeight: 1.5,
             }}>
-              Rated queue is account-only for launch-quality matchmaking. Sign in each player seat before joining rated. Casual queue still allows guest play.
+              {hostedRuntime
+                ? 'Rated quick pair is account-only for launch. Sign in once, then come back here to queue rated with the same hosted player.'
+                : 'Rated queue is account-only for launch-quality matchmaking. Sign in each player seat before joining rated. Casual queue still allows guest play.'}
+              {hostedRuntime && !hostedRatedReady ? (
+                <button
+                  onClick={openAccount}
+                  style={{
+                    marginTop: '10px',
+                    padding: '9px 12px',
+                    borderRadius: '9px',
+                    border: '1px solid rgba(120,190,255,0.28)',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: '#eef4ff',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Sign in to join rated
+                </button>
+              ) : null}
             </div>
           )}
         </div>
@@ -756,7 +840,7 @@ export default function QueuePage({
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px' }}>
           {queueTickets.length === 0 ? (
-            <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>No tickets in {queue} · {modeLabel(modeId)} yet.</div>
+            <div style={{ color: 'rgba(255,232,180,0.65)', fontSize: '13px' }}>No tickets in {queue} - {modeLabel(modeId)} yet.</div>
           ) : (
             <div style={{ display: 'grid', gap: '14px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
@@ -773,36 +857,50 @@ export default function QueuePage({
                   <div style={{ color: '#ffe4a0', fontSize: '22px', fontWeight: 900, marginTop: '6px' }}>{queueTickets.filter((entry) => entry.status === 'matched').length}</div>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
-              {queueTickets.map(ticket => (
-                <div
-                  key={ticket.ticketId}
-                  style={{
-                    padding: '14px',
-                    borderRadius: '12px',
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,165,40,0.08)',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
-                    <div style={{ color: '#fff2c8', fontWeight: 800, fontSize: '12px' }}>
-                      {ticket.displayName?.trim() || (ticket.status === 'matched' ? 'Matched player' : 'Queued player')}
-                    </div>
-                    <div style={{ color: ticket.status === 'matched' ? '#ffe4a0' : ticket.status === 'queued' ? '#9ee6b8' : 'rgba(255,255,255,0.7)', fontSize: '10px', fontWeight: 800, textTransform: 'uppercase' }}>
-                      {ticket.status === 'matched' ? 'match ready' : ticket.status}
-                    </div>
-                  </div>
-                  <div style={{ marginTop: '8px', color: 'rgba(255,232,180,0.72)', fontSize: '12px', lineHeight: 1.5 }}>
-                    <div>Lane: {ticket.queue === 'rated' ? 'Rated Quick Pair' : 'Casual Quick Pair'}</div>
-                    <div>Mode: {modeLabel(ticket.modeId)}</div>
-                    <div>Rating: {ticket.rating}</div>
-                    <div>{ticket.status === 'matched' ? 'Paired' : 'Queued'}: {formatDateTime(ticket.updatedAt)}</div>
-                    {ticket.opponentName && <div>Opponent: {ticket.opponentName}</div>}
-                    {ticket.assignedRoom && <div>Board opening now.</div>}
-                  </div>
+              {hostedRuntime ? (
+                <div style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,165,40,0.08)',
+                  color: 'rgba(255,232,180,0.72)',
+                  fontSize: '12px',
+                  lineHeight: 1.6,
+                }}>
+                  Hosted play keeps this activity view high-level on purpose. You can see whether the lane is moving without exposing raw player ticket diagnostics.
                 </div>
-              ))}
-              </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+                {queueTickets.map(ticket => (
+                  <div
+                    key={ticket.ticketId}
+                    style={{
+                      padding: '14px',
+                      borderRadius: '12px',
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,165,40,0.08)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                      <div style={{ color: '#fff2c8', fontWeight: 800, fontSize: '12px' }}>
+                        {ticket.displayName?.trim() || (ticket.status === 'matched' ? 'Matched player' : 'Queued player')}
+                      </div>
+                      <div style={{ color: ticket.status === 'matched' ? '#ffe4a0' : ticket.status === 'queued' ? '#9ee6b8' : 'rgba(255,255,255,0.7)', fontSize: '10px', fontWeight: 800, textTransform: 'uppercase' }}>
+                        {ticket.status === 'matched' ? 'match ready' : ticket.status}
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '8px', color: 'rgba(255,232,180,0.72)', fontSize: '12px', lineHeight: 1.5 }}>
+                      <div>Lane: {ticket.queue === 'rated' ? 'Rated Quick Pair' : 'Casual Quick Pair'}</div>
+                      <div>Mode: {modeLabel(ticket.modeId)}</div>
+                      <div>Rating: {ticket.rating}</div>
+                      <div>{ticket.status === 'matched' ? 'Paired' : 'Queued'}: {formatDateTime(ticket.updatedAt)}</div>
+                      {ticket.opponentName && <div>Opponent: {ticket.opponentName}</div>}
+                      {ticket.assignedRoom && <div>Board opening now.</div>}
+                    </div>
+                  </div>
+                ))}
+                </div>
+              )}
             </div>
           )}
         </div>

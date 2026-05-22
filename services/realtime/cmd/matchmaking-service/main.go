@@ -79,6 +79,21 @@ func main() {
 	mux.HandleFunc("/api/queues/tickets", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
+			guestID := strings.TrimSpace(r.URL.Query().Get("guestId"))
+			accountID := strings.TrimSpace(r.URL.Query().Get("accountId"))
+			if guestID != "" || accountID != "" {
+				ticket, ok := service.FindActiveTicket(guestID, accountID)
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ticket":   ticket,
+					"snapshot": service.Snapshot(ticket.Queue, ticket.ModeID),
+				})
+				return
+			}
 			queue := parseQueueName(r.URL.Query().Get("queue"))
 			modeID := parseModeID(r.URL.Query().Get("modeId"))
 			w.Header().Set("Content-Type", "application/json")
@@ -112,10 +127,10 @@ func main() {
 			}
 			modeID := parseModeID(payload.ModeID)
 			queue := parseQueueName(payload.Queue)
-			
-			log.Printf("[matchmaking] Enqueue request: guest=%s, queue=%s, mode=%s, rating=%d", 
+
+			log.Printf("[matchmaking] Enqueue request: guest=%s, queue=%s, mode=%s, rating=%d",
 				payload.GuestID, queue, modeID, payload.Rating)
-			
+
 			ticket, err := service.EnqueueWithAccount(
 				queue,
 				modeID,
@@ -141,10 +156,10 @@ func main() {
 				http.Error(w, fmt.Sprintf(`{"error":"failed to persist queue ticket: %s"}`, err.Error()), http.StatusInternalServerError)
 				return
 			}
-			
-			log.Printf("[matchmaking] Created ticket %s for guest %s (status=%s, room=%s)", 
+
+			log.Printf("[matchmaking] Created ticket %s for guest %s (status=%s, room=%s)",
 				ticket.TicketID, ticket.GuestID, ticket.Status, ticket.AssignedRoom)
-			
+
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ticket":   ticket,
@@ -253,7 +268,7 @@ func resolveInternalServiceURL(explicit string, fallback string) string {
 func openMatchmakingService() (*matchmaking.Service, error) {
 	matchServiceURL := matchmakingMatchServiceURL()
 	log.Printf("[matchmaking] Initializing with match service URL: %s", matchServiceURL)
-	
+
 	serviceCreator := &httpMatchCreator{
 		baseURL: matchServiceURL,
 		client:  &http.Client{Timeout: 3 * time.Second},
@@ -265,7 +280,7 @@ func openMatchmakingService() (*matchmaking.Service, error) {
 	)
 	backend := strings.ToLower(envOrDefault("MATCHMAKING_TICKET_STORE_BACKEND", "file"))
 	log.Printf("[matchmaking] Using ticket store backend: %s", backend)
-	
+
 	switch backend {
 	case "sqlite":
 		service, err = matchmaking.NewSQLitePersistentService(matchmakingTicketStoreSQLitePath())
@@ -368,11 +383,11 @@ func (c *httpMatchCreator) CreateMatch(assignment matchmaking.MatchAssignment) e
 		log.Printf("[matchmaking] ERROR: failed to marshal match payload for room %s: %v", assignment.RoomID, err)
 		return err
 	}
-	
+
 	targetURL := c.baseURL + "/api/matches"
-	log.Printf("[matchmaking] Creating match room %s at %s (white=%s, black=%s, queue=%s, mode=%s)", 
+	log.Printf("[matchmaking] Creating match room %s at %s (white=%s, black=%s, queue=%s, mode=%s)",
 		assignment.RoomID, targetURL, assignment.WhiteGuestID, assignment.BlackGuestID, assignment.Queue, assignment.ModeID)
-	
+
 	req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[matchmaking] ERROR: failed to create HTTP request for room %s: %v", assignment.RoomID, err)
@@ -385,13 +400,13 @@ func (c *httpMatchCreator) CreateMatch(assignment matchmaking.MatchAssignment) e
 		return err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := json.Marshal(payload)
 		log.Printf("[matchmaking] ERROR: match service create failed for room %s with status %d, payload: %s", assignment.RoomID, resp.StatusCode, string(bodyBytes))
 		return fmt.Errorf("match service create failed with status %d", resp.StatusCode)
 	}
-	
+
 	log.Printf("[matchmaking] Successfully created match room %s", assignment.RoomID)
 	return nil
 }

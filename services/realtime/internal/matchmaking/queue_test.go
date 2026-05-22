@@ -139,6 +139,29 @@ func TestQueueRejectsSecondActiveTicketInDifferentQueue(t *testing.T) {
 	}
 }
 
+func TestQueueFindActiveTicketSupportsGuestAndAccountRecovery(t *testing.T) {
+	service := NewService()
+
+	guestTicket, err := service.EnqueueWithAccount(QueueRated, contracts.MatchModeOpenCards, "guest_a", 1200, "Alpha", "acct_alpha")
+	if err != nil {
+		t.Fatalf("enqueue guest ticket: %v", err)
+	}
+	accountTicket, err := service.EnqueueWithAccount(QueueCasual, contracts.MatchModeOpenCards, "guest_b", 1210, "Bravo", "acct_bravo")
+	if err != nil {
+		t.Fatalf("enqueue account ticket: %v", err)
+	}
+
+	foundByGuest, ok := service.FindActiveTicket("guest_a", "")
+	if !ok || foundByGuest.TicketID != guestTicket.TicketID {
+		t.Fatalf("expected guest lookup to recover the active ticket, got %#v ok=%v", foundByGuest, ok)
+	}
+
+	foundByAccount, ok := service.FindActiveTicket("", "acct_bravo")
+	if !ok || foundByAccount.TicketID != accountTicket.TicketID {
+		t.Fatalf("expected account lookup to recover the active ticket, got %#v ok=%v", foundByAccount, ok)
+	}
+}
+
 func TestQueueStorePersistsAcrossReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tickets.json")
 

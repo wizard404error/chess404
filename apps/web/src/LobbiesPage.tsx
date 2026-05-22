@@ -156,7 +156,7 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
         <div style={{ padding: '20px', borderRadius: '18px', background: 'rgba(10,14,28,0.92)', border: '1px solid rgba(120,150,255,0.14)' }}>
           <div style={{ color: '#ffffff', fontSize: '16px', fontWeight: 800 }}>Invite Flow</div>
           <div style={{ marginTop: '8px', color: 'rgba(214,224,255,0.7)', fontSize: '13px', lineHeight: 1.6 }}>
-            Share the room link with a friend. The first browser already owns one seat. The second device opens the link and automatically takes the empty seat.
+            Share the room link with a friend. The first browser already owns one seat. The second device opens the canonical match route and claims the empty seat.
           </div>
 
           {created ? (
@@ -167,12 +167,12 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
               </div>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                 <button onClick={() => { void copyInviteLink(); }} style={secondaryButtonStyle}>Copy Invite Link</button>
-                <button onClick={openRoom} style={primaryButtonStyle}>Open Waiting Room</button>
+                <button onClick={openRoom} style={primaryButtonStyle}>Open Match Route</button>
               </div>
               <div style={{ color: created.waitingForOpponent ? '#9de4b0' : '#ffd487', fontSize: '12px', lineHeight: 1.6 }}>
                 {created.waitingForOpponent
                   ? 'Room is live and waiting for the second seat to join.'
-                  : 'Both seats are already claimed.'}
+                  : 'Both seats are already claimed. New visitors will spectate or see the room as full.'}
               </div>
             </div>
           ) : (

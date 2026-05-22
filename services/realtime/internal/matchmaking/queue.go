@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -241,6 +242,12 @@ func (s *Service) Get(ticketID string) (Ticket, bool) {
 	return ticket, ok
 }
 
+func (s *Service) FindActiveTicket(guestID, accountID string) (Ticket, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.findActiveTicketLocked(guestID, accountID)
+}
+
 func (s *Service) Cancel(ticketID string) (Ticket, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -355,10 +362,25 @@ func (s *Service) findMatchCandidateLocked(queue QueueName, modeID contracts.Mat
 }
 
 func (s *Service) findActiveTicketForGuestLocked(guestID string) (Ticket, bool) {
+	return s.findActiveTicketLocked(guestID, "")
+}
+
+func (s *Service) findActiveTicketLocked(guestID, accountID string) (Ticket, bool) {
+	guestID = strings.TrimSpace(guestID)
+	accountID = strings.TrimSpace(accountID)
 	var latest Ticket
 	found := false
 	for _, ticket := range s.tickets {
-		if ticket.GuestID != guestID || ticket.Status == StatusCancelled {
+		if ticket.Status == StatusCancelled {
+			continue
+		}
+		if guestID != "" && ticket.GuestID != guestID {
+			continue
+		}
+		if guestID == "" && accountID != "" && strings.TrimSpace(ticket.AccountID) != accountID {
+			continue
+		}
+		if guestID == "" && accountID == "" {
 			continue
 		}
 		if !found || ticket.UpdatedAt.After(latest.UpdatedAt) {

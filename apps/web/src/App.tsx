@@ -79,7 +79,7 @@ import {
   type MatchSeatClaim,
   touchAccountPresence,
 } from './lib/platform-service';
-import type { QueueName } from './lib/matchmaking-service';
+import type { QueueName, QueueTicket } from './lib/matchmaking-service';
 import {
   modeLabel,
   queueLabel,
@@ -202,6 +202,10 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
   const [accountActionQueryDetected, setAccountActionQueryDetected] = React.useState(false);
   const [matchDestinationNotice, setMatchDestinationNotice] = React.useState('');
   const [queueLaunchIntent, setQueueLaunchIntent] = React.useState<{ modeId: MatchModeId; queue: QueueName } | null>(null);
+  const [bootstrapQueueRecovery, setBootstrapQueueRecovery] = React.useState<{
+    white: QueueTicket | null;
+    black: QueueTicket | null;
+  } | null>(null);
   const openedBoardMatchRef = React.useRef<string | null>(null);
   const [communityFocusGuestId, setCommunityFocusGuestId] = React.useState<string | null>(null);
   const [historyFocusMatchId, setHistoryFocusMatchId] = React.useState<string | null>(null);
@@ -237,6 +241,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     pathname,
     profileFocusHandle,
     profileQueryReady,
+    bootstrapQueueRecovery,
     queueLaunchIntent,
     router,
     setAccountActionQueryDetected,
@@ -255,6 +260,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     setMatchSeatMeta,
     setProfileFocusHandle,
     setProfileQueryReady,
+    setBootstrapQueueRecovery,
     setQueueLaunchIntent,
     setSecondaryMenuOpen,
     setSocialAlert,
@@ -922,6 +928,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
           blackProfile={blackProfile}
           preferredQueue={queueLaunchIntent?.queue}
           preferredModeId={queueLaunchIntent?.modeId}
+          queueRecovery={bootstrapQueueRecovery}
           displayName={whiteProfile?.displayName ?? null}
           identity={{
             guestId: readStoredGuestIdentity('white').guestId,
@@ -936,7 +943,11 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
           boardStatusLabel={boardStatusLabel}
           viewerSeat={viewerSeat}
           matchDestinationNotice={matchDestinationNotice}
-          onReturnToMatch={() => setActivePage('Match')}
+          onReturnToMatch={() => {
+            if (authoritativeMatchId) {
+              void openLiveMatch(authoritativeMatchId);
+            }
+          }}
           onCopyMatchLink={(matchId) => { void copyLiveMatchLink(matchId); }}
         />
       ) : activePage === 'History' ? (
