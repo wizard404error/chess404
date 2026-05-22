@@ -133,6 +133,26 @@ func (s *MatchClaimStore) GetByToken(matchID, claimToken string) (MatchSeatClaim
 	return MatchSeatClaim{}, false
 }
 
+func (s *MatchClaimStore) FindByGuest(guestID string) (MatchSeatClaim, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	s.pruneExpiredLocked(now)
+
+	var latest MatchSeatClaim
+	found := false
+	for _, claim := range s.claims {
+		if claim.GuestID != guestID {
+			continue
+		}
+		if !found || claim.ExpiresAt.After(latest.ExpiresAt) {
+			latest = claim
+			found = true
+		}
+	}
+	return latest, found
+}
+
 func (s *MatchClaimStore) Put(claim MatchSeatClaim) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -314,6 +314,142 @@ func TestGatewayPostBootstrapReturnsGuestSessionsAndSeatClaims(t *testing.T) {
 	}
 }
 
+func TestGatewayBootstrapRecoversQueueTicketsAndActiveMatch(t *testing.T) {
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "match-service"})
+	}))
+	defer matchServer.Close()
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "platform-service"})
+		case "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"profiles": true, "ratings": true})
+		case "/api/platform/guest-sessions":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       payload["guestId"],
+					"displayName":   "Guest " + payload["guestId"],
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": payload["sessionSecret"],
+			})
+		case "/api/platform/match-claims/active":
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if payload["guestId"] != "guest_white" {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      "direct-room-44",
+				"guestId":      "guest_white",
+				"seatColor":    "white",
+				"playerId":     "player_white",
+				"playerSecret": "claim-secret",
+				"claimToken":   "claim-token",
+				"queue":        "direct",
+				"modeId":       "hidden_cards",
+				"whiteGuestId": "guest_white",
+				"blackGuestId": "guest_black",
+				"whiteName":    "Guest guest_white",
+				"blackName":    "Guest guest_black",
+				"status":       "waiting",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchmakingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "matchmaking-service"})
+		case "/api/queues/default":
+			_ = json.NewEncoder(w).Encode(map[string]any{"queue": "rated", "status": "open"})
+		case "/api/queues/tickets":
+			guestID := r.URL.Query().Get("guestId")
+			switch guestID {
+			case "guest_white":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ticket": map[string]any{
+						"ticketId":    "ticket_white",
+						"guestId":     "guest_white",
+						"displayName": "Guest guest_white",
+						"queue":       "rated",
+						"modeId":      "hidden_cards",
+						"status":      "queued",
+						"rating":      1200,
+						"createdAt":   "2026-05-22T00:00:00Z",
+						"updatedAt":   "2026-05-22T00:00:05Z",
+					},
+				})
+			case "guest_black":
+				http.NotFound(w, r)
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer matchmakingServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchmakingServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/session/bootstrap", strings.NewReader(`{
+		"white":{"guestId":"guest_white","sessionSecret":"secret_white"},
+		"black":{"guestId":"guest_black","sessionSecret":"secret_black"}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected bootstrap recovery to succeed, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var envelope contracts.Envelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode bootstrap envelope: %v", err)
+	}
+	payload, ok := envelope.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("expected bootstrap payload map, got %#v", envelope.Payload)
+	}
+
+	queueTickets, ok := payload["queueTickets"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected queue tickets recovery, got %#v", payload["queueTickets"])
+	}
+	whiteTicket := queueTickets["white"].(map[string]any)
+	if whiteTicket["ticketId"] != "ticket_white" || whiteTicket["status"] != "queued" {
+		t.Fatalf("expected queued ticket recovery, got %#v", whiteTicket)
+	}
+
+	recoveredMatch, ok := payload["recoveredMatch"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected active match recovery, got %#v", payload["recoveredMatch"])
+	}
+	if recoveredMatch["matchId"] != "direct-room-44" || recoveredMatch["viewerSeat"] != "white" || recoveredMatch["queue"] != "direct" {
+		t.Fatalf("unexpected recovered match payload %#v", recoveredMatch)
+	}
+}
+
 func TestGatewayCreatesPrivateMatch(t *testing.T) {
 	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

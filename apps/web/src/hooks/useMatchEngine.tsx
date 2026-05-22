@@ -131,6 +131,7 @@ import {
   buildReplayPageUrl,
   copyTextToClipboard,
 } from '../lib/session-storage';
+import type { QueueTicket } from '../lib/matchmaking-service';
 import {
   modeLabel,
   queueLabel,
@@ -193,6 +194,10 @@ export interface UseMatchEngineProps {
   pathname: string;
   profileFocusHandle: string | null;
   profileQueryReady: boolean;
+  bootstrapQueueRecovery: {
+    white: QueueTicket | null;
+    black: QueueTicket | null;
+  } | null;
   queueLaunchIntent: { modeId: MatchModeId; queue: QueueName } | null;
   router: ReturnType<typeof useRouter>;
   socialAlert: SocialAlert | null;
@@ -222,6 +227,10 @@ export interface UseMatchEngineProps {
   } | null>>;
   setProfileFocusHandle: React.Dispatch<React.SetStateAction<string | null>>;
   setProfileQueryReady: React.Dispatch<React.SetStateAction<boolean>>;
+  setBootstrapQueueRecovery: React.Dispatch<React.SetStateAction<{
+    white: QueueTicket | null;
+    black: QueueTicket | null;
+  } | null>>;
   setQueueLaunchIntent: React.Dispatch<React.SetStateAction<{ modeId: MatchModeId; queue: QueueName } | null>>;
   setSecondaryMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setSocialAlert: React.Dispatch<React.SetStateAction<SocialAlert | null>>;
@@ -231,7 +240,7 @@ export interface UseMatchEngineProps {
 }
 
 export function useMatchEngine(props: UseMatchEngineProps) {
-  const { accountActionQueryDetected, activePage, authoritativeRematchBusy, blackProfile, communityFocusGuestId, friendsAttentionCount, guestProfilesReady, historyFocusGuestId, historyFocusMatchId, historyQueryReady, hostedRuntime, inboxUnreadCount, matchDestinationNotice, matchQueryReady, matchSeatMeta, openedBoardMatchRef, pathname, profileFocusHandle, profileQueryReady, queueLaunchIntent, router, setAccountActionQueryDetected, setActivePage, setAuthoritativeRematchBusy, setBlackProfile, setFriendsAttentionCount, setGuestProfilesReady, setHistoryFocusGuestId, setHistoryFocusMatchId, setHistoryQueryReady, setHostedRuntime, setInboxUnreadCount, setMatchDestinationNotice, setMatchQueryReady, setMatchSeatMeta, setProfileFocusHandle, setProfileQueryReady, setQueueLaunchIntent, setSecondaryMenuOpen, setSocialAlert, setSocialLiveToken, setViewerSeat, setWhiteProfile, socialAlert, socialLiveToken, viewerSeat, whiteProfile } = props;
+  const { accountActionQueryDetected, activePage, authoritativeRematchBusy, blackProfile, communityFocusGuestId, friendsAttentionCount, guestProfilesReady, historyFocusGuestId, historyFocusMatchId, historyQueryReady, hostedRuntime, inboxUnreadCount, matchDestinationNotice, matchQueryReady, matchSeatMeta, openedBoardMatchRef, pathname, profileFocusHandle, profileQueryReady, queueLaunchIntent, router, setAccountActionQueryDetected, setActivePage, setAuthoritativeRematchBusy, setBlackProfile, setFriendsAttentionCount, setGuestProfilesReady, setHistoryFocusGuestId, setHistoryFocusMatchId, setHistoryQueryReady, setHostedRuntime, setInboxUnreadCount, setMatchDestinationNotice, setMatchQueryReady, setMatchSeatMeta, setProfileFocusHandle, setProfileQueryReady, setBootstrapQueueRecovery, setQueueLaunchIntent, setSecondaryMenuOpen, setSocialAlert, setSocialLiveToken, setViewerSeat, setWhiteProfile, socialAlert, socialLiveToken, viewerSeat, whiteProfile } = props;
 
   const [board,     setBoard]     = React.useState<Board>(makeBoard);
   const [turn,      setTurn]      = React.useState<PieceColor>('white');
@@ -724,6 +733,87 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     writeStoredRoomMeta(matchId, nextRoomMeta);
   }, [hostedRuntime]);
 
+  const applyGatewayRecoveredMatch = React.useCallback((input?: {
+    matchId: string;
+    queue?: string;
+    modeId?: MatchModeId;
+    viewerSeat?: PieceColor | null;
+    whiteGuestId?: string;
+    blackGuestId?: string;
+    whiteName?: string;
+    blackName?: string;
+    claims?: {
+      white?: MatchSeatClaim;
+      black?: MatchSeatClaim;
+    };
+  } | null) => {
+    if (!input?.matchId) {
+      return;
+    }
+
+    const storedRoomMeta = readStoredRoomMeta(input.matchId);
+    const nextRoomMeta: StoredRoomMeta = {
+      ...storedRoomMeta,
+      queue: input.queue === 'rated' || input.queue === 'casual' || input.queue === 'direct'
+        ? input.queue
+        : storedRoomMeta?.queue,
+      modeId: input.modeId ?? storedRoomMeta?.modeId ?? DEFAULT_MATCH_MODE_ID,
+      viewerSeat: input.viewerSeat ?? storedRoomMeta?.viewerSeat ?? null,
+      whiteGuestId: input.whiteGuestId ?? storedRoomMeta?.whiteGuestId,
+      blackGuestId: input.blackGuestId ?? storedRoomMeta?.blackGuestId,
+      whiteName: input.whiteName ?? storedRoomMeta?.whiteName,
+      blackName: input.blackName ?? storedRoomMeta?.blackName,
+    };
+
+    writeStoredActiveMatchId(input.matchId);
+    writeStoredRoomMeta(input.matchId, nextRoomMeta);
+    if (input.viewerSeat) {
+      setViewerSeat(input.viewerSeat);
+    }
+    if (input.claims) {
+      applyGatewayMatchClaims(input.matchId, input.claims);
+    }
+  }, [applyGatewayMatchClaims]);
+
+  const applyGatewayQueueRecovery = React.useCallback((input: {
+    queueTickets?: {
+      white?: QueueTicket;
+      black?: QueueTicket;
+    };
+    recoveredMatch?: {
+      matchId: string;
+      queue?: string;
+      modeId?: MatchModeId;
+      viewerSeat?: PieceColor | null;
+      whiteGuestId?: string;
+      blackGuestId?: string;
+      whiteName?: string;
+      blackName?: string;
+      claims?: {
+        white?: MatchSeatClaim;
+        black?: MatchSeatClaim;
+      };
+    } | null;
+  } | undefined, options: { hosted: boolean; requestedMatchId?: string | null }) => {
+    if (!input) {
+      return;
+    }
+
+    setBootstrapQueueRecovery({
+      white: input.queueTickets?.white?.status === 'queued' ? input.queueTickets.white : null,
+      black: input.queueTickets?.black?.status === 'queued' ? input.queueTickets.black : null,
+    });
+
+    if (input.recoveredMatch?.matchId) {
+      applyGatewayRecoveredMatch(input.recoveredMatch);
+      return;
+    }
+
+    if (options.hosted && !options.requestedMatchId) {
+      writeStoredActiveMatchId(null);
+    }
+  }, [applyGatewayRecoveredMatch, setBootstrapQueueRecovery]);
+
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const hostname = window.location.hostname.toLowerCase();
@@ -954,9 +1044,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       (requestedAuthToken?.trim() ?? '') !== '';
     setAccountActionQueryDetected(requestedAuthLink);
     requestedMatchIdRef.current = requestedMatchId ?? (nextHosted ? null : readStoredActiveMatchId());
-    if (nextHosted && !requestedMatchId) {
-      writeStoredActiveMatchId(null);
-    }
     if (requestedAuthLink) {
       setActivePage('Account');
     } else if (requestedMatchId?.trim()) {
@@ -995,6 +1082,13 @@ export function useMatchEngine(props: UseMatchEngineProps) {
         applyGatewayGuestSessions(bootstrap.guestSessions);
         applyGatewayMatchClaims(bootstrap.requestedMatchId ?? requestedMatchIdRef.current, bootstrap.matchClaims);
         applyGatewayAccountSessions(bootstrap.accountSessions);
+        applyGatewayQueueRecovery({
+          queueTickets: bootstrap.queueTickets,
+          recoveredMatch: bootstrap.recoveredMatch ?? null,
+        }, {
+          hosted: nextHosted,
+          requestedMatchId: requestedMatchIdRef.current,
+        });
       })
       .catch(() => {
         // Keep fallback labels if the platform or gateway service is unavailable.
@@ -1008,7 +1102,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     return () => {
       cancelled = true;
     };
-  }, [applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, clearPrimaryAccountRestriction]);
+  }, [applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, applyGatewayQueueRecovery, clearPrimaryAccountRestriction]);
 
   React.useEffect(() => {
     if (!profileQueryReady) {
@@ -1567,7 +1661,9 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     const bootstrapId = authoritativeBootstrapRef.current + 1;
     authoritativeBootstrapRef.current = bootstrapId;
     try {
-      if (hostedRuntime && !requestedMatchIdRef.current) {
+      const explicitMatchId = requestedMatchIdRef.current;
+      const restoredMatchId = explicitMatchId ?? readStoredActiveMatchId();
+      if (hostedRuntime && !explicitMatchId && !restoredMatchId) {
         authoritativeMatchIdRef.current = null;
         setAuthoritativeMatchId(null);
         setAuthoritativeLive(false);
@@ -1580,8 +1676,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
         writeStoredActiveMatchId(null);
         return;
       }
-      const explicitMatchId = requestedMatchIdRef.current;
-      const restoredMatchId = explicitMatchId ?? readStoredActiveMatchId();
       let roomMeta = restoredMatchId ? readStoredRoomMeta(restoredMatchId) : null;
       let nextSeatSecrets = {
         white: roomMeta?.whitePlayerSecret ?? null,
@@ -1604,24 +1698,31 @@ export function useMatchEngine(props: UseMatchEngineProps) {
             const openSeat: PieceColor | null =
               snapshot.match.whiteGuestId ? (snapshot.match.blackGuestId ? null : 'black') : 'white';
             if (!alreadyOwnsSeat && openSeat && hostedIdentity.guestId) {
-              const joined = await joinPrivateMatch({
-                matchId: restoredMatchId,
-                identity: {
-                  guestId: hostedIdentity.guestId,
-                  sessionSecret: hostedIdentity.sessionSecret,
-                  sessionToken: hostedIdentity.sessionToken,
-                  accountId: hostedAccountIdentity.accountId,
-                  accountSessionToken: hostedAccountIdentity.sessionToken,
-                },
-                preferredSeat: openSeat,
-              });
-              applyGatewayMatchClaims(restoredMatchId, joined.claim
-                ? {
-                    white: joined.claim.seatColor === 'white' ? joined.claim : undefined,
-                    black: joined.claim.seatColor === 'black' ? joined.claim : undefined,
-                  }
-                : null);
-              snapshot = joined.snapshot;
+              try {
+                const joined = await joinPrivateMatch({
+                  matchId: restoredMatchId,
+                  identity: {
+                    guestId: hostedIdentity.guestId,
+                    sessionSecret: hostedIdentity.sessionSecret,
+                    sessionToken: hostedIdentity.sessionToken,
+                    accountId: hostedAccountIdentity.accountId,
+                    accountSessionToken: hostedAccountIdentity.sessionToken,
+                  },
+                  preferredSeat: openSeat,
+                });
+                applyGatewayMatchClaims(restoredMatchId, joined.claim
+                  ? {
+                      white: joined.claim.seatColor === 'white' ? joined.claim : undefined,
+                      black: joined.claim.seatColor === 'black' ? joined.claim : undefined,
+                    }
+                  : null);
+                snapshot = joined.snapshot;
+              } catch (joinErr) {
+                if (!(joinErr instanceof Error) || !/no open seats|finished|forbidden|conflict/i.test(joinErr.message)) {
+                  throw joinErr;
+                }
+                snapshot = await fetchMatch(restoredMatchId);
+              }
             }
           }
         } catch (err) {
@@ -2071,8 +2172,11 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       return;
     }
     openedBoardMatchRef.current = authoritativeMatchId;
-    setActivePage(hostedRuntime ? 'Match' : 'Play');
-  }, [authoritativeMatchId, hostedRuntime]);
+    const boardRouteRequested = pathname.startsWith('/match/') || Boolean(requestedMatchIdRef.current);
+    if (!hostedRuntime || boardRouteRequested) {
+      setActivePage(hostedRuntime ? 'Match' : 'Play');
+    }
+  }, [authoritativeMatchId, hostedRuntime, pathname, setActivePage]);
 
   React.useEffect(() => {
     if (!authoritativeMatchId) {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
+	"github.com/chess404/realtime/internal/matchmaking"
 	"github.com/chess404/realtime/internal/platform"
 )
 
@@ -50,19 +51,20 @@ type GatewayAccountIdentity struct {
 }
 
 type GatewaySeatClaim struct {
-	MatchID      string    `json:"matchId"`
-	GuestID      string    `json:"guestId"`
-	SeatColor    string    `json:"seatColor"`
-	PlayerID     string    `json:"playerId"`
-	PlayerSecret string    `json:"playerSecret"`
-	ClaimToken   string    `json:"claimToken,omitempty"`
-	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
-	Queue        string    `json:"queue,omitempty"`
-	WhiteGuestID string    `json:"whiteGuestId,omitempty"`
-	BlackGuestID string    `json:"blackGuestId,omitempty"`
-	WhiteName    string    `json:"whiteName,omitempty"`
-	BlackName    string    `json:"blackName,omitempty"`
-	Status       string    `json:"status,omitempty"`
+	MatchID      string                `json:"matchId"`
+	GuestID      string                `json:"guestId"`
+	SeatColor    string                `json:"seatColor"`
+	PlayerID     string                `json:"playerId"`
+	PlayerSecret string                `json:"playerSecret"`
+	ClaimToken   string                `json:"claimToken,omitempty"`
+	ExpiresAt    time.Time             `json:"expiresAt,omitempty"`
+	Queue        string                `json:"queue,omitempty"`
+	ModeID       contracts.MatchModeID `json:"modeId,omitempty"`
+	WhiteGuestID string                `json:"whiteGuestId,omitempty"`
+	BlackGuestID string                `json:"blackGuestId,omitempty"`
+	WhiteName    string                `json:"whiteName,omitempty"`
+	BlackName    string                `json:"blackName,omitempty"`
+	Status       string                `json:"status,omitempty"`
 }
 
 type GatewayBootstrapRequest struct {
@@ -88,30 +90,52 @@ type GatewayBootstrapAccountSessions struct {
 	Black *platform.AccountSession `json:"black,omitempty"`
 }
 
+type GatewayBootstrapQueueTickets struct {
+	White *matchmaking.Ticket `json:"white,omitempty"`
+	Black *matchmaking.Ticket `json:"black,omitempty"`
+}
+
 type GatewayBootstrapErrors struct {
 	White string `json:"white,omitempty"`
 	Black string `json:"black,omitempty"`
 }
 
+type GatewayBootstrapRecoveredMatch struct {
+	MatchID      string                       `json:"matchId"`
+	Queue        string                       `json:"queue,omitempty"`
+	ModeID       contracts.MatchModeID        `json:"modeId,omitempty"`
+	Status       string                       `json:"status,omitempty"`
+	ViewerSeat   string                       `json:"viewerSeat,omitempty"`
+	WhiteGuestID string                       `json:"whiteGuestId,omitempty"`
+	BlackGuestID string                       `json:"blackGuestId,omitempty"`
+	WhiteName    string                       `json:"whiteName,omitempty"`
+	BlackName    string                       `json:"blackName,omitempty"`
+	Claims       *GatewayBootstrapMatchClaims `json:"claims,omitempty"`
+}
+
 type GatewayBootstrapPayload struct {
-	Status             string                           `json:"status"`
-	RealtimeReady      bool                             `json:"realtimeReady"`
-	PlatformReady      bool                             `json:"platformReady"`
-	MatchmakingReady   bool                             `json:"matchmakingReady"`
-	Authoritative      bool                             `json:"authoritative"`
-	Services           map[string]GatewayServiceHealth  `json:"services"`
-	ServiceEndpoints   GatewayConfig                    `json:"serviceEndpoints"`
-	PlatformCaps       any                              `json:"platformCaps,omitempty"`
-	DefaultQueue       any                              `json:"defaultQueue,omitempty"`
-	GuestSessions      *GatewayBootstrapGuestSessions   `json:"guestSessions,omitempty"`
-	MatchClaims        *GatewayBootstrapMatchClaims     `json:"matchClaims,omitempty"`
-	AccountSessions    *GatewayBootstrapAccountSessions `json:"accountSessions,omitempty"`
-	SessionErrors      *GatewayBootstrapErrors          `json:"sessionErrors,omitempty"`
-	ClaimErrors        *GatewayBootstrapErrors          `json:"claimErrors,omitempty"`
-	AccountErrors      *GatewayBootstrapErrors          `json:"accountErrors,omitempty"`
-	RequestedMatchID   string                           `json:"requestedMatchId,omitempty"`
-	BootstrapCheckedAt time.Time                        `json:"bootstrapCheckedAt"`
-	Message            string                           `json:"message"`
+	Status               string                           `json:"status"`
+	RealtimeReady        bool                             `json:"realtimeReady"`
+	PlatformReady        bool                             `json:"platformReady"`
+	MatchmakingReady     bool                             `json:"matchmakingReady"`
+	Authoritative        bool                             `json:"authoritative"`
+	Services             map[string]GatewayServiceHealth  `json:"services"`
+	ServiceEndpoints     GatewayConfig                    `json:"serviceEndpoints"`
+	PlatformCaps         any                              `json:"platformCaps,omitempty"`
+	DefaultQueue         any                              `json:"defaultQueue,omitempty"`
+	GuestSessions        *GatewayBootstrapGuestSessions   `json:"guestSessions,omitempty"`
+	MatchClaims          *GatewayBootstrapMatchClaims     `json:"matchClaims,omitempty"`
+	AccountSessions      *GatewayBootstrapAccountSessions `json:"accountSessions,omitempty"`
+	QueueTickets         *GatewayBootstrapQueueTickets    `json:"queueTickets,omitempty"`
+	RecoveredMatch       *GatewayBootstrapRecoveredMatch  `json:"recoveredMatch,omitempty"`
+	SessionErrors        *GatewayBootstrapErrors          `json:"sessionErrors,omitempty"`
+	ClaimErrors          *GatewayBootstrapErrors          `json:"claimErrors,omitempty"`
+	AccountErrors        *GatewayBootstrapErrors          `json:"accountErrors,omitempty"`
+	QueueErrors          *GatewayBootstrapErrors          `json:"queueErrors,omitempty"`
+	RecoveredMatchErrors *GatewayBootstrapErrors          `json:"recoveredMatchErrors,omitempty"`
+	RequestedMatchID     string                           `json:"requestedMatchId,omitempty"`
+	BootstrapCheckedAt   time.Time                        `json:"bootstrapCheckedAt"`
+	Message              string                           `json:"message"`
 }
 
 type GatewayPrivateMatchRequest struct {
@@ -395,26 +419,32 @@ func buildGatewayBootstrapPayload(config GatewayConfig, client *http.Client, req
 	guestSessions, sessionErrors := bootstrapGuestSessions(config, client, request)
 	matchClaims, claimErrors := bootstrapMatchClaims(config, client, request.MatchID, guestSessions)
 	accountSessions, accountErrors := bootstrapAccountSessions(config, client, request, guestSessions)
+	queueTickets, queueErrors := bootstrapQueueTickets(config, client, guestSessions, accountSessions)
+	recoveredMatch, recoveredMatchErrors := bootstrapRecoveredMatch(config, client, guestSessions, queueTickets)
 
 	return GatewayBootstrapPayload{
-		Status:             systemStatus.Status,
-		RealtimeReady:      systemStatus.Services["match"].Healthy,
-		PlatformReady:      systemStatus.Services["platform"].Healthy,
-		MatchmakingReady:   systemStatus.Services["matchmaking"].Healthy,
-		Authoritative:      systemStatus.Services["match"].Healthy,
-		Services:           systemStatus.Services,
-		ServiceEndpoints:   config,
-		PlatformCaps:       capabilities.Payload,
-		DefaultQueue:       defaultQueue.Payload,
-		GuestSessions:      guestSessions,
-		MatchClaims:        matchClaims,
-		AccountSessions:    accountSessions,
-		SessionErrors:      sessionErrors,
-		ClaimErrors:        claimErrors,
-		AccountErrors:      accountErrors,
-		RequestedMatchID:   request.MatchID,
-		BootstrapCheckedAt: time.Now().UTC(),
-		Message:            bootstrapMessage(systemStatus),
+		Status:               systemStatus.Status,
+		RealtimeReady:        systemStatus.Services["match"].Healthy,
+		PlatformReady:        systemStatus.Services["platform"].Healthy,
+		MatchmakingReady:     systemStatus.Services["matchmaking"].Healthy,
+		Authoritative:        systemStatus.Services["match"].Healthy,
+		Services:             systemStatus.Services,
+		ServiceEndpoints:     config,
+		PlatformCaps:         capabilities.Payload,
+		DefaultQueue:         defaultQueue.Payload,
+		GuestSessions:        guestSessions,
+		MatchClaims:          matchClaims,
+		AccountSessions:      accountSessions,
+		QueueTickets:         queueTickets,
+		RecoveredMatch:       recoveredMatch,
+		SessionErrors:        sessionErrors,
+		ClaimErrors:          claimErrors,
+		AccountErrors:        accountErrors,
+		QueueErrors:          queueErrors,
+		RecoveredMatchErrors: recoveredMatchErrors,
+		RequestedMatchID:     request.MatchID,
+		BootstrapCheckedAt:   time.Now().UTC(),
+		Message:              bootstrapMessage(systemStatus),
 	}
 }
 
@@ -537,7 +567,257 @@ func bootstrapAccountSessions(config GatewayConfig, client *http.Client, request
 	return sessions, errors
 }
 
+func bootstrapQueueTickets(
+	config GatewayConfig,
+	client *http.Client,
+	guestSessions *GatewayBootstrapGuestSessions,
+	accountSessions *GatewayBootstrapAccountSessions,
+) (*GatewayBootstrapQueueTickets, *GatewayBootstrapErrors) {
+	tickets := &GatewayBootstrapQueueTickets{}
+	errors := &GatewayBootstrapErrors{}
+
+	if ticket, errMessage := bootstrapQueueTicketForSide(config, client, guestSessionsSide(guestSessions, "white"), accountSessionsSide(accountSessions, "white")); ticket != nil {
+		tickets.White = ticket
+	} else if errMessage != "" {
+		errors.White = errMessage
+	}
+
+	if ticket, errMessage := bootstrapQueueTicketForSide(config, client, guestSessionsSide(guestSessions, "black"), accountSessionsSide(accountSessions, "black")); ticket != nil {
+		tickets.Black = ticket
+	} else if errMessage != "" {
+		errors.Black = errMessage
+	}
+
+	if tickets.White == nil && tickets.Black == nil {
+		tickets = nil
+	}
+	if errors.White == "" && errors.Black == "" {
+		errors = nil
+	}
+
+	return tickets, errors
+}
+
+func bootstrapQueueTicketForSide(
+	config GatewayConfig,
+	client *http.Client,
+	guestSession *platform.GuestSession,
+	accountSession *platform.AccountSession,
+) (*matchmaking.Ticket, string) {
+	guestID := ""
+	if guestSession != nil {
+		guestID = strings.TrimSpace(guestSession.Guest.GuestID)
+	}
+	accountID := ""
+	if accountSession != nil {
+		accountID = strings.TrimSpace(accountSession.Account.AccountID)
+	}
+	if guestID == "" && accountID == "" {
+		return nil, ""
+	}
+
+	params := url.Values{}
+	if guestID != "" {
+		params.Set("guestId", guestID)
+	}
+	if accountID != "" {
+		params.Set("accountId", accountID)
+	}
+
+	result := fetchGatewayJSON(client, config.MatchmakingServiceURL+"/api/queues/tickets?"+params.Encode())
+	if result.StatusCode == http.StatusNotFound {
+		return nil, ""
+	}
+	if !result.Healthy {
+		return nil, gatewayErrorMessage(result, "failed to recover queue ticket")
+	}
+
+	payload, err := decodeGatewayPayload[struct {
+		Ticket matchmaking.Ticket `json:"ticket"`
+	}](result.Payload)
+	if err != nil {
+		return nil, fmt.Sprintf("failed to decode queue ticket: %v", err)
+	}
+	return &payload.Ticket, ""
+}
+
+func bootstrapRecoveredMatch(
+	config GatewayConfig,
+	client *http.Client,
+	guestSessions *GatewayBootstrapGuestSessions,
+	queueTickets *GatewayBootstrapQueueTickets,
+) (*GatewayBootstrapRecoveredMatch, *GatewayBootstrapErrors) {
+	claims, errors := bootstrapActiveMatchClaims(config, client, guestSessions)
+	if activeMatch := recoveredMatchFromClaims(claims); activeMatch != nil {
+		return activeMatch, errors
+	}
+
+	if activeMatch := recoveredMatchFromQueueTickets(queueTickets, guestSessions); activeMatch != nil {
+		return activeMatch, errors
+	}
+
+	if errors != nil && errors.White == "" && errors.Black == "" {
+		errors = nil
+	}
+	return nil, errors
+}
+
+func bootstrapActiveMatchClaims(
+	config GatewayConfig,
+	client *http.Client,
+	guestSessions *GatewayBootstrapGuestSessions,
+) (*GatewayBootstrapMatchClaims, *GatewayBootstrapErrors) {
+	claims := &GatewayBootstrapMatchClaims{}
+	errors := &GatewayBootstrapErrors{}
+
+	if claim, errMessage := bootstrapActiveMatchClaimForSide(config, client, guestSessionsSide(guestSessions, "white")); claim != nil {
+		claims.White = claim
+	} else if errMessage != "" {
+		errors.White = errMessage
+	}
+
+	if claim, errMessage := bootstrapActiveMatchClaimForSide(config, client, guestSessionsSide(guestSessions, "black")); claim != nil {
+		claims.Black = claim
+	} else if errMessage != "" {
+		errors.Black = errMessage
+	}
+
+	if claims.White == nil && claims.Black == nil {
+		claims = nil
+	}
+	if errors.White == "" && errors.Black == "" {
+		errors = nil
+	}
+
+	return claims, errors
+}
+
+func bootstrapActiveMatchClaimForSide(
+	config GatewayConfig,
+	client *http.Client,
+	session *platform.GuestSession,
+) (*GatewaySeatClaim, string) {
+	if session == nil || strings.TrimSpace(session.Guest.GuestID) == "" {
+		return nil, ""
+	}
+
+	payload := map[string]string{
+		"guestId": session.Guest.GuestID,
+	}
+	if strings.TrimSpace(session.SessionToken) != "" {
+		payload["sessionToken"] = strings.TrimSpace(session.SessionToken)
+	} else if strings.TrimSpace(session.SessionSecret) != "" {
+		payload["sessionSecret"] = strings.TrimSpace(session.SessionSecret)
+	}
+
+	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims/active", payload)
+	if result.StatusCode == http.StatusNotFound {
+		return nil, ""
+	}
+	if !result.Healthy {
+		return nil, gatewayErrorMessage(result, "failed to recover active match")
+	}
+
+	claim, err := decodeGatewayPayload[GatewaySeatClaim](result.Payload)
+	if err != nil {
+		return nil, fmt.Sprintf("failed to decode active match claim: %v", err)
+	}
+	return &claim, ""
+}
+
+func recoveredMatchFromClaims(claims *GatewayBootstrapMatchClaims) *GatewayBootstrapRecoveredMatch {
+	if claims == nil {
+		return nil
+	}
+
+	primary := claims.White
+	if primary == nil {
+		primary = claims.Black
+	}
+	if primary == nil || strings.TrimSpace(primary.MatchID) == "" {
+		return nil
+	}
+
+	return &GatewayBootstrapRecoveredMatch{
+		MatchID:      primary.MatchID,
+		Queue:        primary.Queue,
+		ModeID:       primary.ModeID,
+		Status:       primary.Status,
+		ViewerSeat:   primary.SeatColor,
+		WhiteGuestID: primary.WhiteGuestID,
+		BlackGuestID: primary.BlackGuestID,
+		WhiteName:    primary.WhiteName,
+		BlackName:    primary.BlackName,
+		Claims:       claims,
+	}
+}
+
+func recoveredMatchFromQueueTickets(
+	tickets *GatewayBootstrapQueueTickets,
+	guestSessions *GatewayBootstrapGuestSessions,
+) *GatewayBootstrapRecoveredMatch {
+	if tickets == nil {
+		return nil
+	}
+
+	type ticketCandidate struct {
+		side   string
+		ticket *matchmaking.Ticket
+	}
+	for _, candidateEntry := range []ticketCandidate{
+		{side: "white", ticket: tickets.White},
+		{side: "black", ticket: tickets.Black},
+	} {
+		candidate := candidateEntry.ticket
+		if candidate == nil || candidate.Status != matchmaking.StatusMatched || strings.TrimSpace(candidate.AssignedRoom) == "" {
+			continue
+		}
+
+		viewerSeat := strings.TrimSpace(candidate.SeatColor)
+		whiteGuestID := strings.TrimSpace(candidate.MatchedWith)
+		blackGuestID := strings.TrimSpace(candidate.MatchedWith)
+		whiteName := strings.TrimSpace(candidate.OpponentName)
+		blackName := strings.TrimSpace(candidate.OpponentName)
+
+		if viewerSeat == "white" {
+			if guest := guestSessionsSide(guestSessions, candidateEntry.side); guest != nil {
+				whiteGuestID = guest.Guest.GuestID
+				whiteName = guest.Guest.DisplayName
+			}
+		} else if viewerSeat == "black" {
+			if guest := guestSessionsSide(guestSessions, candidateEntry.side); guest != nil {
+				blackGuestID = guest.Guest.GuestID
+				blackName = guest.Guest.DisplayName
+			}
+		}
+
+		return &GatewayBootstrapRecoveredMatch{
+			MatchID:      candidate.AssignedRoom,
+			Queue:        string(candidate.Queue),
+			ModeID:       candidate.ModeID,
+			Status:       string(candidate.Status),
+			ViewerSeat:   viewerSeat,
+			WhiteGuestID: whiteGuestID,
+			BlackGuestID: blackGuestID,
+			WhiteName:    whiteName,
+			BlackName:    blackName,
+		}
+	}
+
+	return nil
+}
+
 func guestSessionsSide(sessions *GatewayBootstrapGuestSessions, side string) *platform.GuestSession {
+	if sessions == nil {
+		return nil
+	}
+	if side == "white" {
+		return sessions.White
+	}
+	return sessions.Black
+}
+
+func accountSessionsSide(sessions *GatewayBootstrapAccountSessions, side string) *platform.AccountSession {
 	if sessions == nil {
 		return nil
 	}

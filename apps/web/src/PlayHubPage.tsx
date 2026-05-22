@@ -1,7 +1,7 @@
 import React from 'react';
 import { type MatchModeId, type PieceColor } from '@chess404/contracts';
 import type { GuestProfile } from './lib/platform-service';
-import type { QueueName } from './lib/matchmaking-service';
+import type { QueueName, QueueTicket } from './lib/matchmaking-service';
 import type { PrivateMatchIdentity } from './lib/private-match-service';
 import { modeLabel, queueLabel } from './lib/match-labels';
 import QueuePage from './QueuePage';
@@ -13,6 +13,10 @@ interface PlayHubPageProps {
   blackProfile: GuestProfile | null;
   preferredQueue?: QueueName | null;
   preferredModeId?: MatchModeId | null;
+  queueRecovery?: {
+    white: QueueTicket | null;
+    black: QueueTicket | null;
+  } | null;
   identity: PrivateMatchIdentity | null;
   displayName?: string | null;
   activeMatchId?: string | null;
@@ -42,6 +46,7 @@ export default function PlayHubPage({
   blackProfile,
   preferredQueue = null,
   preferredModeId = null,
+  queueRecovery = null,
   identity,
   displayName = null,
   activeMatchId = null,
@@ -142,13 +147,6 @@ export default function PlayHubPage({
               title="Create one room and one clean invite"
               detail="Open a private waiting room, share the link, and let the second device claim the empty seat without extra setup."
             />
-            <LaunchTile
-              eyebrow="Live Match"
-              title={hostedRuntime ? 'One browser, one seat' : 'Local sandbox still available'}
-              detail={hostedRuntime
-                ? 'Hosted play keeps seat ownership strict so rated games, replays, and reconnects stay trustworthy.'
-                : 'Local play remains available here for quick testing without changing the hosted online flow.'}
-            />
           </div>
         )}
 
@@ -178,6 +176,9 @@ export default function PlayHubPage({
               blackProfile={blackProfile}
               preferredQueue={preferredQueue}
               preferredModeId={preferredModeId}
+              recoveredWhiteTicket={queueRecovery?.white ?? null}
+              recoveredBlackTicket={queueRecovery?.black ?? null}
+              recoveryReady={queueRecovery !== null}
             />
           </div>
 

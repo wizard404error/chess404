@@ -152,3 +152,61 @@ Still recommended after first successful staging deploy:
 - add custom domains
 - add monitoring and alerting
 - add load testing before public launch
+
+## Rated beta launch checklist
+
+Use this checklist before calling the hosted `/play` flow launch-ready.
+
+1. Verify Railway service health:
+   - `web` loads its public domain
+   - `gateway` returns `200` from `/healthz`
+   - `match-service` returns `200` from `/healthz`
+   - `platform-service` returns `200` from `/healthz`
+   - `matchmaking-service` returns `200` from `/healthz`
+2. Verify backend wiring from the web app:
+   - open `/status`
+   - confirm gateway, platform, match, and matchmaking all report healthy
+   - confirm `/api/gateway/bootstrap` returns healthy downstream state instead of localhost connection errors
+3. Verify data backends:
+   - Railway Redis is attached to `matchmaking-service` and `platform-service`
+   - Railway Postgres is attached to `platform-service` and `match-service`
+4. Run the hosted `/play` smoke test:
+   - signed-out player can join casual
+   - signed-out player sees `Sign in to join rated`
+   - signed-in player can join rated
+   - queued refresh restores queue state
+   - matched refresh restores the live match or shows `Return to Match`
+   - private invite link opens the canonical `/match/:id` route
+   - a fully occupied invite room resolves to spectate or room-full behavior
+
+## Beta data reset before launch
+
+If production beta data becomes noisy, clear it before the public rated beta push so recovery logic is restoring real player state instead of test leftovers.
+
+### Redis
+
+Reset stale queue and claim state:
+
+```text
+chess404:matchmaking:tickets
+chess404:platform:match-claims
+```
+
+### Postgres
+
+Review and clear test-only rows from:
+
+```sql
+guests
+finalized_matches
+direct_challenges
+```
+
+Suggested approach:
+
+1. Remove stale queue tickets and stale match claims first.
+2. Delete or archive test guest rows only if you intentionally want a clean guest ladder.
+3. Delete abandoned direct challenges that were created for testing and no longer map to a live product scenario.
+4. Redeploy the services after cleanup so fresh hosted sessions repopulate state from a known baseline.
+
+Do not clear production data blindly once real players are using the platform. Snapshot Postgres first, then remove only the stale beta-era rows you intend to reset.

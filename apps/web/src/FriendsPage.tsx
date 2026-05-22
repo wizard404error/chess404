@@ -242,7 +242,7 @@ export default function FriendsPage({
         clockSeconds: 600,
       });
       persistChallengeRoom(result);
-      window.location.href = `/?match=${encodeURIComponent(result.match.matchId)}`;
+      window.location.href = `/match/${encodeURIComponent(result.match.matchId)}`;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send direct challenge.');
     } finally {
@@ -264,7 +264,7 @@ export default function FriendsPage({
         identity,
       });
       persistChallengeRoom(result);
-      window.location.href = `/?match=${encodeURIComponent(result.match.matchId)}`;
+      window.location.href = `/match/${encodeURIComponent(result.match.matchId)}`;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to accept direct challenge.');
     } finally {

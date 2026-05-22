@@ -1,4 +1,6 @@
+import type { MatchModeId } from '@chess404/contracts';
 import type { AccountSession, GuestSession, MatchSeatClaim } from './platform-service';
+import type { QueueTicket } from './matchmaking-service';
 
 export interface MatchServiceStatus {
   status: string;
@@ -125,6 +127,24 @@ export interface GatewayBootstrapErrors {
   black?: string;
 }
 
+export interface GatewayBootstrapQueueTickets {
+  white?: QueueTicket;
+  black?: QueueTicket;
+}
+
+export interface GatewayBootstrapRecoveredMatch {
+  matchId: string;
+  queue?: 'casual' | 'rated' | 'direct';
+  modeId?: MatchModeId;
+  status?: string;
+  viewerSeat?: 'white' | 'black' | null;
+  whiteGuestId?: string;
+  blackGuestId?: string;
+  whiteName?: string;
+  blackName?: string;
+  claims?: GatewayBootstrapMatchClaims;
+}
+
 export interface GatewayBootstrapPayload {
   status: string;
   realtimeReady: boolean;
@@ -142,9 +162,13 @@ export interface GatewayBootstrapPayload {
   guestSessions?: GatewayBootstrapGuestSessions;
   matchClaims?: GatewayBootstrapMatchClaims;
   accountSessions?: GatewayBootstrapAccountSessions;
+  queueTickets?: GatewayBootstrapQueueTickets;
+  recoveredMatch?: GatewayBootstrapRecoveredMatch;
   sessionErrors?: GatewayBootstrapErrors;
   claimErrors?: GatewayBootstrapErrors;
   accountErrors?: GatewayBootstrapErrors;
+  queueErrors?: GatewayBootstrapErrors;
+  recoveredMatchErrors?: GatewayBootstrapErrors;
   requestedMatchId?: string;
   bootstrapCheckedAt: string;
   message: string;
