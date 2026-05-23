@@ -2,15 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
@@ -184,14 +188,41 @@ type GatewayDirectChallengeLaunchResponse struct {
 	Match       GatewayPrivateMatchResponse `json:"match"`
 }
 
+const maxBodySize = 1 << 20 // 1 MB limit for request bodies
+
+func isValidPathParam(param string) bool {
+	return !strings.Contains(param, "/") && !strings.Contains(param, "..") && strings.TrimSpace(param) == param && param != ""
+}
+
 func main() {
 	config := gatewayConfigFromEnv()
 	client := &http.Client{Timeout: 3 * time.Second}
 	mux := buildGatewayMux(config, client)
 
 	addr := listenAddr("GATEWAY_ADDR", 8080)
-	log.Printf("gateway listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	srv := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		certFile := os.Getenv("TLS_CERT_FILE")
+		keyFile := os.Getenv("TLS_KEY_FILE")
+		if certFile != "" && keyFile != "" {
+			log.Printf("gateway listening with TLS on %s", addr)
+			if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("listen: %v", err)
+			}
+		} else {
+			log.Printf("gateway listening on %s", addr)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("listen: %v", err)
+			}
+		}
+	}()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("gateway shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }
 
 func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
@@ -239,6 +270,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			var request GatewayBootstrapRequest
 			if r.Body != nil {
 				defer r.Body.Close()
+				r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					writeError(w, http.StatusBadRequest, "invalid bootstrap payload")
 					return
@@ -263,6 +295,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		var payload GatewayPrivateMatchRequest
 		if r.Body != nil {
 			defer r.Body.Close()
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid private match payload")
 				return
@@ -291,6 +324,10 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			writeError(w, http.StatusNotFound, "route not found")
 			return
 		}
+		if !isValidPathParam(parts[0]) {
+			writeError(w, http.StatusBadRequest, "invalid match id")
+			return
+		}
 		if parts[1] == "intents" {
 			proxyGatewayIntent(w, r, config, client, parts[0])
 			return
@@ -316,10 +353,15 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		var payload GatewayPrivateMatchRequest
 		if r.Body != nil {
 			defer r.Body.Close()
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid private match join payload")
 				return
 			}
+		}
+		if !isValidPathParam(parts[0]) {
+			writeError(w, http.StatusBadRequest, "invalid match id")
+			return
 		}
 		var (
 			response   GatewayPrivateMatchResponse
@@ -346,6 +388,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		var payload GatewayDirectChallengeRequest
 		if r.Body != nil {
 			defer r.Body.Close()
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid direct challenge payload")
 				return
@@ -373,10 +416,15 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		var payload GatewayDirectChallengeAcceptRequest
 		if r.Body != nil {
 			defer r.Body.Close()
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid challenge accept payload")
 				return
 			}
+		}
+		if !isValidPathParam(parts[0]) {
+			writeError(w, http.StatusBadRequest, "invalid challenge id")
+			return
 		}
 		response, statusCode, err := acceptGatewayDirectChallenge(config, client, parts[0], payload)
 		if err != nil {
@@ -397,11 +445,14 @@ func collectGatewayStatus(config GatewayConfig, client *http.Client) GatewaySyst
 	}
 
 	status := "ok"
-	for _, service := range services {
-		if !service.Healthy {
+	for name := range services {
+		if !services[name].Healthy {
 			status = "degraded"
-			break
 		}
+		service := services[name]
+		service.URL = ""
+		service.Payload = nil
+		services[name] = service
 	}
 
 	return GatewaySystemStatus{
@@ -429,7 +480,7 @@ func buildGatewayBootstrapPayload(config GatewayConfig, client *http.Client, req
 		MatchmakingReady:     systemStatus.Services["matchmaking"].Healthy,
 		Authoritative:        systemStatus.Services["match"].Healthy,
 		Services:             systemStatus.Services,
-		ServiceEndpoints:     config,
+		ServiceEndpoints:     GatewayConfig{},
 		PlatformCaps:         capabilities.Payload,
 		DefaultQueue:         defaultQueue.Payload,
 		GuestSessions:        guestSessions,
@@ -499,13 +550,13 @@ func bootstrapMatchClaims(config GatewayConfig, client *http.Client, matchID str
 	errors := &GatewayBootstrapErrors{}
 
 	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.White); claim != nil {
-		claims.White = claim
+		claims.White = sanitizeSeatClaim(claim)
 	} else if errMessage != "" {
 		errors.White = errMessage
 	}
 
 	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.Black); claim != nil {
-		claims.Black = claim
+		claims.Black = sanitizeSeatClaim(claim)
 	} else if errMessage != "" {
 		errors.Black = errMessage
 	}
@@ -919,7 +970,10 @@ func createGatewayPrivateMatch(config GatewayConfig, client *http.Client, reques
 	if err != nil {
 		return GatewayPrivateMatchResponse{}, statusCode, err
 	}
-	accountSession, _, _ := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	if accountSessionErr != nil {
+		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
+	}
 	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.ModeID, request.ClockSeconds, request.PreferredSeat)
 }
 
@@ -978,24 +1032,17 @@ func createGatewayPrivateMatchForSession(
 
 	claim, claimErr := bootstrapMatchClaimForSide(config, client, snapshot.Match.MatchID, session)
 	if claimErr != "" {
-		log.Printf("warning: failed to bootstrap claim for private match %s: %s", snapshot.Match.MatchID, claimErr)
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to bootstrap match claim: %s", claimErr)
 	}
 
-	seatColor := ""
-	if claim != nil {
-		seatColor = claim.SeatColor
-	} else if preferredSeat == "black" {
-		seatColor = "black"
-	} else {
-		seatColor = "white"
-	}
+	seatColor := claim.SeatColor
 
 	return GatewayPrivateMatchResponse{
 		MatchID:            snapshot.Match.MatchID,
 		SeatColor:          seatColor,
 		WaitingForOpponent: snapshot.Match.Status == "waiting",
 		Snapshot:           snapshot,
-		Claim:              claim,
+		Claim:              sanitizeSeatClaim(claim),
 	}, http.StatusCreated, nil
 }
 
@@ -1004,7 +1051,10 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 	if err != nil {
 		return GatewayPrivateMatchResponse{}, statusCode, err
 	}
-	accountSession, _, _ := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	if accountSessionErr != nil {
+		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
+	}
 
 	joinReq := contracts.JoinMatchSeatRequest{
 		GuestID:       session.Guest.GuestID,
@@ -1030,20 +1080,15 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 
 	claim, claimErr := bootstrapMatchClaimForSide(config, client, matchID, session)
 	if claimErr != "" {
-		log.Printf("warning: failed to bootstrap claim for joined match %s: %s", matchID, claimErr)
-	}
-
-	seatColor := joined.SeatColor
-	if claim != nil {
-		seatColor = claim.SeatColor
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to bootstrap match claim: %s", claimErr)
 	}
 
 	return GatewayPrivateMatchResponse{
 		MatchID:            joined.Match.Match.MatchID,
-		SeatColor:          seatColor,
+		SeatColor:          claim.SeatColor,
 		WaitingForOpponent: joined.WaitingForOpponent,
 		Snapshot:           joined.Match,
-		Claim:              claim,
+		Claim:              sanitizeSeatClaim(claim),
 	}, http.StatusOK, nil
 }
 
@@ -1052,7 +1097,10 @@ func rematchGatewayPrivateMatch(config GatewayConfig, client *http.Client, match
 	if err != nil {
 		return GatewayPrivateMatchResponse{}, statusCode, err
 	}
-	accountSession, _, _ := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	if accountSessionErr != nil {
+		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
+	}
 
 	result := fetchGatewayJSONRequest(client, http.MethodGet, config.MatchServiceURL+"/api/matches/"+matchID, nil)
 	if result.Error != "" && result.StatusCode == 0 {
@@ -1246,9 +1294,14 @@ func ensureGatewayPrivateAccountSession(config GatewayConfig, client *http.Clien
 }
 
 func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayConfig, client *http.Client, matchID string) {
+	if !isValidPathParam(matchID) {
+		writeError(w, http.StatusBadRequest, "invalid match id")
+		return
+	}
 	var req contracts.ApplyIntentRequest
 	if r.Body != nil {
 		defer r.Body.Close()
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
@@ -1276,9 +1329,14 @@ func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayCo
 }
 
 func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config GatewayConfig, client *http.Client, matchID string) {
+	if !isValidPathParam(matchID) {
+		writeError(w, http.StatusBadRequest, "invalid match id")
+		return
+	}
 	var req contracts.MatchPresenceRequest
 	if r.Body != nil {
 		defer r.Body.Close()
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
@@ -1347,7 +1405,7 @@ func fetchGatewayJSONRequest(client *http.Client, method, url string, payload an
 	}
 
 	var responsePayload any
-	if err := json.NewDecoder(response.Body).Decode(&responsePayload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&responsePayload); err != nil {
 		return GatewayServiceHealth{
 			URL:        url,
 			StatusCode: response.StatusCode,
@@ -1466,4 +1524,24 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{
 		"error": message,
 	})
+}
+
+func sanitizeSeatClaim(claim *GatewaySeatClaim) *GatewaySeatClaim {
+	if claim == nil {
+		return nil
+	}
+	return &GatewaySeatClaim{
+		MatchID:      claim.MatchID,
+		GuestID:      claim.GuestID,
+		SeatColor:    claim.SeatColor,
+		PlayerID:     claim.PlayerID,
+		ExpiresAt:    claim.ExpiresAt,
+		Queue:        claim.Queue,
+		ModeID:       claim.ModeID,
+		WhiteGuestID: claim.WhiteGuestID,
+		BlackGuestID: claim.BlackGuestID,
+		WhiteName:    claim.WhiteName,
+		BlackName:    claim.BlackName,
+		Status:       claim.Status,
+	}
 }

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
@@ -77,8 +79,43 @@ func main() {
 	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
 
 	addr := listenAddr("PLATFORM_ADDR", 8083)
-	log.Printf("platform-service listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	srv := &http.Server{Addr: addr, Handler: limitBody(mux)}
+	go func() {
+		log.Printf("platform-service listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("platform-service shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+}
+
+type jsonContentTypeWriter struct {
+	http.ResponseWriter
+}
+
+func (w *jsonContentTypeWriter) WriteHeader(code int) {
+	if strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func respondError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func respondJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.GuestDirectory, accounts platform.AccountDirectory, friends platform.FriendshipDirectory, moderation platform.ModerationDirectory, challenges platform.DirectChallengeDirectory, notifications platform.AccountNotificationDirectory, emailOutbox platform.AccountEmailOutboxDirectory, securityAudit platform.AccountSecurityAuditDirectory, claims *platform.MatchClaimStore) http.Handler {
@@ -169,7 +206,11 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		}
 		if r.Body != nil {
 			defer r.Body.Close()
-			_ = json.NewDecoder(r.Body).Decode(&payload)
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				respondError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
 		}
 		var session platform.GuestSession
 		var err error
@@ -2045,7 +2086,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 		if err := validateGuestResult(entry, payload.MatchID, payload.WhiteGuestID, payload.BlackGuestID, payload.Winner); err != nil {
-			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		whiteBefore, ok := guests.GetGuest(entry.WhiteGuestID)
@@ -2058,6 +2099,11 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			http.Error(w, `{"error":"unknown black guest"}`, http.StatusBadRequest)
 			return
 		}
+		white, black, changed, err := guests.FinalizeMatch(payload.MatchID, payload.WhiteGuestID, payload.BlackGuestID, payload.Winner)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		var (
 			whiteAccountProfile platform.PublicAccountProfile
 			blackAccountProfile platform.PublicAccountProfile
@@ -2067,7 +2113,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		_, blackLinked := accounts.GetAccountByGuest(entry.BlackGuestID)
 		if whiteLinked && blackLinked {
 			if _, _, changed, err := finalizeLinkedAccounts(accounts, payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, payload.Winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore); err != nil {
-				http.Error(w, `{"error":"failed to finalize linked account result"}`, http.StatusBadRequest)
+				respondError(w, http.StatusBadRequest, "failed to finalize linked account result")
 				return
 			} else {
 				accountChanged = changed
@@ -2079,13 +2125,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 				blackAccountProfile = platform.BuildPublicAccountProfile(account, guests)
 			}
 		}
-		white, black, changed, err := guests.FinalizeMatch(payload.MatchID, payload.WhiteGuestID, payload.BlackGuestID, payload.Winner)
-		if err != nil {
-			http.Error(w, `{"error":"failed to finalize guest result"}`, http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		respondJSON(w, http.StatusOK, map[string]any{
 			"changed":      changed || accountChanged,
 			"white":        white,
 			"black":        black,
@@ -2143,23 +2183,22 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		}
 
 		if err := validateAccountResult(entry, payload.MatchID, whiteAccount, blackAccount, payload.Winner); err != nil {
-			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		whiteAccount, blackAccount, accountChanged, err := finalizeLinkedAccounts(accounts, payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, payload.Winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore)
-		if err != nil {
-			http.Error(w, `{"error":"failed to finalize account result"}`, http.StatusBadRequest)
-			return
-		}
 		white, black, guestChanged, err := guests.FinalizeMatch(payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, payload.Winner)
 		if err != nil {
-			http.Error(w, `{"error":"failed to finalize account result"}`, http.StatusBadRequest)
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		whiteAccount, blackAccount, accountChanged, err := finalizeLinkedAccounts(accounts, payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, payload.Winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "failed to finalize account result")
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		respondJSON(w, http.StatusOK, map[string]any{
 			"changed":      guestChanged || accountChanged,
 			"white":        white,
 			"black":        black,
@@ -2274,7 +2313,9 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(entry)
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(&jsonContentTypeWriter{ResponseWriter: w}, r)
+	})
 }
 
 func enrichArchiveEntry(accounts platform.AccountDirectory, entry platform.MatchArchiveEntry) platform.MatchArchiveEntry {
@@ -2347,10 +2388,6 @@ func filterArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, status 
 	for _, entry := range matches {
 		entryStatus := strings.TrimSpace(entry.Status)
 		
-		// Skip waiting matches when filtering for active
-		if status == "active" && entryStatus == "waiting" {
-			continue
-		}
 		
 		// When filtering for "active", exclude matches that are actually finished
 		// (have a winner or finish reason) even if their status field says "active"
@@ -2499,6 +2536,13 @@ func listenAddr(key string, fallbackPort int) string {
 	return fmt.Sprintf(":%d", fallbackPort)
 }
 
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func parseOptionalModeID(raw string) contracts.MatchModeID {
 	if strings.TrimSpace(raw) == "" {
 		return ""
@@ -2560,7 +2604,7 @@ func archiveSQLitePath() string {
 }
 
 func archivePostgresURL() string {
-	return envOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "")
 }
 
 func guestStorePath() string {
@@ -2578,7 +2622,7 @@ func guestStoreSQLitePath() string {
 }
 
 func guestStorePostgresURL() string {
-	return envOrDefault("GUEST_STORE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("GUEST_STORE_POSTGRES_URL", "")
 }
 
 func accountStorePath() string {
@@ -2596,7 +2640,7 @@ func accountStoreSQLitePath() string {
 }
 
 func accountStorePostgresURL() string {
-	return envOrDefault("ACCOUNT_STORE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("ACCOUNT_STORE_POSTGRES_URL", "")
 }
 
 func friendshipStorePath() string {
@@ -2614,7 +2658,7 @@ func friendshipStoreSQLitePath() string {
 }
 
 func friendshipStorePostgresURL() string {
-	return envOrDefault("FRIEND_STORE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("FRIEND_STORE_POSTGRES_URL", "")
 }
 
 func directChallengeStorePath() string {
@@ -2646,11 +2690,11 @@ func moderationStoreSQLitePath() string {
 }
 
 func moderationStorePostgresURL() string {
-	return envOrDefault("MODERATION_STORE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("MODERATION_STORE_POSTGRES_URL", "")
 }
 
 func directChallengeStorePostgresURL() string {
-	return envOrDefault("DIRECT_CHALLENGE_STORE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("DIRECT_CHALLENGE_STORE_POSTGRES_URL", "")
 }
 
 func notificationStorePath() string {
@@ -2668,7 +2712,7 @@ func notificationStoreSQLitePath() string {
 }
 
 func notificationStorePostgresURL() string {
-	return envOrDefault("NOTIFICATION_STORE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("NOTIFICATION_STORE_POSTGRES_URL", "")
 }
 
 func accountEmailOutboxStorePath() string {
@@ -2686,7 +2730,7 @@ func accountEmailOutboxSQLitePath() string {
 }
 
 func accountEmailOutboxPostgresURL() string {
-	return envOrDefault("ACCOUNT_EMAIL_OUTBOX_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("ACCOUNT_EMAIL_OUTBOX_POSTGRES_URL", "")
 }
 
 func accountSecurityAuditStorePath() string {
@@ -2704,11 +2748,11 @@ func accountSecurityAuditSQLitePath() string {
 }
 
 func accountSecurityAuditPostgresURL() string {
-	return envOrDefault("ACCOUNT_SECURITY_AUDIT_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("ACCOUNT_SECURITY_AUDIT_POSTGRES_URL", "")
 }
 
 func matchClaimStoreRedisURL() string {
-	return envOrDefault("MATCH_CLAIM_STORE_REDIS_URL", "redis://127.0.0.1:6379/0")
+	return envOrDefault("MATCH_CLAIM_STORE_REDIS_URL", "")
 }
 
 func isRecoverableMatchStatus(status string) bool {
@@ -2917,7 +2961,7 @@ func openMatchClaimStore() (*platform.MatchClaimStore, error) {
 }
 
 func accountAuthPreviewEnabled() bool {
-	value := strings.TrimSpace(strings.ToLower(envOrDefault("ACCOUNT_AUTH_EXPOSE_PREVIEW_TOKENS", "true")))
+	value := strings.TrimSpace(strings.ToLower(envOrDefault("ACCOUNT_AUTH_EXPOSE_PREVIEW_TOKENS", "false")))
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 

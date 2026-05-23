@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
@@ -209,8 +212,20 @@ func main() {
 	})
 
 	addr := listenAddr("MATCHMAKING_ADDR", 8084)
-	log.Printf("matchmaking-service listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	srv := &http.Server{Addr: addr, Handler: limitBody(mux)}
+	go func() {
+		log.Printf("matchmaking-service listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("matchmaking-service shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }
 
 func envOrDefault(key, fallback string) string {
@@ -233,12 +248,19 @@ func listenAddr(key string, fallbackPort int) string {
 	return fmt.Sprintf(":%d", fallbackPort)
 }
 
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func matchmakingTicketStoreSQLitePath() string {
 	return envOrDefault("MATCHMAKING_TICKET_STORE_SQLITE_PATH", "data/matchmaking-tickets.sqlite")
 }
 
 func matchmakingTicketStoreRedisURL() string {
-	return envOrDefault("MATCHMAKING_TICKET_STORE_REDIS_URL", "redis://127.0.0.1:6379/0")
+	return envOrDefault("MATCHMAKING_TICKET_STORE_REDIS_URL", "")
 }
 
 func matchmakingTicketStoreRedisKey() string {

@@ -527,6 +527,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
   const pendingCardUseRef = React.useRef<Set<string>>(new Set());
   const cardUsedByRef     = React.useRef<{ white: boolean; black: boolean }>({ white: false, black: false });
+  const cardMsgTimerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resetCardUsed = React.useCallback((nextTurn: PieceColor) => {
     cardUsedByRef.current = { ...cardUsedByRef.current, [nextTurn]: false };
@@ -1408,6 +1409,19 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   React.useEffect(() => { posHistRef.current    = posHist;    }, [posHist]);
   React.useEffect(() => { overRef.current       = over;       }, [over]);
 
+  React.useEffect(() => {
+    return () => {
+      if (swapAnimTimerRef.current) clearTimeout(swapAnimTimerRef.current);
+      if (transformAnimTimerRef.current) clearTimeout(transformAnimTimerRef.current);
+      if (sacrificeAnimTimerRef.current) clearTimeout(sacrificeAnimTimerRef.current);
+      if (mindControlAnimTimerRef.current) clearTimeout(mindControlAnimTimerRef.current);
+      if (fuseAnimTimerRef.current) clearTimeout(fuseAnimTimerRef.current);
+      if (jumpAnimTimerRef.current) clearTimeout(jumpAnimTimerRef.current);
+      if (sniperAnimTimerRef.current) clearTimeout(sniperAnimTimerRef.current);
+      if (teleportAnimTimerRef.current) clearTimeout(teleportAnimTimerRef.current);
+    };
+  }, []);
+
   const gameIdRef = React.useRef(0);
   const [gameKey, setGameKey] = React.useState(0);
   const authoritativeMatchIdRef = React.useRef<string | null>(null);
@@ -1581,6 +1595,10 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     if (roundDrawCard && roundDrawColor) {
       setLastDrawAnim({ color: roundDrawColor, rarity: roundDrawCard.rarity as Rarity });
       setTimeout(() => setLastDrawAnim(null), 2000);
+    }
+    if (nextTurn !== turnRef.current) {
+      cardUsedByRef.current = { ...cardUsedByRef.current, [nextTurn]: false };
+      setCardUsedBy(prev => ({ ...prev, [nextTurn]: false }));
     }
     setBoard(nextBoard);
     setTurn(nextTurn);
@@ -2067,7 +2085,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     const shouldDecrement = currentTurn === 'white';
 
     const updatedBombs: BombPiece[] = [];
-    let nb = cloneBoard(currentBoard);
+    const nb = currentBoard;
     const newExplodingSqs: Sq[] = [];
 
     for (const bomb of bombs) {
@@ -2141,7 +2159,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       setBombPieces(updatedBombs);
     }
 
-    return nb;
+    return currentBoard;
   }, []);
 
 
@@ -2845,9 +2863,8 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
 
     const isFusionMate  = isCheck && !st.isMate && !fusionHasLegal;
-    const isFusionStale = !isCheck && !st.isStale && !fusionHasLegal && fusionCheck === false;
     const isMate  = st.isMate  || isFusionMate;
-    const isStale = st.isStale || isFusionStale;
+    const isStale = st.isStale;
 
     setCheck(isCheck);
     setMate(isMate);
@@ -2876,16 +2893,16 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       fireCardAnim('lava_kill', `Piece incinerated on ${FILES[tc]}${RANKS[tr]}`);
       setTimeout(() => {
         setBoard(b2 => { const nb2 = cloneBoard(b2); nb2[tr][tc] = null; return nb2; });
-        setLavaSquares(prev => prev.filter(l => !(l.row === tr && l.col === tc)));
+        setLavaSquares(prev =>
+          prev
+            .filter(l => !(l.row === tr && l.col === tc))
+            .map(l => ({ ...l, movesLeft: l.movesLeft - 1 }))
+            .filter((l): l is LavaSquare => l.movesLeft > 0)
+        );
         setLavaExploding(prev => prev.filter(l => !(l.row === tr && l.col === tc)));
       }, 700);
       return true;
     }
-    setLavaSquares(prev =>
-      prev
-        .map(l => l.row === tr && l.col === tc ? null : { ...l, movesLeft: l.movesLeft - 1 })
-        .filter((l): l is LavaSquare => l !== null && l.movesLeft > 0)
-    );
     return false;
   }, []);
 
@@ -3476,7 +3493,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           setCardUsedBy(prev => ({ ...prev, [playerColor]: false }));
           pendingCardUseRef.current.delete(jokerCard.id);
           setJokerPicker(null);
-          setCardMsg(`ðŸƒ Joker transformed into ${chosenTemplate.name} ${chosenTemplate.icon}!`);
+          setCardMsg(`🃏 Joker transformed into ${chosenTemplate.name} ${chosenTemplate.icon}!`);
           setTimeout(() => setCardMsg(''), 3000);
         }).catch(err => {
           pendingCardUseRef.current.delete(jokerCard.id);
@@ -3662,6 +3679,11 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           const total = updated.reduce((sum, sq) => sum + PIECE_VALUE[board[sq.row][sq.col]?.type ?? 'pawn'], 0);
           const goal = mechanic === 'smallsacrifice' ? 6 : 14;
           if (!piece) {
+            if (total < goal) {
+              setCardMsg(`Need at least ${goal} pts, only have ${total}. Select more pieces.`);
+              setTimeout(() => setCardMsg(''), 2500);
+              return;
+            }
             triggerSacrificeAnim(selected);
             const rewardCount = mechanic === 'smallsacrifice' ? 2 : 3;
             setCardMsg(`Sacrificed ${selected.length} piece(s) (${total} pts)! Drew ${rewardCount} cards.`);
@@ -3673,6 +3695,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           setCardMsg(`Choose demotion for ${FILES[col]}${RANKS[row]}`);
         }
         setTimeout(() => setCardMsg(''), 2000);
+        finishCardUse(card, playerColor);
       }).catch(err => {
         const message = err instanceof Error ? err.message : 'Card target failed';
         setCardMsg(message);
@@ -4457,7 +4480,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       default:
         return;
     }
-  }, [cardPending, board, finishCardUse, getSafeTransforms, activateDoubleMove, triggerSwapAnim, triggerTeleportAnim, triggerSacrificeAnim, triggerMindControlAnim, triggerFuseAnim, checkFusionRedundancy, isAttackedWithFusion, applyAuthoritativeSnapshot, authoritativeActorForColor]);
+  }, [cardPending, board, finishCardUse, getSafeTransforms, activateDoubleMove, triggerSwapAnim, triggerTeleportAnim, triggerSacrificeAnim, triggerMindControlAnim, triggerFuseAnim, triggerSniperAnim, triggerJumpAnim, checkFusionRedundancy, isAttackedWithFusion, applyAuthoritativeSnapshot, authoritativeActorForColor]);
 
   const handlePromoPick = React.useCallback((type: PieceType) => {
     if (!cardPending || !promoPicker) return;
@@ -4476,12 +4499,14 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       void applyIntent(authoritativeMatchIdRef.current, targetIntent).then(snapshot => {
         triggerTransformAnim(sq, (mechanic === 'promote' || mechanic === 'promotehim') ? 'up' : 'down', oldType, type, pieceColor);
         applyAuthoritativeSnapshot(snapshot);
-        setCardMsg(`${(mechanic === 'promote' || mechanic === 'promotehim') ? 'â¬†ï¸' : 'â¬‡ï¸'} ${FILES[sq.col]}${RANKS[sq.row]} ${(mechanic === 'promote' || mechanic === 'promotehim') ? 'promoted' : 'demoted'} to ${type}!`);
+        setCardMsg(`⬆️ ${FILES[sq.col]}${RANKS[sq.row]} ${(mechanic === 'promote' || mechanic === 'promotehim') ? 'promoted' : 'demoted'} to ${type}!`);
         setTimeout(() => setCardMsg(''), 2000);
+        finishCardUse(card, playerColor);
       }).catch(err => {
         const message = err instanceof Error ? err.message : 'Transform selection failed';
         setCardMsg(message);
         setTimeout(() => setCardMsg(''), 2000);
+        finishCardUse(card, playerColor);
       });
       return;
     }
@@ -4579,15 +4604,15 @@ export function useMatchEngine(props: UseMatchEngineProps) {
               setCardMsg('🎲 Gambler had no effect.');
             }
           } else if (card.mechanic === 'radar') {
-            setCardMsg('ðŸ“¡ Radar active! Enemy hand revealed for this turn.');
+            setCardMsg('📡 Radar active! Enemy hand revealed for this turn.');
           } else if (card.mechanic === 'cheater') {
             analyse(
               toFEN(snapshot.match.board as Board, snapshot.match.turn, new Set(snapshot.match.moved), snapshot.match.lastMove, snapshot.match.halfMoveClock, snapshot.match.fullMoveNumber),
               snapshot.match.turn,
             );
-            setCardMsg('ðŸ’¡ Cheater active for 3 turns! Engine panel shows best move.');
+            setCardMsg('💡 Cheater active for 3 turns! Engine panel shows best move.');
           } else if (card.mechanic === 'fortress') {
-            setCardMsg('ðŸ° Fortress ready. Click the board to place the 2x2 zone.');
+            setCardMsg('🏰 Fortress ready. Click the board to place the 2x2 zone.');
           } else {
             setCardMsg(CARD_TARGET_MESSAGES[card.mechanic] ?? 'Click a square...');
           }
@@ -4712,6 +4737,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           return;
         }
         setBoard(restored);
+        setTurn(prevSnap.turn);
         setMoved(prevSnap.moved);
         setLm(prevSnap.lm);
         setHmc(prevSnap.hmc);

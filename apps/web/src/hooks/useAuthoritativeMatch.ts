@@ -59,10 +59,12 @@ export function useAuthoritativeMatch() {
       throw new Error('Create a match before sending intents');
     }
 
+    const withId = { ...intent, clientMoveId: intent.clientMoveId ?? `mv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` };
+
     setIsLoading(true);
     setError(null);
     try {
-      const next = await applyIntent(matchId, intent);
+      const next = await applyIntent(matchId, withId);
       setSnapshot(next);
       return next;
     } catch (err) {

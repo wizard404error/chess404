@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
@@ -16,6 +19,8 @@ import (
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/gorilla/websocket"
 )
+
+const defaultAllowedOrigins = "https://web-production-9a697.up.railway.app"
 
 func main() {
 	mux := http.NewServeMux()
@@ -25,8 +30,15 @@ func main() {
 	}
 	defer func() { _ = archive.Close() }()
 	service := match.NewServiceWithArchive(archive)
+	allowed := parseAllowedOrigins()
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(_ *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			return isOriginAllowed(origin, allowed)
+		},
 	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -153,8 +165,20 @@ func main() {
 	})
 
 	addr := listenAddr("MATCH_SERVICE_ADDR", 8081)
-	log.Printf("match-service listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, withCORS(mux)))
+	srv := &http.Server{Addr: addr, Handler: limitBody(withCORS(mux))}
+	go func() {
+		log.Printf("match-service listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("match-service shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }
 
 func envOrDefault(key, fallback string) string {
@@ -192,7 +216,7 @@ func archiveSQLitePath() string {
 }
 
 func archivePostgresURL() string {
-	return envOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "postgres://postgres:postgres@127.0.0.1:5432/chess404?sslmode=disable")
+	return envOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "")
 }
 
 func openArchiveStore() (*platform.MatchArchiveStore, error) {
@@ -208,6 +232,13 @@ func openArchiveStore() (*platform.MatchArchiveStore, error) {
 
 func nowUTC() time.Time {
 	return time.Now().UTC()
+}
+
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -242,13 +273,25 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		return
 	}
 
+	playerID := strings.TrimSpace(r.URL.Query().Get("playerId"))
+	playerSecret := strings.TrimSpace(r.URL.Query().Get("playerSecret"))
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		unsubscribe()
 		return
 	}
+	conn.SetCloseHandler(func(code int, text string) error {
+		if playerID != "" && playerSecret != "" {
+			_ = service.MarkDisconnected(matchID, playerID, playerSecret, nowUTC())
+		}
+		return conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, ""), time.Now().Add(5*time.Second))
+	})
 	defer func() {
 		unsubscribe()
+		if playerID != "" && playerSecret != "" {
+			_ = service.MarkDisconnected(matchID, playerID, playerSecret, nowUTC())
+		}
 		_ = conn.Close()
 	}()
 
@@ -285,14 +328,19 @@ func writeEnvelope(conn *websocket.Conn, messageType string, payload any) error 
 }
 
 func withCORS(next http.Handler) http.Handler {
+	allowed := parseAllowedOrigins()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
+		if origin == "" || isOriginAllowed(origin, allowed) {
+			if origin == "" {
+				origin = allowed[0]
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "none")
+			w.Header().Set("Vary", "Origin")
 		}
-
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -303,4 +351,29 @@ func withCORS(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func parseAllowedOrigins() []string {
+	raw := envOrDefault("ALLOWED_ORIGINS", defaultAllowedOrigins)
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, defaultAllowedOrigins)
+	}
+	return out
+}
+
+func isOriginAllowed(origin string, allowed []string) bool {
+	for _, a := range allowed {
+		if strings.EqualFold(origin, a) {
+			return true
+		}
+	}
+	return false
 }

@@ -705,12 +705,12 @@ func TestPresenceHeartbeatMarksSeatsConnectedInSnapshot(t *testing.T) {
 	}, now)
 
 	if err := service.HeartbeatPresence("presence_connected", contracts.MatchPresenceRequest{
-		PlayerID: "white_player",
+		PlayerID: "guest-white",
 	}, now.Add(3*time.Second)); err != nil {
 		t.Fatalf("expected white heartbeat to succeed, got %v", err)
 	}
 	if err := service.HeartbeatPresence("presence_connected", contracts.MatchPresenceRequest{
-		PlayerID: "black_player",
+		PlayerID: "guest-black",
 	}, now.Add(4*time.Second)); err != nil {
 		t.Fatalf("expected black heartbeat to succeed, got %v", err)
 	}
@@ -736,13 +736,13 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 		BlackGuestID: "guest-black",
 	}, now)
 
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "white_player"}, now); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-white"}, now); err != nil {
 		t.Fatalf("expected white heartbeat to succeed, got %v", err)
 	}
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "black_player"}, now); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-black"}, now); err != nil {
 		t.Fatalf("expected black heartbeat to succeed, got %v", err)
 	}
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "black_player"}, now.Add(20*time.Second)); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-black"}, now.Add(20*time.Second)); err != nil {
 		t.Fatalf("expected follow-up black heartbeat to succeed, got %v", err)
 	}
 
@@ -758,7 +758,7 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 		t.Fatalf("expected match to stay active during grace, got %q", graceSnapshot.Match.Status)
 	}
 
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "black_player"}, now.Add(65*time.Second)); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-black"}, now.Add(65*time.Second)); err != nil {
 		t.Fatalf("expected black heartbeat during grace to succeed, got %v", err)
 	}
 	service.collectBroadcasts(now.Add(80 * time.Second))
@@ -822,7 +822,7 @@ func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 	if _, err := service.ApplyIntent(contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "reconcile_room",
-		PlayerID: "white_player",
+		PlayerID: "guest-white",
 		From:     &contracts.Square{Row: 1, Col: 4},
 		To:       &contracts.Square{Row: 3, Col: 4},
 	}, base.Add(10*time.Second)); err != nil {
