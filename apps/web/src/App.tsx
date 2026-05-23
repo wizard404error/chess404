@@ -30,6 +30,7 @@ import CommunityPage from './CommunityPage';
 import StatusPage from './StatusPage';
 import AccountPage from './AccountPage';
 import AppShell, { type ShellNavGroup, type ShellNavItem, type ShellPageMeta } from './components/layout/AppShell';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   AdminIcon,
   CardsIcon,
@@ -623,7 +624,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <>
-    <PlatformContext.Provider value={{
+    <PlatformContext.Provider value={React.useMemo(() => ({
       hostedRuntime, setHostedRuntime,
       whiteProfile, blackProfile,
       queueLaunchIntent,
@@ -655,7 +656,40 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
       requestedMatchIdRef,
       readStoredGuestIdentity,
       copyLiveMatchLink: (matchId: string) => { void copyLiveMatchLink(matchId); },
-    }}>
+    }), [
+      hostedRuntime, setHostedRuntime,
+      whiteProfile, blackProfile,
+      queueLaunchIntent,
+      activeMatchRoomMeta,
+      authoritativeMatchId, setAuthoritativeMatchId,
+      primaryAccountIdentity,
+      boardStatusLabel,
+      viewerSeat,
+      matchDestinationNotice,
+      setActivePage,
+      openLiveMatch,
+      openReplayMatch,
+      openProfileHandle,
+      openGuestHistory,
+      historyFocusMatchId, setHistoryFocusMatchId,
+      historyFocusGuestId, setHistoryFocusGuestId,
+      communityFocusGuestId, setCommunityFocusGuestId,
+      socialLiveToken,
+      setInboxUnreadCount,
+      profileFocusHandle,
+      shellAccountNotice,
+      hasPrimaryAccountSession,
+      accountActionQueryDetected,
+      handlePrimaryShellAuthenticated,
+      handleSeatAuthenticated,
+      syncPrimaryAccountIdentity,
+      writeStoredActiveMatchId,
+      clearRequestedMatchQuery,
+      requestedMatchIdRef,
+      readStoredGuestIdentity,
+      copyLiveMatchLink,
+    ])}>
+    <ErrorBoundary>
     <div style={{
       display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
       fontFamily:"'Segoe UI', sans-serif",
@@ -1903,6 +1937,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
       ) : null}
       </AppShell>
     </div>
+    </ErrorBoundary>
     </PlatformContext.Provider>
     </>
   );

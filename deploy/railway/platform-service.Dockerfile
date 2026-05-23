@@ -15,6 +15,9 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/platform-service /usr/local/bin/platform-service
 
+RUN adduser -D -g '' -u 1001 nobody
+USER nobody
+
 EXPOSE 8080
 
 CMD ["/usr/local/bin/platform-service"]

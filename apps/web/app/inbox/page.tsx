@@ -6,6 +6,7 @@ export default function Route() {
   const platform = usePlatform();
   React.useEffect(() => {
     platform.setActivePage('Inbox');
-  }, [platform]);
+  }, [platform.setActivePage]);
   return null;
 }
+

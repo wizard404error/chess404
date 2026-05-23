@@ -249,6 +249,7 @@ type MatchSnapshotResponse struct {
 	ReplayHead   int             `json:"replayHead"`
 	ReplayFrames []ReplayFrame   `json:"replayFrames,omitempty"`
 	Events       []ResolvedEvent `json:"events,omitempty"`
+	SeqNum       int64           `json:"seqNum,omitempty"`
 }
 
 type CreateMatchRequest struct {

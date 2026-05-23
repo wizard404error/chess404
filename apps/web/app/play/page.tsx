@@ -9,7 +9,8 @@ export default function PlayRoute() {
 
   React.useEffect(() => {
     platform.setActivePage('Play');
-  }, [platform]);
+  }, [platform.setActivePage]);
 
   return null;
 }
+

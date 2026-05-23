@@ -25,4 +25,4 @@ WORKDIR /app/apps/web
 
 EXPOSE 8080
 
-CMD ["sh", "-lc", "pnpm start --hostname 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", "exec node_modules/.bin/next start --hostname 0.0.0.0 --port ${PORT:-8080}"]
