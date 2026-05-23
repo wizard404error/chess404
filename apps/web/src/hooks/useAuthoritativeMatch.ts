@@ -10,11 +10,22 @@ type IntentWithoutMatch = PlayerIntent extends infer T
     : never
   : never;
 
+let _clientMoveCounter = 0;
+
+function nextClientMoveId(): string {
+  _clientMoveCounter += 1;
+  return "mv_" + Date.now() + "_" + _clientMoveCounter + "_" + Math.random().toString(36).slice(2, 9);
+}
+
 export function useAuthoritativeMatch() {
   const [snapshot, setSnapshot] = React.useState<MatchSnapshotMessage | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [isStreaming, setIsStreaming] = React.useState(false);
+
+  // Ref to hold latest snapshot, avoiding stale closures in callbacks
+  const snapshotRef = React.useRef(snapshot);
+  snapshotRef.current = snapshot;
 
   const create = React.useCallback(async () => {
     setIsLoading(true);
@@ -33,7 +44,7 @@ export function useAuthoritativeMatch() {
   }, []);
 
   const refresh = React.useCallback(async (matchId?: string) => {
-    const id = matchId ?? snapshot?.match.matchId;
+    const id = matchId ?? snapshotRef.current?.match.matchId;
     if (!id) {
       throw new Error('No match id available');
     }
@@ -51,15 +62,18 @@ export function useAuthoritativeMatch() {
     } finally {
       setIsLoading(false);
     }
-  }, [snapshot?.match.matchId]);
+  }, []);
 
   const sendIntent = React.useCallback(async (intent: IntentWithoutMatch) => {
-    const matchId = snapshot?.match.matchId;
+    const matchId = snapshotRef.current?.match.matchId;
     if (!matchId) {
       throw new Error('Create a match before sending intents');
     }
 
-    const withId = { ...intent, clientMoveId: intent.clientMoveId ?? `mv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}` };
+    const withId = {
+      ...intent,
+      clientMoveId: intent.clientMoveId ?? nextClientMoveId(),
+    };
 
     setIsLoading(true);
     setError(null);
@@ -74,10 +88,10 @@ export function useAuthoritativeMatch() {
     } finally {
       setIsLoading(false);
     }
-  }, [snapshot?.match.matchId]);
+  }, []);
 
   React.useEffect(() => {
-    const matchId = snapshot?.match.matchId;
+    const matchId = snapshotRef.current?.match.matchId;
     if (!matchId) {
       setIsStreaming(false);
       return;
@@ -100,13 +114,20 @@ export function useAuthoritativeMatch() {
     };
   }, [snapshot?.match.matchId]);
 
+  // Polling fallback: only poll if NOT streaming (or as periodic sync)
+  // Reduced interval and skip when WS is active
   React.useEffect(() => {
-    const matchId = snapshot?.match.matchId;
-    if (!matchId || snapshot?.match.status !== 'active') {
+    const currentSnapshot = snapshotRef.current;
+    const matchId = currentSnapshot?.match.matchId;
+    if (!matchId || currentSnapshot?.match.status !== 'active') {
       return;
     }
 
     const interval = window.setInterval(() => {
+      // Skip polling if the stream is currently connected
+      if (isStreaming) {
+        return;
+      }
       void fetchMatch(matchId).then(next => {
         setSnapshot(next);
         setError(null);
@@ -116,7 +137,7 @@ export function useAuthoritativeMatch() {
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [snapshot?.match.matchId, snapshot?.match.status]);
+  }, [snapshot?.match.matchId, snapshot?.match.status, isStreaming]);
 
   return {
     snapshot,

@@ -38,6 +38,7 @@ type Service struct {
 	presence map[string]*matchPresenceState
 	archive  MatchArchiver
 	stopCh   chan struct{}
+	seqNum   int64
 }
 
 type matchPresenceState struct {
@@ -833,13 +834,17 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 		}
 	}
 
-	savedClock := state.Clock
-	savedStatus := state.Status
-	savedWinner := state.Winner
-	savedFinishReason := state.FinishReason
-
 	timeoutEvents := syncClockForMutation(state, now)
 	if len(timeoutEvents) > 0 {
+		if events, err := applyIntent(state, intent, now); err == nil {
+			events = append(events, timeoutEvents...)
+			s.events[intent.MatchID] = append(s.events[intent.MatchID], events...)
+			presence := s.ensurePresenceStateLocked(intent.MatchID, state, now)
+			snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), events, now)
+			s.persistSnapshot(buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now))
+			s.broadcastLocked(intent.MatchID, snapshot)
+			return snapshot, nil
+		}
 		s.events[intent.MatchID] = append(s.events[intent.MatchID], timeoutEvents...)
 		presence := s.ensurePresenceStateLocked(intent.MatchID, state, now)
 		snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), timeoutEvents, now)
@@ -847,6 +852,11 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 		s.broadcastLocked(intent.MatchID, snapshot)
 		return snapshot, nil
 	}
+
+	savedClock := state.Clock
+	savedStatus := state.Status
+	savedWinner := state.Winner
+	savedFinishReason := state.FinishReason
 
 	events, err := applyIntent(state, intent, now)
 	if err != nil {
@@ -859,6 +869,9 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 	if shouldEvaluateAutomaticMatchFinish(state, intent) {
 		events = finalizeAutomaticMatchFinish(state, events, now, intent.PlayerID)
 	}
+
+	timeoutEvents = syncClockForMutation(state, now)
+	events = append(events, timeoutEvents...)
 
 	if intent.ClientMoveID != "" {
 		state.SeenClientMoveIDs = append(state.SeenClientMoveIDs, intent.ClientMoveID)
@@ -1009,7 +1022,7 @@ func (s *Service) Subscribe(matchID string) (<-chan contracts.MatchSnapshotRespo
 		s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]struct{})
 	}
 
-	ch := make(chan contracts.MatchSnapshotResponse, 8)
+	ch := make(chan contracts.MatchSnapshotResponse, 128)
 	s.subs[matchID][ch] = struct{}{}
 
 	initial := contracts.MatchSnapshotResponse{
@@ -1312,6 +1325,7 @@ func (s *Service) broadcastLocked(matchID string, snapshot contracts.MatchSnapsh
 		return
 	}
 
+	snapshot.SeqNum = s.seqNum
 	for ch := range subscribers {
 		pushSnapshot(ch, snapshot)
 	}
@@ -1324,15 +1338,7 @@ func pushSnapshot(ch chan contracts.MatchSnapshotResponse, snapshot contracts.Ma
 	select {
 	case ch <- snapshot:
 	default:
-		select {
-		case <-ch:
-		default:
-		}
-		select {
-		case ch <- snapshot:
-		default:
-			log.Printf("pushSnapshot: dropping event for channel %p (buffer full)", ch)
-		}
+		log.Printf("pushSnapshot: dropping event seq=%d for channel %p (buffer full)", snapshot.SeqNum, ch)
 	}
 }
 
@@ -1340,8 +1346,7 @@ func (s *Service) startBroadcaster() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	// Note: collectBroadcasts releases the lock between building and broadcasting, creating a race window.
-	for {
+		for {
 		select {
 		case <-s.stopCh:
 			return
@@ -1349,34 +1354,16 @@ func (s *Service) startBroadcaster() {
 			if !ok {
 				return
 			}
-			items := s.collectBroadcasts(now.UTC())
-
-			if len(items) == 0 {
-				continue
-			}
-
-			s.mu.RLock()
-			for _, item := range items {
-				subscribers := s.subs[item.matchID]
-				for ch := range subscribers {
-					pushSnapshot(ch, item.snapshot)
-				}
-			}
-			s.mu.RUnlock()
+			s.collectAndBroadcast(now.UTC())
+			s.gcFinishedMatches(now.UTC())
 		}
 	}
 }
 
-type broadcastItem struct {
-	matchID  string
-	snapshot contracts.MatchSnapshotResponse
-}
-
-func (s *Service) collectBroadcasts(now time.Time) []broadcastItem {
+func (s *Service) collectAndBroadcast(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	items := make([]broadcastItem, 0, len(s.matches))
 	for matchID, state := range s.matches {
 		if state.Status == "finished" {
 			continue
@@ -1391,10 +1378,8 @@ func (s *Service) collectBroadcasts(now time.Time) []broadcastItem {
 			timeoutEvents := syncClockForMutation(state, now)
 			if len(timeoutEvents) > 0 {
 				s.events[matchID] = append(s.events[matchID], timeoutEvents...)
-				items = append(items, broadcastItem{
-					matchID:  matchID,
-					snapshot: buildSnapshotWithPresence(state, presence, len(s.events[matchID]), timeoutEvents, now),
-				})
+				s.seqNum++
+				s.broadcastLocked(matchID, buildSnapshotWithPresence(state, presence, len(s.events[matchID]), timeoutEvents, now))
 			}
 			s.persistSnapshot(buildSnapshot(state, len(s.events[matchID]), s.events[matchID], now))
 			if len(timeoutEvents) > 0 {
@@ -1406,22 +1391,35 @@ func (s *Service) collectBroadcasts(now time.Time) []broadcastItem {
 		if len(runtimeEvents) > 0 {
 			s.events[matchID] = append(s.events[matchID], runtimeEvents...)
 			s.persistSnapshot(buildSnapshot(state, len(s.events[matchID]), s.events[matchID], now))
-			items = append(items, broadcastItem{
-				matchID:  matchID,
-				snapshot: buildSnapshotWithPresence(state, presence, len(s.events[matchID]), runtimeEvents, now),
-			})
+			s.seqNum++
+			s.broadcastLocked(matchID, buildSnapshotWithPresence(state, presence, len(s.events[matchID]), runtimeEvents, now))
 			continue
 		}
 		if len(s.subs[matchID]) == 0 {
 			continue
 		}
-		items = append(items, broadcastItem{
-			matchID:  matchID,
-			snapshot: buildSnapshotWithPresence(state, presence, len(s.events[matchID]), nil, now),
-		})
+		s.seqNum++
+		s.broadcastLocked(matchID, buildSnapshotWithPresence(state, presence, len(s.events[matchID]), nil, now))
 	}
+}
 
-	return items
+func (s *Service) gcFinishedMatches(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	const finishedMatchTTL = 5 * time.Minute
+	for matchID, state := range s.matches {
+		if state.Status != "finished" {
+			continue
+		}
+		if now.Sub(state.UpdatedAt) < finishedMatchTTL {
+			continue
+		}
+		delete(s.matches, matchID)
+		delete(s.events, matchID)
+		delete(s.subs, matchID)
+		delete(s.presence, matchID)
+	}
 }
 
 func applyIntent(state *contracts.MatchState, intent contracts.PlayerIntent, now time.Time) ([]contracts.ResolvedEvent, error) {
@@ -2566,7 +2564,7 @@ func applyMove(state *contracts.MatchState, intent contracts.PlayerIntent, now t
 		}
 	}
 
-	legal := legalMoves(state.Board, *intent.From, state.LastMove, sliceToSet(state.Moved))
+	legal := legalMovesWithFusion(state.Board, *intent.From, state.LastMove, sliceToSet(state.Moved))
 	if !containsSquare(legal, *intent.To) {
 		return nil, errors.New("illegal move")
 	}

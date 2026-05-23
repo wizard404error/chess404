@@ -18,6 +18,7 @@ import (
 
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/matchmaking"
+	"github.com/chess404/realtime/internal/rate_limit"
 )
 
 func main() {
@@ -27,6 +28,7 @@ func main() {
 		log.Fatalf("failed to initialize matchmaking service: %v", err)
 	}
 	defer func() { _ = service.Close() }()
+	rl := rate_limit.New()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -212,7 +214,14 @@ func main() {
 	})
 
 	addr := listenAddr("MATCHMAKING_ADDR", 8084)
-	srv := &http.Server{Addr: addr, Handler: limitBody(mux)}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           limitBody(rl.Middleware(rate_limit.DefaultQueueWindow, rate_limit.DefaultQueueLimit)(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		log.Printf("matchmaking-service listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

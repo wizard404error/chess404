@@ -3443,7 +3443,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
 
       rafRef.current = requestAnimationFrame(draw);
     };
-
+    cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
   }, [

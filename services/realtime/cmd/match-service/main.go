@@ -17,10 +17,11 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/match"
 	"github.com/chess404/realtime/internal/platform"
+	"github.com/chess404/realtime/internal/rate_limit"
 	"github.com/gorilla/websocket"
 )
 
-const defaultAllowedOrigins = "https://web-production-9a697.up.railway.app"
+const defaultAllowedOrigins = ""
 
 func main() {
 	mux := http.NewServeMux()
@@ -30,12 +31,13 @@ func main() {
 	}
 	defer func() { _ = archive.Close() }()
 	service := match.NewServiceWithArchive(archive)
+	rl := rate_limit.New()
 	allowed := parseAllowedOrigins()
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				return true
+				return false
 			}
 			return isOriginAllowed(origin, allowed)
 		},
@@ -165,7 +167,14 @@ func main() {
 	})
 
 	addr := listenAddr("MATCH_SERVICE_ADDR", 8081)
-	srv := &http.Server{Addr: addr, Handler: limitBody(withCORS(mux))}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           limitBody(withCORS(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux))),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		log.Printf("match-service listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -338,7 +347,6 @@ func withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		} else {
-			w.Header().Set("Access-Control-Allow-Origin", "none")
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

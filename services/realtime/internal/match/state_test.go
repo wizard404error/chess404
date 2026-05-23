@@ -746,7 +746,7 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 		t.Fatalf("expected follow-up black heartbeat to succeed, got %v", err)
 	}
 
-	service.collectBroadcasts(now.Add(30 * time.Second))
+	service.collectAndBroadcast(now.Add(30 * time.Second))
 	graceSnapshot, err := service.GetMatch("presence_abandon")
 	if err != nil {
 		t.Fatalf("expected grace snapshot to load, got %v", err)
@@ -761,7 +761,7 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-black"}, now.Add(65*time.Second)); err != nil {
 		t.Fatalf("expected black heartbeat during grace to succeed, got %v", err)
 	}
-	service.collectBroadcasts(now.Add(80 * time.Second))
+	service.collectAndBroadcast(now.Add(80 * time.Second))
 
 	finishedSnapshot, err := service.GetMatch("presence_abandon")
 	if err != nil {
@@ -788,7 +788,7 @@ func TestDisconnectGraceFinishesBothDisconnectedNoMoveMatchAsAbort(t *testing.T)
 		BlackGuestID: "guest-black",
 	}, now)
 
-	service.collectBroadcasts(now.Add(presenceHeartbeatTimeout + disconnectGracePeriod + time.Second))
+	service.collectAndBroadcast(now.Add(presenceHeartbeatTimeout + disconnectGracePeriod + time.Second))
 
 	finishedSnapshot, err := service.GetMatch("presence_both_abort")
 	if err != nil {
@@ -841,7 +841,7 @@ func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 		t.Fatalf("expected unfinished archived room to preload on startup, got %#v", stats)
 	}
 
-	restarted.collectBroadcasts(time.Now().UTC())
+	restarted.collectAndBroadcast(time.Now().UTC())
 
 	reconciled, err := restarted.GetMatch("reconcile_room")
 	if err != nil {

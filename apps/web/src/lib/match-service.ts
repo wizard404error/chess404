@@ -277,6 +277,10 @@ export function connectToMatchStream(
 
     nextSocket.addEventListener('error', event => {
       handlers.onError?.(event);
+      // Close the socket so the close handler triggers reconnection
+      if (!disposed) {
+        nextSocket.close();
+      }
     });
 
     nextSocket.addEventListener('close', () => {

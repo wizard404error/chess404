@@ -15,6 +15,9 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/gateway /usr/local/bin/gateway
 
+RUN adduser -D -g '' -u 1001 nobody
+USER nobody
+
 EXPOSE 8080
 
 CMD ["/usr/local/bin/gateway"]

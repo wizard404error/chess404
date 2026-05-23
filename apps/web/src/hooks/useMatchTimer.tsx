@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import type { PieceColor } from '@chess404/contracts';
 
 export interface UseMatchTimerProps {
@@ -30,6 +30,12 @@ export function useMatchTimer({
   const [abortActive, setAbortActive] = React.useState(true);
   const abortRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Use refs for callbacks to avoid stale closures in intervals
+  const onTimeoutRef = React.useRef(onTimeout);
+  onTimeoutRef.current = onTimeout;
+  const onAbortRef = React.useRef(onAbort);
+  onAbortRef.current = onAbort;
+
   const setTicking = React.useCallback((v: PieceColor | null) => {
     tickingRef.current = v;
     setTickingState(v);
@@ -60,10 +66,10 @@ export function useMatchTimer({
         clearInterval(abortRef.current!);
         abortRef.current = null;
         setAbortActive(false);
-        onAbort();
+        onAbortRef.current();
       }
     }, 1000);
-  }, [initialAbortSecs, onAbort]);
+  }, [initialAbortSecs]);
 
   const resetTimer = React.useCallback(() => {
     setTimeW(initialClockStart);
@@ -86,18 +92,18 @@ export function useMatchTimer({
       if (ticking === null) return;
       if (ticking === 'white') {
         setTimeW(t => {
-          if (t <= 1) { clearInterval(clockRef.current!); onTimeout('white'); return 0; }
+          if (t <= 1) { clearInterval(clockRef.current!); onTimeoutRef.current('white'); return 0; }
           return t - 1;
         });
       } else {
         setTimeB(t => {
-          if (t <= 1) { clearInterval(clockRef.current!); onTimeout('black'); return 0; }
+          if (t <= 1) { clearInterval(clockRef.current!); onTimeoutRef.current('black'); return 0; }
           return t - 1;
         });
       }
     }, 1000);
     return () => { if (clockRef.current) clearInterval(clockRef.current); };
-  }, [clockActive, over, authoritativeLive, onTimeout]);
+  }, [clockActive, over, authoritativeLive]);
 
   return {
     timeW, setTimeW,

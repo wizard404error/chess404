@@ -15,6 +15,9 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/match-service /usr/local/bin/match-service
 
+RUN adduser -D -g '' -u 1001 nobody
+USER nobody
+
 EXPOSE 8080
 
 CMD ["/usr/local/bin/match-service"]

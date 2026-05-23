@@ -23,6 +23,7 @@ const (
 const (
 	defaultMatchedRecoveryTTL = 3 * time.Minute
 	defaultCancelledTicketTTL = 30 * time.Second
+	defaultMaxRatingDiff      = 400
 )
 
 type TicketStatus string
@@ -207,7 +208,7 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 		UpdatedAt:   now,
 	}
 
-	if opponent, ok := s.findMatchCandidateLocked(queue, modeID, guestID); ok {
+	if opponent, ok := s.findMatchCandidateLocked(queue, modeID, guestID, rating); ok {
 		matchedAt := now
 		roomID := "room_" + randomToken(5)
 		assignment := MatchAssignment{
@@ -223,11 +224,32 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 			WhitePlayerSecret: "seat_" + randomToken(12),
 			BlackPlayerSecret: "seat_" + randomToken(12),
 		}
+		s.tickets[ticket.TicketID] = ticket
+		s.tickets[opponent.TicketID] = opponent
+		if err := s.persistLocked(); err != nil {
+			delete(s.tickets, ticket.TicketID)
+			delete(s.tickets, opponent.TicketID)
+			return Ticket{}, err
+		}
+
 		if s.creator != nil {
-			if err := s.creator.CreateMatch(assignment); err != nil {
+			resultCh := make(chan error, 1)
+			go func() {
+				resultCh <- s.creator.CreateMatch(assignment)
+			}()
+			s.mu.Unlock()
+			err := <-resultCh
+			s.mu.Lock()
+			if err != nil {
+				delete(s.tickets, ticket.TicketID)
+				delete(s.tickets, opponent.TicketID)
+				if err2 := s.persistLocked(); err2 != nil {
+					log.Printf("failed to persist after CreateMatch rollback: %v", err2)
+				}
 				return Ticket{}, err
 			}
 		}
+
 		ticket.Status = StatusMatched
 		ticket.MatchedAt = &matchedAt
 		ticket.MatchedWith = opponent.GuestID
@@ -406,10 +428,17 @@ func (s *Service) Stats() ServiceStats {
 	return stats
 }
 
-func (s *Service) findMatchCandidateLocked(queue QueueName, modeID contracts.MatchModeID, guestID string) (Ticket, bool) {
+func (s *Service) findMatchCandidateLocked(queue QueueName, modeID contracts.MatchModeID, guestID string, rating int) (Ticket, bool) {
 	candidates := make([]Ticket, 0)
 	for _, ticket := range s.tickets {
 		if ticket.Queue != queue || normalizeModeID(ticket.ModeID) != modeID || ticket.Status != StatusQueued || ticket.GuestID == guestID {
+			continue
+		}
+		diff := ticket.Rating - rating
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > defaultMaxRatingDiff {
 			continue
 		}
 		candidates = append(candidates, ticket)

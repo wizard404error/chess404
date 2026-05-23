@@ -20,6 +20,7 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/matchmaking"
 	"github.com/chess404/realtime/internal/platform"
+	"github.com/chess404/realtime/internal/rate_limit"
 )
 
 type GatewayConfig struct {
@@ -198,9 +199,17 @@ func main() {
 	config := gatewayConfigFromEnv()
 	client := &http.Client{Timeout: 3 * time.Second}
 	mux := buildGatewayMux(config, client)
+	rl := rate_limit.New()
 
 	addr := listenAddr("GATEWAY_ADDR", 8080)
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		certFile := os.Getenv("TLS_CERT_FILE")
 		keyFile := os.Getenv("TLS_KEY_FILE")

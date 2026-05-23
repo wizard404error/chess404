@@ -16,6 +16,7 @@ import (
 
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/platform"
+	"github.com/chess404/realtime/internal/rate_limit"
 )
 
 func main() {
@@ -77,9 +78,17 @@ func main() {
 	}
 	defer func() { _ = claims.Close() }()
 	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
+	rl := rate_limit.New()
 
 	addr := listenAddr("PLATFORM_ADDR", 8083)
-	srv := &http.Server{Addr: addr, Handler: limitBody(mux)}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           limitBody(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		log.Printf("platform-service listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
