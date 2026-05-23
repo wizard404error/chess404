@@ -179,7 +179,8 @@ export function connectToMatchStream(
     onSnapshot: (snapshot: MatchSnapshotMessage) => void;
     onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void;
     onError?: (error: Event) => void;
-  }
+  },
+  playerIdentity?: { playerId: string; playerSecret: string } | null
 ): () => void {
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
@@ -252,7 +253,10 @@ export function connectToMatchStream(
       schedulePoll(reconnectAttempt > 0 ? MATCH_POLL_RETRY_INTERVAL_MS : 0);
       return;
     }
-    const nextSocket = new WebSocket(`${nextSocketUrl}/api/matches/${matchId}/ws`);
+    const wsUrl = playerIdentity
+      ? `${nextSocketUrl}/api/matches/${matchId}/ws?playerId=${encodeURIComponent(playerIdentity.playerId)}&playerSecret=${encodeURIComponent(playerIdentity.playerSecret)}`
+      : `${nextSocketUrl}/api/matches/${matchId}/ws`;
+    const nextSocket = new WebSocket(wsUrl);
     socket = nextSocket;
 
     nextSocket.addEventListener('open', () => {

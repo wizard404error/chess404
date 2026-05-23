@@ -110,7 +110,11 @@ func (s *MatchArchiveStore) Close() error {
 	if s.store == nil {
 		return nil
 	}
-	return s.store.close()
+	err := s.store.close()
+	s.store = nil
+	s.entries = nil
+	s.private = nil
+	return err
 }
 
 func (s *MatchArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) error {
@@ -135,7 +139,7 @@ func (s *MatchArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) err
 		CreatedAt:      match.CreatedAt,
 		UpdatedAt:      match.UpdatedAt,
 		MoveCount:      len(match.MoveHistory),
-		Snapshot:       snapshot,
+		Snapshot:       cloneSnapshot(snapshot),
 	}
 	if len(match.MoveHistory) > 0 {
 		entry.LastMove = match.MoveHistory[len(match.MoveHistory)-1]
@@ -153,7 +157,10 @@ func (s *MatchArchiveStore) Get(matchID string) (MatchArchiveEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry, ok := s.entries[matchID]
-	return entry, ok
+	if !ok {
+		return entry, false
+	}
+	return cloneArchiveEntry(entry), true
 }
 
 func (s *MatchArchiveStore) LoadMatch(matchID string) (contracts.MatchState, []contracts.ResolvedEvent, bool) {
@@ -208,6 +215,9 @@ func (s *MatchArchiveStore) List(limit int) []MatchArchiveEntry {
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
 	}
+	for i := range items {
+		items[i] = cloneArchiveEntry(items[i])
+	}
 	return items
 }
 
@@ -215,17 +225,19 @@ func (s *MatchArchiveStore) ListUnfinishedMatchIDs(limit int) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	items := sortEntriesByUpdatedAt(s.entries)
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
-	}
-
-	ids := make([]string, 0, len(items))
-	for _, entry := range items {
+	ids := make([]string, 0, len(s.entries))
+	for _, entry := range s.entries {
 		if strings.EqualFold(strings.TrimSpace(entry.Status), "finished") {
 			continue
 		}
 		ids = append(ids, entry.MatchID)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := s.entries[ids[i]], s.entries[ids[j]]
+		return a.UpdatedAt.After(b.UpdatedAt)
+	})
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
 	}
 	return ids
 }
@@ -234,14 +246,15 @@ func (s *MatchArchiveStore) ListByGuest(guestID string, limit int) []MatchArchiv
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filtered := make(map[string]MatchArchiveEntry)
-	for matchID, entry := range s.entries {
+	items := make([]MatchArchiveEntry, 0, len(s.entries))
+	for _, entry := range s.entries {
 		if entry.WhiteGuestID == guestID || entry.BlackGuestID == guestID {
-			filtered[matchID] = entry
+			items = append(items, cloneArchiveEntry(entry))
 		}
 	}
-
-	items := sortEntriesByUpdatedAt(filtered)
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
 	}
@@ -252,6 +265,10 @@ func (s *MatchArchiveStore) ListByAccount(accountID string, linkedGuestIDs []str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if strings.TrimSpace(accountID) == "" {
+		return nil
+	}
+
 	guestIDs := make(map[string]struct{}, len(linkedGuestIDs))
 	for _, guestID := range linkedGuestIDs {
 		if guestID == "" {
@@ -260,22 +277,23 @@ func (s *MatchArchiveStore) ListByAccount(accountID string, linkedGuestIDs []str
 		guestIDs[guestID] = struct{}{}
 	}
 
-	filtered := make(map[string]MatchArchiveEntry)
-	for matchID, entry := range s.entries {
+	items := make([]MatchArchiveEntry, 0, len(s.entries))
+	for _, entry := range s.entries {
 		if entry.WhiteAccountID == accountID || entry.BlackAccountID == accountID {
-			filtered[matchID] = entry
+			items = append(items, cloneArchiveEntry(entry))
 			continue
 		}
 		if _, ok := guestIDs[entry.WhiteGuestID]; ok {
-			filtered[matchID] = entry
+			items = append(items, cloneArchiveEntry(entry))
 			continue
 		}
 		if _, ok := guestIDs[entry.BlackGuestID]; ok {
-			filtered[matchID] = entry
+			items = append(items, cloneArchiveEntry(entry))
 		}
 	}
-
-	items := sortEntriesByUpdatedAt(filtered)
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
 	if limit > 0 && len(items) > limit {
 		items = items[:limit]
 	}
@@ -451,9 +469,35 @@ func clonePayload(payload map[string]any) map[string]any {
 	}
 	cloned := make(map[string]any, len(payload))
 	for key, value := range payload {
-		cloned[key] = value
+		cloned[key] = deepCloneAny(value)
 	}
 	return cloned
+}
+
+func deepCloneAny(value any) any {
+	if value == nil {
+		return nil
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		return clonePayload(v)
+	case []any:
+		if v == nil {
+			return nil
+		}
+		cloned := make([]any, len(v))
+		for i, item := range v {
+			cloned[i] = deepCloneAny(item)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func cloneArchiveEntry(entry MatchArchiveEntry) MatchArchiveEntry {
+	entry.Snapshot = cloneSnapshot(entry.Snapshot)
+	return entry
 }
 
 func cloneBoard(board [][]*contracts.Piece) [][]*contracts.Piece {
@@ -468,6 +512,14 @@ func cloneBoard(board [][]*contracts.Piece) [][]*contracts.Piece {
 				continue
 			}
 			piece := *board[row][col]
+			if piece.ShieldTurn != nil {
+				val := *piece.ShieldTurn
+				piece.ShieldTurn = &val
+			}
+			if piece.InvisibleTurn != nil {
+				val := *piece.InvisibleTurn
+				piece.InvisibleTurn = &val
+			}
 			cloned[row][col] = &piece
 		}
 	}

@@ -309,8 +309,11 @@ func TestGatewayPostBootstrapReturnsGuestSessionsAndSeatClaims(t *testing.T) {
 		t.Fatalf("expected white account session to round-trip, got %#v", whiteAccountSession)
 	}
 	blackClaim := matchClaims["black"].(map[string]any)
-	if blackClaim["playerSecret"] != "claim-black-guest" || blackClaim["claimToken"] != "token-black-guest" {
-		t.Fatalf("expected black seat claim to be returned, got %#v", blackClaim)
+	if blackClaim["playerSecret"] != "" {
+		t.Fatalf("expected black seat claim playerSecret to be stripped, got %#v", blackClaim["playerSecret"])
+	}
+	if _, ok := blackClaim["claimToken"]; ok {
+		t.Fatalf("expected black seat claim claimToken to be stripped, got %#v", blackClaim["claimToken"])
 	}
 }
 

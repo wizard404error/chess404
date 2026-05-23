@@ -275,29 +275,23 @@ func (s *ModerationStore) SetAccountRestriction(moderatorAccountID, accountID, k
 	if resolvedModeratorID == "" || resolvedAccountID == "" || !ok {
 		return AccountRestriction{}, ErrInvalidAccountRestriction
 	}
+	if _, exists := s.restrictions[resolvedAccountID]; exists {
+		return AccountRestriction{}, errors.New("account already has an active restriction; clear it first")
+	}
 	resolvedReason := strings.TrimSpace(reason)
 	if len(resolvedReason) > 1000 {
 		resolvedReason = resolvedReason[:1000]
 	}
 	now := time.Now().UTC()
-	restriction, exists := s.restrictions[resolvedAccountID]
-	if exists {
-		restriction.Kind = resolvedKind
-		restriction.Reason = resolvedReason
-		restriction.ReportID = strings.TrimSpace(reportID)
-		restriction.AppliedByAccountID = resolvedModeratorID
-		restriction.UpdatedAt = now
-	} else {
-		restriction = AccountRestriction{
-			RestrictionID:      "restrict_" + randomToken(8),
-			AccountID:          resolvedAccountID,
-			Kind:               resolvedKind,
-			Reason:             resolvedReason,
-			ReportID:           strings.TrimSpace(reportID),
-			AppliedByAccountID: resolvedModeratorID,
-			CreatedAt:          now,
-			UpdatedAt:          now,
-		}
+	restriction := AccountRestriction{
+		RestrictionID:      "restrict_" + randomToken(8),
+		AccountID:          resolvedAccountID,
+		Kind:               resolvedKind,
+		Reason:             resolvedReason,
+		ReportID:           strings.TrimSpace(reportID),
+		AppliedByAccountID: resolvedModeratorID,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	s.restrictions[resolvedAccountID] = restriction
 	if err := s.persistLocked(); err != nil {

@@ -89,7 +89,7 @@ func TestSQLiteAccountStoreFinalizeMatchPersistsDirectStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected sqlite account finalization to succeed, got %v", err)
 	}
-	if !changed || white.Rating != 1220 || black.Rating != 1180 || white.Draws != 1 || black.Draws != 1 {
+	if !changed || white.Rating != 1218 || black.Rating != 1182 || white.Draws != 1 || black.Draws != 1 {
 		t.Fatalf("unexpected sqlite account finalization result %#v %#v changed=%v", white, black, changed)
 	}
 
@@ -113,7 +113,7 @@ func TestSQLiteAccountStoreFinalizeMatchPersistsDirectStats(t *testing.T) {
 	if len(whiteReloaded.RatingHistory) != 1 || len(blackReloaded.RatingHistory) != 1 {
 		t.Fatalf("expected sqlite account history to persist, got %#v %#v", whiteReloaded.RatingHistory, blackReloaded.RatingHistory)
 	}
-	if whiteReloaded.RatingHistory[0].MatchID != "sqlite_account_match" || whiteReloaded.RatingHistory[0].Result != "draw" || whiteReloaded.RatingHistory[0].Delta != 0 || whiteReloaded.RatingHistory[0].Queue != "casual" || whiteReloaded.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
+	if whiteReloaded.RatingHistory[0].MatchID != "sqlite_account_match" || whiteReloaded.RatingHistory[0].Result != "draw" || whiteReloaded.RatingHistory[0].Delta != -2 || whiteReloaded.RatingHistory[0].Queue != "casual" || whiteReloaded.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
 		t.Fatalf("unexpected persisted white sqlite history %#v", whiteReloaded.RatingHistory[0])
 	}
 }

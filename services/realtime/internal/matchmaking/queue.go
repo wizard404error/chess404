@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -242,11 +243,20 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 		opponent.OpponentName = assignment.BlackName
 		opponent.AssignedRoom = roomID
 		opponent.UpdatedAt = matchedAt
+
+		s.tickets[ticket.TicketID] = ticket
 		s.tickets[opponent.TicketID] = opponent
+		if err := s.persistLocked(); err != nil {
+			delete(s.tickets, ticket.TicketID)
+			delete(s.tickets, opponent.TicketID)
+			return Ticket{}, err
+		}
+		return ticket, nil
 	}
 
 	s.tickets[ticket.TicketID] = ticket
 	if err := s.persistLocked(); err != nil {
+		delete(s.tickets, ticket.TicketID)
 		return Ticket{}, err
 	}
 	return ticket, nil
@@ -256,7 +266,9 @@ func (s *Service) Get(ticketID string) (Ticket, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pruneExpiredLocked(s.nowUTC()) {
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			log.Printf("warning: failed to persist after pruning: %v", err)
+		}
 	}
 	ticket, ok := s.tickets[ticketID]
 	return ticket, ok
@@ -266,7 +278,9 @@ func (s *Service) FindActiveTicket(guestID, accountID string) (Ticket, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pruneExpiredLocked(s.nowUTC()) {
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			log.Printf("warning: failed to persist after pruning: %v", err)
+		}
 	}
 	return s.findActiveTicketLocked(guestID, accountID)
 }
@@ -284,14 +298,15 @@ func (s *Service) Cancel(ticketID string) (Ticket, bool, error) {
 	if !ok {
 		return Ticket{}, false, nil
 	}
-	if ticket.Status == StatusQueued {
-		ticket.Status = StatusCancelled
-		ticket.UpdatedAt = now
-		s.tickets[ticketID] = ticket
-		if err := s.persistLocked(); err != nil {
-			return Ticket{}, true, err
-		}
+	if ticket.Status != StatusQueued {
+		return ticket, false, nil
 	}
+	ticket.Status = StatusCancelled
+	ticket.UpdatedAt = now
+	if err := s.persistLocked(); err != nil {
+		return Ticket{}, false, err
+	}
+	s.tickets[ticketID] = ticket
 	return ticket, true, nil
 }
 
@@ -299,7 +314,9 @@ func (s *Service) Snapshot(queue QueueName, modeID contracts.MatchModeID) QueueS
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pruneExpiredLocked(s.nowUTC()) {
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			log.Printf("warning: failed to persist after pruning: %v", err)
+		}
 	}
 
 	modeID = normalizeModeID(modeID)
@@ -327,7 +344,9 @@ func (s *Service) List(queue QueueName, modeID contracts.MatchModeID) []Ticket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pruneExpiredLocked(s.nowUTC()) {
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			log.Printf("warning: failed to persist after pruning: %v", err)
+		}
 	}
 
 	modeID = normalizeModeID(modeID)
@@ -351,7 +370,9 @@ func (s *Service) Stats() ServiceStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pruneExpiredLocked(s.nowUTC()) {
-		_ = s.persistLocked()
+		if err := s.persistLocked(); err != nil {
+			log.Printf("warning: failed to persist after pruning: %v", err)
+		}
 	}
 
 	stats := ServiceStats{
@@ -365,10 +386,13 @@ func (s *Service) Stats() ServiceStats {
 	}
 	for _, ticket := range s.tickets {
 		var snapshot *QueueSnapshot
-		if ticket.Queue == QueueCasual {
+		switch ticket.Queue {
+		case QueueCasual:
 			snapshot = &stats.Casual
-		} else {
+		case QueueRated:
 			snapshot = &stats.Rated
+		default:
+			continue
 		}
 		switch ticket.Status {
 		case StatusQueued:
@@ -455,6 +479,9 @@ func (s *Service) loadLocked() error {
 	tickets, err := s.store.load()
 	if err != nil {
 		return err
+	}
+	if tickets == nil {
+		tickets = make(map[string]Ticket)
 	}
 	for ticketID, ticket := range tickets {
 		ticket.ModeID = normalizeModeID(ticket.ModeID)

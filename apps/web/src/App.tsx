@@ -221,6 +221,9 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     blackName?: string;
   } | null>(null);
   const [guestProfilesReady, setGuestProfilesReady] = React.useState(false);
+  const [confirmResign, setConfirmResign] = React.useState<'idle' | 'prompting'>('idle');
+  const lastDrawOfferTime = React.useRef(0);
+  const DRAW_COOLDOWN_MS = 15000;
   const matchEngine = useMatchEngine({
     accountActionQueryDetected,
     activePage,
@@ -1716,24 +1719,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
               }
             />
           </div>
-
-          {/* ELO Stakes */}
-          <div style={{ background:'rgba(255,140,0,0.06)', border:'1px solid rgba(255,165,40,0.18)', borderRadius:'12px', padding:'10px 14px', flexShrink:0 }}>
-            <div style={{ textAlign:'center', color:'#ffb830', fontSize:'9px', fontWeight:800, letterSpacing:'2px', textTransform:'uppercase', marginBottom:'9px' }}>⚔ ELO Stakes</div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:'5px 10px', alignItems:'center' }}>
-              <div style={{ textAlign:'right', color:'rgba(255,255,255,0.35)', fontSize:'9px', fontWeight:700 }}>⚪ {displayedWhiteName} · {displayedWhiteRating}</div><div /><div style={{ color:'rgba(255,255,255,0.35)', fontSize:'9px', fontWeight:700 }}>⚫ {displayedBlackName} · {displayedBlackRating}</div>
-              <div style={{ textAlign:'right' }}><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>+40</span></div>
-              <div style={{ border:'1px solid rgba(255,255,255,0.12)', borderRadius:'4px', padding:'3px 10px', textAlign:'center', background:'rgba(255,255,255,0.04)' }}><span style={{ color:'rgba(200,215,235,0.7)', fontSize:'9px', fontWeight:700, letterSpacing:'0.8px' }}>WIN</span></div>
-              <div><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>+40</span></div>
-              <div style={{ textAlign:'right' }}><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>−5</span></div>
-              <div style={{ border:'1px solid rgba(255,255,255,0.12)', borderRadius:'4px', padding:'3px 10px', textAlign:'center', background:'rgba(255,255,255,0.04)' }}><span style={{ color:'rgba(200,215,235,0.7)', fontSize:'9px', fontWeight:700, letterSpacing:'0.8px' }}>DRAW</span></div>
-              <div><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>+5</span></div>
-              <div style={{ textAlign:'right' }}><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>−15</span></div>
-              <div style={{ border:'1px solid rgba(255,255,255,0.12)', borderRadius:'4px', padding:'3px 10px', textAlign:'center', background:'rgba(255,255,255,0.04)' }}><span style={{ color:'rgba(200,215,235,0.7)', fontSize:'9px', fontWeight:700, letterSpacing:'0.8px' }}>LOSS</span></div>
-              <div><span style={{ color:'#e8eaf0', fontWeight:800, fontSize:'14px', fontFamily:'monospace' }}>+15</span></div>
-            </div>
-            <div style={{ marginTop:'7px', textAlign:'center', color:'rgba(160,184,216,0.3)', fontSize:'8px' }}>White is underrated · draw favours Black</div>
-          </div>
+          <div style={{ marginTop:'7px', textAlign:'center', color:'rgba(160,184,216,0.3)', fontSize:'8px' }}>&nbsp;</div>
 
           {/* Game controls */}
           <div style={{ display:'flex', flexDirection:'column', gap:'6px', flexShrink:0 }}>
@@ -1870,20 +1856,34 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
               if (hostedActionLocked) {
                 return;
               }
-              if (authoritativeMatchIdRef.current) {
-                void submitAuthoritativeIntent({ type: 'resign', ...authoritativeActorForColor(controlSender) });
-                return;
-              }
-              finalPositionRef.current = { fen: toFEN(board, turn, moved, lm, hmc, fmn), turn };
-              setOver(true);
-              setWinner(OPP[turn]);
-            }}
-            style={{ flex:1, padding:'9px', fontSize:'12px', background:'linear-gradient(180deg,#8a1a1a,#5a0f0f)', color:'#fff', border:'1px solid rgba(220,60,60,0.4)', borderRadius:'7px', cursor:'pointer', fontWeight:'bold', boxShadow:'0 2px 12px rgba(180,30,30,0.4)' }}>🏳 Resign</button>
-            {!drawOffer
-              ? <button disabled={hostedActionLocked} onClick={() => {
-                if (hostedActionLocked) {
+              if (confirmResign === 'prompting') {
+                setConfirmResign('idle');
+                if (authoritativeMatchIdRef.current) {
+                  void submitAuthoritativeIntent({ type: 'resign', ...authoritativeActorForColor(controlSender) });
                   return;
                 }
+                finalPositionRef.current = { fen: toFEN(board, turn, moved, lm, hmc, fmn), turn };
+                setOver(true);
+                setWinner(OPP[turn]);
+                return;
+              }
+              setConfirmResign('prompting');
+              setTimeout(() => setConfirmResign('idle'), 3000);
+            }}
+            style={{
+              flex:1, padding:'9px', fontSize:'12px',
+              background: confirmResign === 'prompting' ? 'linear-gradient(180deg,#cc3300,#991100)' : 'linear-gradient(180deg,#8a1a1a,#5a0f0f)',
+              color:'#fff',
+              border: confirmResign === 'prompting' ? '2px solid #ff4444' : '1px solid rgba(220,60,60,0.4)',
+              borderRadius:'7px', cursor:'pointer', fontWeight:'bold',
+              boxShadow: confirmResign === 'prompting' ? '0 0 16px rgba(255,60,60,0.6)' : '0 2px 12px rgba(180,30,30,0.4)'
+            }}>{confirmResign === 'prompting' ? '⚠ Confirm Resign?' : '🏳 Resign'}</button>
+            {!drawOffer
+              ? <button disabled={hostedActionLocked} onClick={() => {
+                if (hostedActionLocked) return;
+                const now = Date.now();
+                if (now - lastDrawOfferTime.current < DRAW_COOLDOWN_MS) return;
+                lastDrawOfferTime.current = now;
                 if (authoritativeMatchIdRef.current) {
                 void submitAuthoritativeIntent({ type: 'offer_draw', ...authoritativeActorForColor(controlSender) });
                   return;

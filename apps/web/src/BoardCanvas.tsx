@@ -3472,6 +3472,77 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     return { row: 7 - Math.floor(y / SQ), col: Math.floor(x / SQ) };
   };
 
+  const getTouchSquare = (e: React.TouchEvent): Sq | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0] || e.changedTouches[0];
+    if (!touch) return null;
+    const x = touch.clientX - rect.left, y = touch.clientY - rect.top;
+    return { row: 7 - Math.floor(y / SQ), col: Math.floor(x / SQ) };
+  };
+
+  const touchStartSq = React.useRef<Sq | null>(null);
+  const touchMoved = React.useRef(false);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
+    touchMoved.current = false;
+    const sq = getTouchSquare(e);
+    if (!sq || sq.row < 0 || sq.row > 7 || sq.col < 0 || sq.col > 7) return;
+    touchStartSq.current = sq;
+    if (cardPending || isReviewing) return;
+    onClearAnalysisArrows();
+    const p = displayBoard[sq.row]?.[sq.col];
+    if (viewerColor && viewerColor === turn && p?.color === viewerColor) {
+      const canvas = canvasRef.current!;
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      const pos = { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+      setLocalDrag(sq);
+      setLocalDragPos(pos);
+      const fakeEvent = { clientX: touch.clientX, clientY: touch.clientY, target: canvas, stopPropagation() {}, preventDefault() {} } as unknown as React.MouseEvent;
+      onDragStart(fakeEvent, sq.row, sq.col);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
+    if (!localDrag) return;
+    touchMoved.current = true;
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    setLocalDragPos({ x: touch.clientX - rect.left, y: touch.clientY - rect.top });
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    e.preventDefault();
+    const sq = getTouchSquare(e);
+    if (localDrag) {
+      if (sq && sq.row >= 0 && sq.row <= 7 && sq.col >= 0 && sq.col <= 7) {
+        onDrop(sq.row, sq.col);
+      }
+      setLocalDrag(null);
+      setLocalDragPos(null);
+    } else if (!touchMoved.current && touchStartSq.current) {
+      const start = touchStartSq.current;
+      if (sq && sq.row === start.row && sq.col === start.col) {
+        onClick(sq.row, sq.col);
+      }
+    }
+    touchStartSq.current = null;
+  };
+
+  const handleTouchCancel = () => {
+    if (localDragRef.current) {
+      setLocalDrag(null);
+      setLocalDragPos(null);
+    }
+    touchStartSq.current = null;
+    touchMoved.current = false;
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
     const sq = getSquare(e);
     if (!sq || sq.row < 0 || sq.row > 7 || sq.col < 0 || sq.col > 7) return;
@@ -3562,6 +3633,10 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
       onMouseUp={handleMouseUp}
       onClick={handleClick}
       onMouseLeave={handleMouseLeave}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
     />
   );
 });

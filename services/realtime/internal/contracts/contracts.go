@@ -204,6 +204,8 @@ type MatchState struct {
 	Winner                  string               `json:"winner,omitempty"`
 	FinishReason            string               `json:"finishReason,omitempty"`
 	DrawOfferedBy           string               `json:"drawOfferedBy,omitempty"`
+	DrawOfferTime           time.Time            `json:"drawOfferTime,omitempty"`
+	SeenClientMoveIDs       []string             `json:"seenClientMoveIds,omitempty"`
 	PendingCard             *PendingCardState    `json:"pendingCard,omitempty"`
 	CreatedAt               time.Time            `json:"createdAt"`
 	UpdatedAt               time.Time            `json:"updatedAt"`
@@ -224,6 +226,7 @@ type PlayerIntent struct {
 	Target           *Square `json:"target,omitempty"`
 	SelectionID      string  `json:"selectionId,omitempty"`
 	Promotion        string  `json:"promotion,omitempty"`
+	ClientMoveID     string  `json:"clientMoveId,omitempty"`
 }
 
 type MatchPresenceRequest struct {

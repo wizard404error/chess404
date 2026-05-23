@@ -48,7 +48,7 @@ func legalMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *con
 		if king == nil {
 			continue
 		}
-		if !isAttacked(nextBoard, *king, opposite(piece.Color)) {
+		if !isAttackedWithFusion(nextBoard, *king, opposite(piece.Color)) {
 			legal = append(legal, move)
 		}
 	}
@@ -206,13 +206,13 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 				moves = append(moves, contracts.Square{Row: r, Col: c})
 			}
 		}
-		if _, movedKing := moved[keyForSquare(from)]; !movedKing && !isAttacked(board, from, opposite(piece.Color)) {
+		if _, movedKing := moved[keyForSquare(from)]; !movedKing && !isAttackedWithFusion(board, from, opposite(piece.Color)) {
 			if _, rookMoved := moved[keyForCoords(from.Row, 7)]; !rookMoved &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 7}) != nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 5}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 6}) == nil &&
-				!isAttacked(board, contracts.Square{Row: from.Row, Col: 5}, opposite(piece.Color)) &&
-				!isAttacked(board, contracts.Square{Row: from.Row, Col: 6}, opposite(piece.Color)) {
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 5}, opposite(piece.Color)) &&
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 6}, opposite(piece.Color)) {
 				moves = append(moves, contracts.Square{Row: from.Row, Col: 6})
 			}
 			if _, rookMoved := moved[keyForCoords(from.Row, 0)]; !rookMoved &&
@@ -220,8 +220,8 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 1}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 2}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 3}) == nil &&
-				!isAttacked(board, contracts.Square{Row: from.Row, Col: 3}, opposite(piece.Color)) &&
-				!isAttacked(board, contracts.Square{Row: from.Row, Col: 2}, opposite(piece.Color)) {
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 3}, opposite(piece.Color)) &&
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 2}, opposite(piece.Color)) {
 				moves = append(moves, contracts.Square{Row: from.Row, Col: 2})
 			}
 		}
