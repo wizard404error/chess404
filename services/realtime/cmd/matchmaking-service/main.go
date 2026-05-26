@@ -132,6 +132,10 @@ func main() {
 			}
 			modeID := parseModeID(payload.ModeID)
 			queue := parseQueueName(payload.Queue)
+			if queue == matchmaking.QueueRated && strings.TrimSpace(payload.AccountID) == "" {
+				http.Error(w, `{"error":"rated queue requires an accountId"}`, http.StatusUnauthorized)
+				return
+			}
 
 			log.Printf("[matchmaking] Enqueue request: guest=%s, queue=%s, mode=%s, rating=%d",
 				payload.GuestID, queue, modeID, payload.Rating)

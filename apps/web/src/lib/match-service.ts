@@ -180,7 +180,7 @@ export function connectToMatchStream(
     onStatusChange?: (status: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void;
     onError?: (error: Event) => void;
   },
-  playerIdentity?: { playerId: string; playerSecret: string } | null
+  playerIdentity?: { playerId?: string; playerSecret?: string; playerClaimToken?: string } | null
 ): () => void {
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
@@ -253,9 +253,18 @@ export function connectToMatchStream(
       schedulePoll(reconnectAttempt > 0 ? MATCH_POLL_RETRY_INTERVAL_MS : 0);
       return;
     }
-    const wsUrl = playerIdentity
-      ? `${nextSocketUrl}/api/matches/${matchId}/ws?playerId=${encodeURIComponent(playerIdentity.playerId)}&playerSecret=${encodeURIComponent(playerIdentity.playerSecret)}`
-      : `${nextSocketUrl}/api/matches/${matchId}/ws`;
+    const params = new URLSearchParams();
+    if (playerIdentity?.playerClaimToken?.trim()) {
+      params.set('playerClaimToken', playerIdentity.playerClaimToken.trim());
+    } else {
+      if (playerIdentity?.playerId?.trim()) {
+        params.set('playerId', playerIdentity.playerId.trim());
+      }
+      if (playerIdentity?.playerSecret?.trim()) {
+        params.set('playerSecret', playerIdentity.playerSecret.trim());
+      }
+    }
+    const wsUrl = `${nextSocketUrl}/api/matches/${matchId}/ws${params.size > 0 ? `?${params.toString()}` : ''}`;
     const nextSocket = new WebSocket(wsUrl);
     socket = nextSocket;
 

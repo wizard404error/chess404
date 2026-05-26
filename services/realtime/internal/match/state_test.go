@@ -1904,6 +1904,7 @@ func TestLavaGroundBurnsLandingPieceAndTicksOtherTraps(t *testing.T) {
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[1][4] = &contracts.Piece{Type: "pawn", Color: "white"}
+	state.Board[6][0] = &contracts.Piece{Type: "pawn", Color: "black"}
 	state.LavaSquares = []contracts.LavaSquare{
 		{Row: 3, Col: 4, MovesLeft: 2},
 		{Row: 5, Col: 5, MovesLeft: 2},

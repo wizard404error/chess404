@@ -1199,14 +1199,48 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       writeStoredGuestIdentity('black', result.black.guestId, guestSessionSecretsRef.current.black ?? '');
     };
 
+    const preferredSides: Array<'white' | 'black'> = viewerSeatRef.current
+      ? [viewerSeatRef.current, viewerSeatRef.current === 'white' ? 'black' : 'white']
+      : ['white', 'black'];
+
+    const resolveFinalizingAccount = (): { accountId: string; sessionToken: string } | null => {
+      for (const side of preferredSides) {
+        const identity = readStoredAccountIdentity(side);
+        if (identity.accountId?.trim() && identity.sessionToken?.trim()) {
+          return {
+            accountId: identity.accountId.trim(),
+            sessionToken: identity.sessionToken.trim(),
+          };
+        }
+      }
+      return null;
+    };
+
+    const resolveFinalizingGuest = (): { guestId: string; sessionSecret?: string; sessionToken?: string } | null => {
+      for (const side of preferredSides) {
+        const identity = readStoredGuestIdentity(side);
+        if (identity.guestId?.trim()) {
+          return {
+            guestId: identity.guestId.trim(),
+            sessionSecret: identity.sessionSecret?.trim() || undefined,
+            sessionToken: identity.sessionToken?.trim() || undefined,
+          };
+        }
+      }
+      return null;
+    };
+
     const finalizeRatedResult = async () => {
       if (roomMeta.whiteAccountId && roomMeta.blackAccountId) {
+        const finalizingAccount = resolveFinalizingAccount();
+        if (!finalizingAccount) {
+          throw new Error('Rated result finalization requires an authenticated account session for one of the match seats.');
+        }
         try {
           const result = await finalizeAccountMatch({
             matchId,
-            whiteAccountId: roomMeta.whiteAccountId,
-            blackAccountId: roomMeta.blackAccountId,
-            winner,
+            accountId: finalizingAccount.accountId,
+            sessionToken: finalizingAccount.sessionToken,
           });
           applyFinalizedGuestProfiles(result);
           return;
@@ -1222,12 +1256,13 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       if (hostedRuntime) {
         throw new Error('Rated result could not be finalized because the hosted match is missing linked account seat data. Reload the match before leaving this page.');
       }
-      if (roomMeta.whiteGuestId && roomMeta.blackGuestId) {
+      const finalizingGuest = resolveFinalizingGuest();
+      if (finalizingGuest) {
         const result = await finalizeGuestMatch({
           matchId,
-          whiteGuestId: roomMeta.whiteGuestId,
-          blackGuestId: roomMeta.blackGuestId,
-          winner,
+          guestId: finalizingGuest.guestId,
+          sessionSecret: finalizingGuest.sessionSecret,
+          sessionToken: finalizingGuest.sessionToken,
         });
         applyFinalizedGuestProfiles(result);
         return;
@@ -2231,6 +2266,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
 
     stopAbortCountdown(true);
+    const streamIdentity = hostedRuntime && viewerSeat ? authoritativeActorForColor(viewerSeat) : null;
 
     const disconnect = connectToMatchStream(authoritativeMatchId, {
       onSnapshot: (snapshot) => {
@@ -2250,12 +2286,12 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       onError: () => {
         setAuthoritativeLive(false);
       }
-    });
+    }, streamIdentity);
 
     return () => {
       disconnect();
     };
-  }, [authoritativeMatchId, applyAuthoritativeSnapshot, stopAbortCountdown]);
+  }, [authoritativeActorForColor, authoritativeMatchId, applyAuthoritativeSnapshot, hostedRuntime, stopAbortCountdown, viewerSeat]);
 
   React.useEffect(() => {
     if (!hostedRuntime || !authoritativeMatchId || !viewerSeat || over) {

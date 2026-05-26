@@ -415,6 +415,42 @@ func moveNotation(board [][]*contracts.Piece, from, to contracts.Square, piece *
 			notation = "Q"
 		case "king":
 			notation = "K"
+		default:
+			return notation + toSq
+		}
+
+		var ambiguous []contracts.Square
+		for r := 0; r < 8; r++ {
+			for c := 0; c < 8; c++ {
+				other := board[r][c]
+				if other != nil && other.Type == piece.Type && other.Color == piece.Color && !(r == from.Row && c == from.Col) {
+					moves := pseudoMoves(board, contracts.Square{Row: r, Col: c}, nil, nil)
+					for _, m := range moves {
+						if m.Row == to.Row && m.Col == to.Col {
+							ambiguous = append(ambiguous, contracts.Square{Row: r, Col: c})
+						}
+					}
+				}
+			}
+		}
+		if len(ambiguous) > 0 {
+			sameFile := false
+			sameRank := false
+			for _, a := range ambiguous {
+				if a.Col == from.Col {
+					sameFile = true
+				}
+				if a.Row == from.Row {
+					sameRank = true
+				}
+			}
+			if !sameFile {
+				notation += files[from.Col]
+			} else if !sameRank {
+				notation += ranks[from.Row]
+			} else {
+				notation += files[from.Col] + ranks[from.Row]
+			}
 		}
 	}
 	if piece.Type == "pawn" && capture {

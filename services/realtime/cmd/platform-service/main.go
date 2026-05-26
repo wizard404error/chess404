@@ -118,13 +118,17 @@ func (w *jsonContentTypeWriter) WriteHeader(code int) {
 func respondError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 func respondJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("error encoding JSON response: %v", err)
+	}
 }
 
 func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.GuestDirectory, accounts platform.AccountDirectory, friends platform.FriendshipDirectory, moderation platform.ModerationDirectory, challenges platform.DirectChallengeDirectory, notifications platform.AccountNotificationDirectory, emailOutbox platform.AccountEmailOutboxDirectory, securityAudit platform.AccountSecurityAuditDirectory, claims *platform.MatchClaimStore) http.Handler {
@@ -173,33 +177,14 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":                    "ok",
-			"service":                   "platform-service",
-			"checkedAt":                 time.Now().UTC(),
-			"archiveBackend":            archive.Backend(),
-			"archive":                   archive.Stats(),
-			"claimStoreBackend":         claims.Backend(),
-			"claimLeaseSeconds":         claims.TTLSeconds(),
-			"claims":                    claims.Stats(),
-			"accounts":                  accounts.Stats(),
-			"accountStoreBackend":       accounts.Backend(),
-			"friends":                   friends.Stats(),
-			"friendStoreBackend":        friends.Backend(),
-			"moderation":                moderation.Stats(),
-			"moderationStoreBackend":    moderation.Backend(),
-			"moderationAdminConfigured": moderationAdminConfigured(),
-			"challenges":                challenges.Stats(),
-			"challengeStoreBackend":     challenges.Backend(),
-			"notifications":             notifications.Stats(),
-			"notificationStoreBackend":  notifications.Backend(),
-			"emailOutbox":               emailOutbox.Stats(),
-			"emailOutboxBackend":        emailOutbox.Backend(),
-			"emailDeliveryProvider":     configuredAccountEmailDeliveryProvider(),
-			"emailDeliveryEnabled":      configuredAccountEmailDeliveryProvider() != "disabled",
-			"securityAudit":             securityAudit.Stats(),
-			"securityAuditBackend":      securityAudit.Backend(),
-			"guests":                    guests.Stats(),
-			"guestStoreBackend":         guests.Backend(),
+			"status":              "ok",
+			"service":             "platform-service",
+			"checkedAt":           time.Now().UTC(),
+			"archiveBackend":      archive.Backend(),
+			"guestStoreBackend":   guests.Backend(),
+			"accountStoreBackend": accounts.Backend(),
+			"claimStoreBackend":   claims.Backend(),
+			"claimLeaseSeconds":   claims.TTLSeconds(),
 		})
 	})
 
@@ -2077,10 +2062,10 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 		var payload struct {
-			MatchID      string `json:"matchId"`
-			WhiteGuestID string `json:"whiteGuestId"`
-			BlackGuestID string `json:"blackGuestId"`
-			Winner       string `json:"winner"`
+			MatchID       string `json:"matchId"`
+			GuestID       string `json:"guestId"`
+			SessionSecret string `json:"sessionSecret"`
+			SessionToken  string `json:"sessionToken"`
 		}
 		if r.Body != nil {
 			defer r.Body.Close()
@@ -2089,13 +2074,28 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 				return
 			}
 		}
+		session, err := resumeGuestFromPayload(guests, payload.GuestID, payload.SessionSecret, payload.SessionToken)
+		if err != nil {
+			switch err {
+			case platform.ErrUnauthorizedGuestSession, os.ErrNotExist:
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			default:
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusBadRequest)
+			}
+			return
+		}
 		entry, ok := archive.Get(payload.MatchID)
 		if !ok {
 			http.Error(w, `{"error":"unknown match archive"}`, http.StatusBadRequest)
 			return
 		}
-		if err := validateGuestResult(entry, payload.MatchID, payload.WhiteGuestID, payload.BlackGuestID, payload.Winner); err != nil {
+		winner := strings.TrimSpace(entry.Winner)
+		if err := validateArchivedRatedResult(entry, payload.MatchID, winner); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if session.Guest.GuestID != entry.WhiteGuestID && session.Guest.GuestID != entry.BlackGuestID {
+			respondError(w, http.StatusForbidden, "guest does not own an archived rated seat")
 			return
 		}
 		whiteBefore, ok := guests.GetGuest(entry.WhiteGuestID)
@@ -2108,7 +2108,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			http.Error(w, `{"error":"unknown black guest"}`, http.StatusBadRequest)
 			return
 		}
-		white, black, changed, err := guests.FinalizeMatch(payload.MatchID, payload.WhiteGuestID, payload.BlackGuestID, payload.Winner)
+		white, black, changed, err := guests.FinalizeMatch(payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, winner)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -2121,7 +2121,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		_, whiteLinked := accounts.GetAccountByGuest(entry.WhiteGuestID)
 		_, blackLinked := accounts.GetAccountByGuest(entry.BlackGuestID)
 		if whiteLinked && blackLinked {
-			if _, _, changed, err := finalizeLinkedAccounts(accounts, payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, payload.Winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore); err != nil {
+			if _, _, changed, err := finalizeLinkedAccounts(accounts, payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore); err != nil {
 				respondError(w, http.StatusBadRequest, "failed to finalize linked account result")
 				return
 			} else {
@@ -2149,10 +2149,9 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 		var payload struct {
-			MatchID        string `json:"matchId"`
-			WhiteAccountID string `json:"whiteAccountId"`
-			BlackAccountID string `json:"blackAccountId"`
-			Winner         string `json:"winner"`
+			MatchID      string `json:"matchId"`
+			AccountID    string `json:"accountId"`
+			SessionToken string `json:"sessionToken"`
 		}
 		if r.Body != nil {
 			defer r.Body.Close()
@@ -2160,6 +2159,10 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 				http.Error(w, `{"error":"invalid account result payload"}`, http.StatusBadRequest)
 				return
 			}
+		}
+		accountSession, ok := resumeAllowedAccountSessionOrWrite(w, accounts, moderation, payload.AccountID, payload.SessionToken)
+		if !ok {
+			return
 		}
 
 		entry, ok := archive.Get(payload.MatchID)
@@ -2179,29 +2182,21 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			http.Error(w, `{"error":"unknown black guest"}`, http.StatusBadRequest)
 			return
 		}
-
-		whiteAccount, ok := accounts.GetAccount(payload.WhiteAccountID)
-		if !ok {
-			http.Error(w, `{"error":"unknown white account"}`, http.StatusBadRequest)
-			return
-		}
-		blackAccount, ok := accounts.GetAccount(payload.BlackAccountID)
-		if !ok {
-			http.Error(w, `{"error":"unknown black account"}`, http.StatusBadRequest)
-			return
-		}
-
-		if err := validateAccountResult(entry, payload.MatchID, whiteAccount, blackAccount, payload.Winner); err != nil {
+		winner := strings.TrimSpace(entry.Winner)
+		if err := validateArchivedRatedResult(entry, payload.MatchID, winner); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
-		white, black, guestChanged, err := guests.FinalizeMatch(payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, payload.Winner)
+		if !accountOwnsGuest(accountSession.Account, entry.WhiteGuestID) && !accountOwnsGuest(accountSession.Account, entry.BlackGuestID) {
+			respondError(w, http.StatusForbidden, "account does not own an archived rated seat")
+			return
+		}
+		white, black, guestChanged, err := guests.FinalizeMatch(payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, winner)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		whiteAccount, blackAccount, accountChanged, err := finalizeLinkedAccounts(accounts, payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, payload.Winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore)
+		whiteAccount, blackAccount, accountChanged, err := finalizeLinkedAccounts(accounts, payload.MatchID, entry.WhiteGuestID, entry.BlackGuestID, winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "failed to finalize account result")
 			return
@@ -2291,15 +2286,17 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		if modeID != "" {
 			matches = filterArchivedMatchesByMode(matches, modeID)
 		}
-		if statusFilter != "" {
-			matches = filterArchivedMatchesByStatus(matches, statusFilter)
+		matches = filterPublicArchivedMatchesByStatus(matches, statusFilter)
+		publicMatches := make([]platform.PublicMatchArchiveEntry, 0, len(matches))
+		for _, match := range matches {
+			publicMatches = append(publicMatches, platform.BuildPublicMatchArchiveEntry(match))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"matches":          matches,
+			"matches":          publicMatches,
 			"selectedSeasonId": seasonID,
 			"selectedModeId":   modeID,
-			"selectedStatus":   statusFilter,
+			"selectedStatus":   resolvedPublicStatusFilter(statusFilter),
 		})
 	})
 
@@ -2319,8 +2316,12 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 		entry = enrichArchiveEntry(accounts, entry)
+		if !platform.IsPublicReplayableMatch(entry) {
+			respondError(w, http.StatusNotFound, "public replay is only available for finished matches")
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(entry)
+		_ = json.NewEncoder(w).Encode(platform.BuildPublicMatchArchiveEntry(entry))
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(&jsonContentTypeWriter{ResponseWriter: w}, r)
@@ -2427,6 +2428,37 @@ func filterArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, status 
 		filtered = append(filtered, entry)
 	}
 	return filtered
+}
+
+func resolvedPublicStatusFilter(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "active":
+		return "active"
+	default:
+		return "finished"
+	}
+}
+
+func filterPublicArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, status string) []platform.MatchArchiveEntry {
+	if resolvedPublicStatusFilter(status) == "active" {
+		filtered := filterArchivedMatchesByStatus(matches, "active")
+		public := make([]platform.MatchArchiveEntry, 0, len(filtered))
+		for _, entry := range filtered {
+			if platform.IsPublicLiveSpectateMatch(entry) {
+				public = append(public, entry)
+			}
+		}
+		return public
+	}
+
+	filtered := filterArchivedMatchesByStatus(matches, "finished")
+	public := make([]platform.MatchArchiveEntry, 0, len(filtered))
+	for _, entry := range filtered {
+		if platform.IsPublicReplayableMatch(entry) {
+			public = append(public, entry)
+		}
+	}
+	return public
 }
 
 func validateGuestResult(entry platform.MatchArchiveEntry, matchID, whiteGuestID, blackGuestID, winner string) error {
@@ -3320,15 +3352,14 @@ func requireAccountInteractionAllowed(moderation platform.ModerationDirectory, a
 }
 
 func isModerationAdminAccount(account platform.AccountProfile) bool {
-	resolvedAccountID := strings.TrimSpace(account.AccountID)
-	if resolvedAccountID != "" {
-		if _, ok := configuredModerationAdminAccountIDs()[resolvedAccountID]; ok {
+	if account.AccountID != "" {
+		if _, ok := configuredModerationAdminAccountIDs()[account.AccountID]; ok {
 			return true
 		}
 	}
-	resolvedHandle := strings.ToLower(strings.TrimSpace(account.Handle))
-	if resolvedHandle != "" {
-		if _, ok := configuredModerationAdminHandles()[resolvedHandle]; ok {
+	if account.Handle != "" {
+		lower := strings.ToLower(strings.TrimSpace(account.Handle))
+		if _, ok := configuredModerationAdminHandles()[lower]; ok {
 			return true
 		}
 	}
