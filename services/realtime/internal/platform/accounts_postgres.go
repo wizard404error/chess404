@@ -942,22 +942,8 @@ func (s *PostgresAccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccou
 	blackBefore := blackSession.Account.Rating
 
 	now := time.Now().UTC()
-	switch winner {
-	case "white":
-		whiteSession.Account.Rating += 16
-		blackSession.Account.Rating = maxInt(100, blackSession.Account.Rating-16)
-		whiteSession.Account.Wins++
-		blackSession.Account.Losses++
-	case "black":
-		blackSession.Account.Rating += 16
-		whiteSession.Account.Rating = maxInt(100, whiteSession.Account.Rating-16)
-		blackSession.Account.Wins++
-		whiteSession.Account.Losses++
-	case "draw":
-		whiteSession.Account.Draws++
-		blackSession.Account.Draws++
-	default:
-		return AccountProfile{}, AccountProfile{}, false, os.ErrInvalid
+	if err := applyAccountMatchResult(&whiteSession.Account, &blackSession.Account, winner); err != nil {
+		return AccountProfile{}, AccountProfile{}, false, err
 	}
 	whiteSession.Account.MatchesPlayed++
 	blackSession.Account.MatchesPlayed++

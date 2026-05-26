@@ -149,19 +149,19 @@ func TestAccountStoreFinalizeMatchUpdatesDirectStats(t *testing.T) {
 	if !changed {
 		t.Fatalf("expected first account finalization to apply")
 	}
-	if white.Rating != 1246 || white.MatchesPlayed != 6 || white.Wins != 4 {
+	if white.Rating != 1244 || white.MatchesPlayed != 6 || white.Wins != 4 {
 		t.Fatalf("unexpected white account after finalization %#v", white)
 	}
-	if black.Rating != 1174 || black.MatchesPlayed != 5 || black.Losses != 3 {
+	if black.Rating != 1176 || black.MatchesPlayed != 5 || black.Losses != 3 {
 		t.Fatalf("unexpected black account after finalization %#v", black)
 	}
 	if len(white.RatingHistory) != 1 || len(black.RatingHistory) != 1 {
 		t.Fatalf("expected direct account history entries, got %#v %#v", white.RatingHistory, black.RatingHistory)
 	}
-	if white.RatingHistory[0].MatchID != "match_account_direct" || white.RatingHistory[0].Result != "win" || white.RatingHistory[0].Delta != 16 || white.RatingHistory[0].RatingAfter != 1246 || white.RatingHistory[0].Queue != "rated" || white.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
+	if white.RatingHistory[0].MatchID != "match_account_direct" || white.RatingHistory[0].Result != "win" || white.RatingHistory[0].Delta != 14 || white.RatingHistory[0].RatingAfter != 1244 || white.RatingHistory[0].Queue != "rated" || white.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
 		t.Fatalf("unexpected white account history %#v", white.RatingHistory[0])
 	}
-	if black.RatingHistory[0].MatchID != "match_account_direct" || black.RatingHistory[0].Result != "loss" || black.RatingHistory[0].Delta != -16 || black.RatingHistory[0].RatingAfter != 1174 || black.RatingHistory[0].Queue != "rated" || black.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
+	if black.RatingHistory[0].MatchID != "match_account_direct" || black.RatingHistory[0].Result != "loss" || black.RatingHistory[0].Delta != -14 || black.RatingHistory[0].RatingAfter != 1176 || black.RatingHistory[0].Queue != "rated" || black.RatingHistory[0].ModeID != contracts.MatchModeHiddenCards {
 		t.Fatalf("unexpected black account history %#v", black.RatingHistory[0])
 	}
 }

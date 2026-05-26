@@ -78,11 +78,11 @@ function formatClock(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function listCardNames(cards: MatchArchiveEntry['snapshot']['match']['whiteHand']): string {
-  if (cards.length === 0) {
-    return 'none';
+function hiddenArchiveCountLabel(count?: number): string {
+  if (!count || count <= 0) {
+    return '0 hidden';
   }
-  return cards.map(card => card.name).join(', ');
+  return `${count} hidden`;
 }
 
 function collectActiveEffects(match: MatchArchiveEntry['snapshot']['match']): string[] {
@@ -149,8 +149,8 @@ export default function HistoryPage({
     setError('');
     try {
       const nextMatches = focusGuestId
-        ? await fetchGuestArchivedMatches(focusGuestId, 40, selectedModeId || undefined)
-        : await fetchArchivedMatches(40, selectedModeId || undefined);
+        ? await fetchGuestArchivedMatches(focusGuestId, 40, selectedModeId || undefined, 'finished')
+        : await fetchArchivedMatches(40, selectedModeId || undefined, 'finished');
       setMatches(nextMatches);
       setSelectedMatchId(currentSelected => {
         if (preserveSelection && currentSelected && nextMatches.some(match => match.matchId === currentSelected)) {
@@ -657,12 +657,15 @@ export default function HistoryPage({
                     </div>
                     <div>
                       <div style={{ color: 'rgba(255,232,180,0.58)', marginBottom: '3px' }}>White hand</div>
-                      <div style={{ color: '#fff4d0', lineHeight: 1.45 }}>{listCardNames(snapshot.whiteHand)}</div>
+                      <div style={{ color: '#fff4d0', lineHeight: 1.45 }}>{hiddenArchiveCountLabel(selectedMatch.whiteHandCount)}</div>
                     </div>
                     <div>
                       <div style={{ color: 'rgba(255,232,180,0.58)', marginBottom: '3px' }}>Black hand</div>
-                      <div style={{ color: '#fff4d0', lineHeight: 1.45 }}>{listCardNames(snapshot.blackHand)}</div>
+                      <div style={{ color: '#fff4d0', lineHeight: 1.45 }}>{hiddenArchiveCountLabel(selectedMatch.blackHandCount)}</div>
                     </div>
+                  </div>
+                  <div style={{ marginTop: '12px', color: 'rgba(210,220,255,0.7)', fontSize: '12px', lineHeight: 1.5 }}>
+                    Hidden hands and private chat content are stripped from the public replay surface. Replay keeps the board, move list, clocks, and safe event timeline only.
                   </div>
                   <div style={{ marginTop: '14px' }}>
                     <div style={{ color: 'rgba(255,232,180,0.58)', marginBottom: '6px', fontSize: '12px' }}>Active effects</div>
@@ -776,39 +779,21 @@ export default function HistoryPage({
                   border: '1px solid rgba(255,165,40,0.1)',
                   display: 'flex',
                   flexDirection: 'column',
+                  gap: '12px',
                 }}
               >
-                <div style={{ fontSize: '12px', fontWeight: 800, color: '#ffcf72', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '10px' }}>Chat Archive</div>
-                <div style={{ marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px solid rgba(255,165,40,0.08)' }}>
-                  <div style={{ color: 'rgba(255,232,180,0.58)', marginBottom: '8px', fontSize: '12px' }}>Chat log</div>
-                  {snapshot.chatMessages.length === 0 ? (
-                    <div style={{ fontSize: '12px', color: 'rgba(255,232,180,0.5)' }}>No chat messages archived for this match.</div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
-                      {snapshot.chatMessages.map((message, index) => (
-                        <div
-                          key={`${message.sentAt}-${index}`}
-                          style={{
-                            padding: '8px 10px',
-                            borderRadius: '9px',
-                            background: 'rgba(255,255,255,0.03)',
-                            border: '1px solid rgba(255,165,40,0.08)',
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
-                            <span style={{ color: message.sender === 'white' ? '#ffe6a3' : '#cdb7ff', fontSize: '11px', fontWeight: 800 }}>{message.sender}</span>
-                            <span style={{ color: 'rgba(170,190,220,0.62)', fontSize: '10px' }}>{formatDateTime(message.sentAt)}</span>
-                          </div>
-                          <div style={{ color: '#fff4d0', fontSize: '12px', lineHeight: 1.4 }}>{message.text}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div style={{ fontSize: '12px', fontWeight: 800, color: '#ffcf72', textTransform: 'uppercase', letterSpacing: '1px' }}>Replay Notes</div>
+                <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)', color: '#d9e9ff', fontSize: '12px', lineHeight: 1.6 }}>
+                  Public replay keeps the authoritative board progression, move history, clocks, result, and safe event timeline. Private seat secrets, hidden hands, and chat contents are intentionally removed.
                 </div>
-                <div style={{ display: 'grid', gap: '10px' }}>
-                  <div style={{ color: 'rgba(255,232,180,0.58)', fontSize: '12px' }}>Replay notes</div>
-                  <div style={{ padding: '12px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,165,40,0.08)', color: '#d9e9ff', fontSize: '12px', lineHeight: 1.6 }}>
-                    Replay controls, move history, card events, and archived chat stay available here. Internal archive payloads are no longer shown directly in the public replay surface.
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px 12px', fontSize: '12px' }}>
+                  <div>
+                    <div style={{ color: 'rgba(255,232,180,0.58)', marginBottom: '3px' }}>Archived chat</div>
+                    <div style={{ color: '#fff4d0', fontWeight: 700 }}>{selectedMatch.chatMessageCount ?? 0} hidden</div>
+                  </div>
+                  <div>
+                    <div style={{ color: 'rgba(255,232,180,0.58)', marginBottom: '3px' }}>Replay frames</div>
+                    <div style={{ color: '#fff4d0', fontWeight: 700 }}>{replayFrames.length}</div>
                   </div>
                 </div>
               </div>

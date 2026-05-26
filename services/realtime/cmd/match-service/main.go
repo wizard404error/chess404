@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -284,6 +287,17 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 
 	playerID := strings.TrimSpace(r.URL.Query().Get("playerId"))
 	playerSecret := strings.TrimSpace(r.URL.Query().Get("playerSecret"))
+	playerClaimToken := strings.TrimSpace(r.URL.Query().Get("playerClaimToken"))
+	if playerClaimToken != "" {
+		claim, err := resolveSocketClaim(matchID, playerClaimToken)
+		if err != nil {
+			unsubscribe()
+			writeError(w, http.StatusUnauthorized, "unauthorized room claim")
+			return
+		}
+		playerID = strings.TrimSpace(claim.PlayerID)
+		playerSecret = strings.TrimSpace(claim.PlayerSecret)
+	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -384,4 +398,59 @@ func isOriginAllowed(origin string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+func resolveSocketClaim(matchID, claimToken string) (platform.MatchSeatClaim, error) {
+	payload := map[string]string{
+		"matchId":    strings.TrimSpace(matchID),
+		"claimToken": strings.TrimSpace(claimToken),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return platform.MatchSeatClaim{}, err
+	}
+
+	request, err := http.NewRequest(http.MethodPost, platformServiceURL()+"/api/platform/match-claims/resolve", bytes.NewReader(body))
+	if err != nil {
+		return platform.MatchSeatClaim{}, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
+	if err != nil {
+		return platform.MatchSeatClaim{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return platform.MatchSeatClaim{}, fmt.Errorf("claim resolve failed with %d", response.StatusCode)
+	}
+
+	var claim platform.MatchSeatClaim
+	if err := json.NewDecoder(response.Body).Decode(&claim); err != nil {
+		return platform.MatchSeatClaim{}, err
+	}
+	if strings.TrimSpace(claim.PlayerID) == "" || strings.TrimSpace(claim.PlayerSecret) == "" {
+		return platform.MatchSeatClaim{}, errors.New("claim missing player credentials")
+	}
+	return claim, nil
+}
+
+func platformServiceURL() string {
+	return resolveInternalServiceURL(os.Getenv("PLATFORM_SERVICE_INTERNAL_URL"), "http://platform-service.railway.internal:8080")
+}
+
+func resolveInternalServiceURL(explicit string, fallback string) string {
+	trimmedFallback := strings.TrimRight(strings.TrimSpace(fallback), "/")
+	trimmed := strings.TrimRight(strings.TrimSpace(explicit), "/")
+	if trimmed == "" || strings.Contains(trimmed, "${{") || strings.HasSuffix(trimmed, ":") {
+		return trimmedFallback
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return trimmedFallback
+	}
+	if parsed.Port() == "" && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".railway.internal") {
+		parsed.Host = net.JoinHostPort(parsed.Hostname(), "8080")
+	}
+	return strings.TrimRight(parsed.String(), "/")
 }

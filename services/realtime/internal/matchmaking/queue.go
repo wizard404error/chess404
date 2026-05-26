@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -485,7 +486,7 @@ func (s *Service) findActiveTicketLocked(guestID, accountID string) (Ticket, boo
 func randomToken(bytesCount int) string {
 	buf := make([]byte, bytesCount)
 	if _, err := rand.Read(buf); err != nil {
-		return time.Now().UTC().Format("150405.000000000")
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
 	}
 	return hex.EncodeToString(buf)
 }

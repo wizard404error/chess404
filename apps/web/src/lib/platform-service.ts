@@ -26,6 +26,9 @@ export interface MatchArchiveEntry {
   updatedAt: string;
   moveCount: number;
   lastMove?: string;
+  whiteHandCount?: number;
+  blackHandCount?: number;
+  chatMessageCount?: number;
   snapshot: MatchSnapshotMessage;
 }
 
@@ -526,13 +529,21 @@ export async function fetchArchivedMatches(limit = 20, modeId?: MatchModeId, sta
   return payload.matches ?? [];
 }
 
-export async function fetchGuestArchivedMatches(guestId: string, limit = 12, modeId?: MatchModeId): Promise<MatchArchiveEntry[]> {
+export async function fetchGuestArchivedMatches(
+  guestId: string,
+  limit = 12,
+  modeId?: MatchModeId,
+  status: PublicMatchStatusFilter = 'finished',
+): Promise<MatchArchiveEntry[]> {
   const params = new URLSearchParams({
     guestId,
     limit: String(limit),
   });
   if (modeId) {
     params.set('modeId', modeId);
+  }
+  if (status) {
+    params.set('status', status);
   }
   const response = await fetch(`${httpBaseUrl}/matches?${params.toString()}`, {
     method: 'GET',
@@ -546,7 +557,13 @@ export async function fetchGuestArchivedMatches(guestId: string, limit = 12, mod
   return payload.matches ?? [];
 }
 
-export async function fetchAccountArchivedMatches(accountId: string, limit = 12, seasonId?: string, modeId?: MatchModeId): Promise<MatchArchiveEntry[]> {
+export async function fetchAccountArchivedMatches(
+  accountId: string,
+  limit = 12,
+  seasonId?: string,
+  modeId?: MatchModeId,
+  status: PublicMatchStatusFilter = 'finished',
+): Promise<MatchArchiveEntry[]> {
   const params = new URLSearchParams({
     accountId,
     limit: String(limit),
@@ -556,6 +573,9 @@ export async function fetchAccountArchivedMatches(accountId: string, limit = 12,
   }
   if (modeId) {
     params.set('modeId', modeId);
+  }
+  if (status) {
+    params.set('status', status);
   }
   const response = await fetch(`${httpBaseUrl}/matches?${params.toString()}`, {
     method: 'GET',
@@ -1390,9 +1410,9 @@ export async function fetchGuestAccount(guestId: string, seasonId?: string, mode
 
 export async function finalizeGuestMatch(input: {
   matchId: string;
-  whiteGuestId: string;
-  blackGuestId: string;
-  winner: 'white' | 'black' | 'draw';
+  guestId: string;
+  sessionSecret?: string;
+  sessionToken?: string;
 }): Promise<GuestResultResponse> {
   const response = await fetch(`${httpBaseUrl}/guest-results`, {
     method: 'POST',
@@ -1407,9 +1427,8 @@ export async function finalizeGuestMatch(input: {
 
 export async function finalizeAccountMatch(input: {
   matchId: string;
-  whiteAccountId: string;
-  blackAccountId: string;
-  winner: 'white' | 'black' | 'draw';
+  accountId: string;
+  sessionToken: string;
 }): Promise<AccountResultResponse> {
   const response = await fetch(`${httpBaseUrl}/account-results`, {
     method: 'POST',

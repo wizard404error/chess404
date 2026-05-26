@@ -3,7 +3,6 @@ package platform
 import (
 	"database/sql"
 	"encoding/json"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -947,32 +946,9 @@ func (s *SQLiteAccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccount
 	whiteBefore := whiteSession.Account.Rating
 	blackBefore := blackSession.Account.Rating
 
-	whiteRating := float64(whiteSession.Account.Rating)
-	blackRating := float64(blackSession.Account.Rating)
-	k := 32.0
-
-	whiteExpected := 1.0 / (1.0 + math.Pow(10, (blackRating-whiteRating)/400.0))
-	blackExpected := 1.0 / (1.0 + math.Pow(10, (whiteRating-blackRating)/400.0))
-
 	now := time.Now().UTC()
-	switch winner {
-	case "white":
-		whiteSession.Account.Rating = int(math.Round(whiteRating + k*(1.0-whiteExpected)))
-		blackSession.Account.Rating = maxInt(100, int(math.Round(blackRating+k*(0.0-blackExpected))))
-		whiteSession.Account.Wins++
-		blackSession.Account.Losses++
-	case "black":
-		blackSession.Account.Rating = int(math.Round(blackRating + k*(1.0-blackExpected)))
-		whiteSession.Account.Rating = maxInt(100, int(math.Round(whiteRating+k*(0.0-whiteExpected))))
-		blackSession.Account.Wins++
-		whiteSession.Account.Losses++
-	case "draw":
-		whiteSession.Account.Rating = int(math.Round(whiteRating + k*(0.5-whiteExpected)))
-		blackSession.Account.Rating = int(math.Round(blackRating + k*(0.5-blackExpected)))
-		whiteSession.Account.Draws++
-		blackSession.Account.Draws++
-	default:
-		return AccountProfile{}, AccountProfile{}, false, os.ErrInvalid
+	if err := applyAccountMatchResult(&whiteSession.Account, &blackSession.Account, winner); err != nil {
+		return AccountProfile{}, AccountProfile{}, false, err
 	}
 	whiteSession.Account.MatchesPlayed++
 	blackSession.Account.MatchesPlayed++

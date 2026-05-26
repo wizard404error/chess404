@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -2688,12 +2689,11 @@ func TestGuestResultsRejectNonRatedMatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected white guest creation to succeed, got %v", err)
 	}
-	black, err := guests.EnsureGuest("guest_black", "")
-	if err != nil {
+	if _, err := guests.EnsureGuest("guest_black", ""); err != nil {
 		t.Fatalf("expected black guest creation to succeed, got %v", err)
 	}
 
-	body := `{"matchId":"casual_room","whiteGuestId":"guest_white","blackGuestId":"guest_black","winner":"white"}`
+	body := fmt.Sprintf(`{"matchId":"casual_room","guestId":"%s","sessionSecret":"%s"}`, white.Guest.GuestID, white.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -2710,7 +2710,7 @@ func TestGuestResultsRejectNonRatedMatches(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected black guest to remain available")
 	}
-	if refreshedWhite.Rating != white.Guest.Rating || refreshedBlack.Rating != black.Guest.Rating {
+	if refreshedWhite.Rating != 1200 || refreshedBlack.Rating != 1200 {
 		t.Fatalf("expected non-rated result rejection to preserve ratings, got %#v %#v", refreshedWhite, refreshedBlack)
 	}
 }
@@ -2744,14 +2744,15 @@ func TestGuestResultsFinalizeRatedMatches(t *testing.T) {
 		t.Fatalf("expected archive upsert to succeed, got %v", err)
 	}
 
-	if _, err := guests.EnsureGuest("guest_white", ""); err != nil {
+	whiteSession, err := guests.EnsureGuest("guest_white", "")
+	if err != nil {
 		t.Fatalf("expected white guest creation to succeed, got %v", err)
 	}
 	if _, err := guests.EnsureGuest("guest_black", ""); err != nil {
 		t.Fatalf("expected black guest creation to succeed, got %v", err)
 	}
 
-	body := `{"matchId":"rated_room","whiteGuestId":"guest_white","blackGuestId":"guest_black","winner":"white"}`
+	body := fmt.Sprintf(`{"matchId":"rated_room","guestId":"%s","sessionSecret":"%s"}`, whiteSession.Guest.GuestID, whiteSession.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -2773,7 +2774,7 @@ func TestGuestResultsFinalizeRatedMatches(t *testing.T) {
 	}
 }
 
-func TestGuestResultsRejectArchiveWinnerMismatch(t *testing.T) {
+func TestGuestResultsRejectUnauthenticated(t *testing.T) {
 	tempDir := t.TempDir()
 	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
 	if err != nil {
@@ -2809,19 +2810,25 @@ func TestGuestResultsRejectArchiveWinnerMismatch(t *testing.T) {
 		t.Fatalf("expected black guest creation to succeed, got %v", err)
 	}
 
-	body := `{"matchId":"rated_room","whiteGuestId":"guest_white","blackGuestId":"guest_black","winner":"white"}`
+	// A guest who is not a participant should be rejected
+	intruder, err := guests.EnsureGuest("guest_intruder", "")
+	if err != nil {
+		t.Fatalf("expected intruder guest creation to succeed, got %v", err)
+	}
+
+	body := fmt.Sprintf(`{"matchId":"rated_room","guestId":"%s","sessionSecret":"%s"}`, intruder.Guest.GuestID, intruder.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected mismatched winner to be rejected, got status %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected non-participant guest to be rejected with 403, got status %d body=%s", rec.Code, rec.Body.String())
 	}
 	refreshedWhite, _ := guests.GetGuest("guest_white")
 	refreshedBlack, _ := guests.GetGuest("guest_black")
 	if refreshedWhite.Rating != 1200 || refreshedBlack.Rating != 1200 {
-		t.Fatalf("expected rejected winner mismatch to preserve ratings, got %#v %#v", refreshedWhite, refreshedBlack)
+		t.Fatalf("expected rejected guest result to preserve ratings, got %#v %#v", refreshedWhite, refreshedBlack)
 	}
 }
 
@@ -2854,14 +2861,15 @@ func TestGuestResultsRejectUnfinishedRatedMatches(t *testing.T) {
 		t.Fatalf("expected archive upsert to succeed, got %v", err)
 	}
 
-	if _, err := guests.EnsureGuest("guest_white", ""); err != nil {
+	white, err := guests.EnsureGuest("guest_white", "")
+	if err != nil {
 		t.Fatalf("expected white guest creation to succeed, got %v", err)
 	}
 	if _, err := guests.EnsureGuest("guest_black", ""); err != nil {
 		t.Fatalf("expected black guest creation to succeed, got %v", err)
 	}
 
-	body := `{"matchId":"rated_room_open","whiteGuestId":"guest_white","blackGuestId":"guest_black","winner":"white"}`
+	body := fmt.Sprintf(`{"matchId":"rated_room_open","guestId":"%s","sessionSecret":"%s"}`, white.Guest.GuestID, white.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -2922,7 +2930,7 @@ func TestAccountResultsFinalizeRatedMatchesWithLinkedGuestFallback(t *testing.T)
 		t.Fatalf("expected archive upsert to succeed, got %v", err)
 	}
 
-	body := `{"matchId":"rated_account_room","whiteAccountId":"` + whiteAccountSession.Account.AccountID + `","blackAccountId":"` + blackAccountSession.Account.AccountID + `","winner":"white"}`
+	body := fmt.Sprintf(`{"matchId":"rated_account_room","accountId":"%s","sessionToken":"%s"}`, whiteAccountSession.Account.AccountID, whiteAccountSession.SessionToken)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/account-results", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -2952,7 +2960,7 @@ func TestAccountResultsFinalizeRatedMatchesWithLinkedGuestFallback(t *testing.T)
 	}
 }
 
-func TestAccountResultsRejectArchivedSeatMismatch(t *testing.T) {
+func TestAccountResultsRejectUnauthorized(t *testing.T) {
 	tempDir := t.TempDir()
 	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
 	if err != nil {
@@ -2980,21 +2988,19 @@ func TestAccountResultsRejectArchivedSeatMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected white account claim to succeed, got %v", err)
 	}
-	blackAccountSession, err := accounts.ClaimGuest(blackSession.Guest, "black_owner")
-	if err != nil {
+	if _, err := accounts.ClaimGuest(blackSession.Guest, "black_owner"); err != nil {
 		t.Fatalf("expected black account claim to succeed, got %v", err)
 	}
 
 	now := time.Date(2026, 5, 7, 10, 30, 0, 0, time.UTC)
 	if err := archive.Upsert(contracts.MatchSnapshotResponse{
 		Match: contracts.MatchState{
-			MatchID:        "rated_account_room_mismatch",
+			MatchID:        "rated_account_room",
 			RulesVersion:   "v1-alpha-foundation",
 			Queue:          "rated",
 			WhiteGuestID:   whiteSession.Guest.GuestID,
 			BlackGuestID:   blackSession.Guest.GuestID,
 			WhiteAccountID: whiteAccountSession.Account.AccountID,
-			BlackAccountID: blackAccountSession.Account.AccountID,
 			Status:         "finished",
 			Winner:         "white",
 			CreatedAt:      now,
@@ -3004,14 +3010,24 @@ func TestAccountResultsRejectArchivedSeatMismatch(t *testing.T) {
 		t.Fatalf("expected archive upsert to succeed, got %v", err)
 	}
 
-	body := `{"matchId":"rated_account_room_mismatch","whiteAccountId":"` + blackAccountSession.Account.AccountID + `","blackAccountId":"` + whiteAccountSession.Account.AccountID + `","winner":"white"}`
+	// An intruder account that owns no seat in the match should be rejected
+	intruderGuest, err := guests.EnsureGuest("guest_intruder", "")
+	if err != nil {
+		t.Fatalf("expected intruder guest creation to succeed, got %v", err)
+	}
+	intruderSession, err := accounts.ClaimGuest(intruderGuest.Guest, "intruder_owner")
+	if err != nil {
+		t.Fatalf("expected intruder account claim to succeed, got %v", err)
+	}
+
+	body := fmt.Sprintf(`{"matchId":"rated_account_room","accountId":"%s","sessionToken":"%s"}`, intruderSession.Account.AccountID, intruderSession.SessionToken)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/account-results", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMuxWithAccounts(t, archive, guests, accounts, claims).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected mismatched account result to be rejected, got status %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected unauthorized account result to be rejected with 403, got status %d body=%s", rec.Code, rec.Body.String())
 	}
 	refreshedWhite, _ := guests.GetGuest("guest_white")
 	refreshedBlack, _ := guests.GetGuest("guest_black")

@@ -514,7 +514,7 @@ func cardTemplateByMechanic(mechanic string) contracts.GameCard {
 			return card
 		}
 	}
-	panic(fmt.Sprintf("card template with mechanic %q not found", mechanic))
+	return contracts.GameCard{}
 }
 
 func starterHandCardsForMode(mode string) []contracts.GameCard {
@@ -992,6 +992,13 @@ func markMatchFinished(state *contracts.MatchState, winner string, finishReason 
 	state.DrawOfferedBy = ""
 	state.Clock.RunningFor = ""
 	state.Clock.StartedAt = nil
+	state.PendingCard = nil
+	state.DoubleMove = nil
+	state.InvisiblePiece = nil
+	state.FogZones = nil
+	state.FortressZones = nil
+	state.BombPieces = nil
+	state.LavaSquares = nil
 	state.UpdatedAt = now.UTC()
 }
 
@@ -1789,6 +1796,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if intent.Target == nil {
 			return nil, errors.New("teleport requires choosing a destination square")
 		}
+		if !inBounds(intent.Target.Row, intent.Target.Col) {
+			return nil, errors.New("teleport destination is out of bounds")
+		}
 		if pieceAt(state.Board, *intent.Target) != nil {
 			return nil, errors.New("teleport destination must be empty")
 		}
@@ -1829,6 +1839,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		}
 		if intent.Target == nil {
 			return nil, errors.New("jump requires choosing a destination square")
+		}
+		if !inBounds(intent.Target.Row, intent.Target.Col) {
+			return nil, errors.New("jump destination is out of bounds")
 		}
 		if fortressEntryBlocked(state.FortressZones, pending.OwnerColor, *intent.Target) {
 			return nil, errors.New("jump destination is protected by an enemy fortress")
@@ -2081,6 +2094,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if intent.Target == nil {
 			return nil, errors.New("clone requires choosing a destination square")
 		}
+		if !inBounds(intent.Target.Row, intent.Target.Col) {
+			return nil, errors.New("clone destination is out of bounds")
+		}
 		sourcePiece := pieceAt(state.Board, *pending.Target)
 		if sourcePiece == nil {
 			return nil, errors.New("clone source piece no longer exists")
@@ -2117,6 +2133,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 	case "fakepiece":
 		if intent.Target == nil {
 			return nil, errors.New("fakepiece requires a target square")
+		}
+		if !inBounds(intent.Target.Row, intent.Target.Col) {
+			return nil, errors.New("fakepiece target is out of bounds")
 		}
 		if pieceAt(state.Board, *intent.Target) != nil {
 			return nil, errors.New("fakepiece must target an empty square")
@@ -2784,7 +2803,7 @@ func applyInvisibleMove(state *contracts.MatchState, intent contracts.PlayerInte
 	isCapture := targetPiece != nil && targetPiece.Color != state.Turn
 	isMove2 := invisible.RoundsLeft <= 0
 
-	if targetPiece != nil && targetPiece.Shielded && (givesCheck || (isMove2 && isCapture)) {
+	if targetPiece != nil && targetPiece.Shielded {
 		targetPiece.Shielded = false
 		targetPiece.ShieldTurn = nil
 		state.DrawOfferedBy = ""
@@ -2975,7 +2994,7 @@ func applyAbort(state *contracts.MatchState, intent contracts.PlayerIntent, now 
 	if _, err := requireIntentColor(state, intent.PlayerID, intent.PlayerSecret); err != nil {
 		return nil, err
 	}
-	if state.FullMoveNum > 1 || len(state.MoveHistory) > 1 {
+	if len(state.MoveHistory) > 1 {
 		return nil, errors.New("abort is only allowed before black completes the first reply")
 	}
 
@@ -3136,6 +3155,8 @@ func cloneState(state *contracts.MatchState) contracts.MatchState {
 	clone.BlackHoles = append([]contracts.BlackHoleZone{}, state.BlackHoles...)
 	clone.FogZones = append([]contracts.FogZone{}, state.FogZones...)
 	clone.FortressZones = append([]contracts.FortressZone{}, state.FortressZones...)
+	clone.History = append([]contracts.PositionState{}, state.History...)
+	clone.SeenClientMoveIDs = append([]string{}, state.SeenClientMoveIDs...)
 	clone.RadarRevealFor = state.RadarRevealFor
 	if state.DoubleMove != nil {
 		doubleMove := *state.DoubleMove
@@ -3605,6 +3626,7 @@ func resolveBombEffects(state *contracts.MatchState) []contracts.Square {
 
 		bomb.TurnsLeft--
 		if bomb.TurnsLeft <= 0 {
+			piece.Bomb = false
 			for dr := -1; dr <= 1; dr++ {
 				for dc := -1; dc <= 1; dc++ {
 					r := bomb.Row + dr

@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -698,22 +699,8 @@ func (s *AccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccountID, wi
 	blackBefore := black.Rating
 
 	now := time.Now().UTC()
-	switch winner {
-	case "white":
-		white.Rating += 16
-		black.Rating = maxInt(100, black.Rating-16)
-		white.Wins++
-		black.Losses++
-	case "black":
-		black.Rating += 16
-		white.Rating = maxInt(100, white.Rating-16)
-		black.Wins++
-		white.Losses++
-	case "draw":
-		white.Draws++
-		black.Draws++
-	default:
-		return AccountProfile{}, AccountProfile{}, false, os.ErrInvalid
+	if err := applyAccountMatchResult(&white, &black, winner); err != nil {
+		return AccountProfile{}, AccountProfile{}, false, err
 	}
 	white.MatchesPlayed++
 	black.MatchesPlayed++
@@ -915,6 +902,46 @@ func buildAccountRatingHistoryEntry(matchID, opponentAccountID, winner, queue st
 		MatchesPlayed:     matchesPlayed,
 		At:                at.UTC(),
 	}
+}
+
+func applyAccountMatchResult(white, black *AccountProfile, winner string) error {
+	if white == nil || black == nil {
+		return os.ErrInvalid
+	}
+	if white.Rating <= 0 {
+		white.Rating = 1200
+	}
+	if black.Rating <= 0 {
+		black.Rating = 1200
+	}
+
+	whiteRating := float64(white.Rating)
+	blackRating := float64(black.Rating)
+	whiteExpected := 1.0 / (1.0 + math.Pow(10, (blackRating-whiteRating)/400.0))
+	blackExpected := 1.0 / (1.0 + math.Pow(10, (whiteRating-blackRating)/400.0))
+	const kFactor = 32.0
+
+	switch winner {
+	case "white":
+		white.Rating = int(math.Round(whiteRating + kFactor*(1.0-whiteExpected)))
+		black.Rating = maxInt(100, int(math.Round(blackRating+kFactor*(0.0-blackExpected))))
+		white.Wins++
+		black.Losses++
+	case "black":
+		black.Rating = int(math.Round(blackRating + kFactor*(1.0-blackExpected)))
+		white.Rating = maxInt(100, int(math.Round(whiteRating+kFactor*(0.0-whiteExpected))))
+		black.Wins++
+		white.Losses++
+	case "draw":
+		white.Rating = int(math.Round(whiteRating + kFactor*(0.5-whiteExpected)))
+		black.Rating = int(math.Round(blackRating + kFactor*(0.5-blackExpected)))
+		white.Draws++
+		black.Draws++
+	default:
+		return os.ErrInvalid
+	}
+
+	return nil
 }
 
 func accountSessionTokenValid(state AccountPrivateState, sessionToken string, now time.Time) bool {
