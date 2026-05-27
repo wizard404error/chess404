@@ -15,8 +15,8 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/platform-service /usr/local/bin/platform-service
 
-RUN adduser -D -g '' -u 1001 nobody
-USER nobody
+RUN adduser -D -g '' -u 1001 chess404
+USER chess404
 
 EXPOSE 8080
 

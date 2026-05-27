@@ -260,7 +260,7 @@ export function syncRequestedProfileQuery(handle: string | null): void {
   } else {
     url.searchParams.delete('profile');
   }
-  replaceUrl(PROFILES_ROUTE, url.searchParams, url.hash);
+  replaceUrl(url.pathname, url.searchParams, url.hash);
 }
 
 export function syncRequestedHistoryQuery(matchId: string | null, guestId: string | null): void {
@@ -278,7 +278,7 @@ export function syncRequestedHistoryQuery(matchId: string | null, guestId: strin
   } else {
     url.searchParams.delete('guest');
   }
-  replaceUrl(HISTORY_ROUTE, url.searchParams, url.hash);
+  replaceUrl(url.pathname, url.searchParams, url.hash);
 }
 
 export function syncRequestedMatchQuery(matchId: string | null): void {
