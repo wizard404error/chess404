@@ -244,6 +244,10 @@ async function unwrapResponse<T>(response: Response): Promise<T> {
     } catch {
       // Keep fallback message.
     }
+    if (response.status === 429) {
+      const header = response.headers.get('Retry-After');
+      throw new Error(`${message} (rate limited, retry after ${header ?? 'unknown'}s)`);
+    }
     throw new Error(message);
   }
 

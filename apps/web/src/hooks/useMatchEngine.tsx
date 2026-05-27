@@ -124,9 +124,7 @@ import {
   writeStoredAccountIdentity,
   clearStoredAccountIdentity,
   clearRequestedMatchQuery,
-  syncRequestedProfileQuery,
-  syncRequestedHistoryQuery,
-  syncRequestedMatchQuery,
+  syncAllQueries,
   buildLiveMatchUrl,
   buildReplayPageUrl,
   copyTextToClipboard,
@@ -1060,8 +1058,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       setProfileFocusHandle(requestedProfileHandle.trim().toLowerCase());
       setActivePage('Profiles');
     } else if (!requestedMatchId && nextHosted) {
-      const identity = readStoredAccountIdentity('white');
-      setActivePage(identity.accountId && identity.sessionToken ? 'Play' : 'Account');
+      setActivePage('Play');
     }
     setProfileQueryReady(true);
     setHistoryQueryReady(true);
@@ -1107,23 +1104,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       cancelled = true;
     };
   }, [applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, applyGatewayQueueRecovery, clearPrimaryAccountRestriction]);
-
-  React.useEffect(() => {
-    if (!profileQueryReady) {
-      return;
-    }
-    syncRequestedProfileQuery(activePage === 'Profiles' ? profileFocusHandle : null);
-  }, [activePage, profileFocusHandle, profileQueryReady]);
-
-  React.useEffect(() => {
-    if (!historyQueryReady) {
-      return;
-    }
-    syncRequestedHistoryQuery(
-      activePage === 'History' ? historyFocusMatchId : null,
-      activePage === 'History' ? historyFocusGuestId : null,
-    );
-  }, [activePage, historyFocusGuestId, historyFocusMatchId, historyQueryReady]);
 
   React.useEffect(() => {
     whiteProfileRef.current = whiteProfile;
@@ -1307,6 +1287,16 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   });
 
   const [authoritativeMatchId, setAuthoritativeMatchId] = React.useState<string | null>(null);
+  const allSyncReady = profileQueryReady && historyQueryReady && matchQueryReady;
+  React.useEffect(() => {
+    if (!allSyncReady) return;
+    syncAllQueries({
+      profileHandle: activePage === 'Profiles' ? profileFocusHandle : null,
+      historyMatchId: activePage === 'History' ? historyFocusMatchId : null,
+      historyGuestId: activePage === 'History' ? historyFocusGuestId : null,
+      matchId: (activePage === 'Match' || (!hostedRuntime && activePage === 'Play')) ? authoritativeMatchId : null,
+    });
+  }, [allSyncReady, activePage, profileFocusHandle, historyFocusGuestId, historyFocusMatchId, authoritativeMatchId, hostedRuntime]);
   const [authoritativeStatus, setAuthoritativeStatus] = React.useState<'waiting' | 'active' | 'finished' | null>(null);
   const [authoritativeWhiteConnected, setAuthoritativeWhiteConnected] = React.useState(false);
   const [authoritativeBlackConnected, setAuthoritativeBlackConnected] = React.useState(false);
@@ -1367,13 +1357,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       setAuthoritativeRematchBusy(false);
     }
   }, [authoritativeMatchId, openLiveMatch, primaryAccountIdentity.accountId, primaryAccountIdentity.sessionToken]);
-  React.useEffect(() => {
-    if (!matchQueryReady) {
-      return;
-    }
-    const boardPageActive = activePage === 'Match' || (!hostedRuntime && activePage === 'Play');
-    syncRequestedMatchQuery(boardPageActive ? authoritativeMatchId : null);
-  }, [activePage, authoritativeMatchId, hostedRuntime, matchQueryReady]);
   const [cheaterTurnsLeft, setCheaterTurnsLeft] = React.useState(0);
   const [cheaterColor,     setCheaterColor]     = React.useState<PieceColor | null>(null);
   const cheaterColorRef = React.useRef<PieceColor | null>(null);

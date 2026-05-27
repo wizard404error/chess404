@@ -99,9 +99,19 @@ export async function cancelTicket(ticketId: string): Promise<{ ticket: QueueTic
   return unwrapResponse(response);
 }
 
+export class RateLimitError extends Error {
+  retryAfter: number;
+  constructor(message: string, retryAfter: number) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.retryAfter = retryAfter;
+  }
+}
+
 async function unwrapResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `Request failed with ${response.status}`;
+    let retryAfter = 0;
     try {
       const payload = (await response.json()) as { error?: string };
       if (payload?.error) {
@@ -109,6 +119,11 @@ async function unwrapResponse<T>(response: Response): Promise<T> {
       }
     } catch {
       // Ignore parse failures and keep fallback message.
+    }
+    if (response.status === 429) {
+      const header = response.headers.get('Retry-After');
+      if (header) retryAfter = parseInt(header, 10) || 1;
+      throw new RateLimitError(message, retryAfter || 1);
     }
     throw new Error(message);
   }

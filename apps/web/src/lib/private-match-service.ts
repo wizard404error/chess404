@@ -20,6 +20,7 @@ export interface PrivateMatchAccessResponse {
 
 export async function createPrivateMatch(input: {
   identity: PrivateMatchIdentity;
+  queue?: 'direct' | 'casual' | 'rated';
   modeId?: MatchModeId;
   clockSeconds?: number;
   preferredSeat?: PieceColor;
@@ -39,6 +40,7 @@ export async function createPrivateMatch(input: {
         accountId: input.identity.accountId,
         sessionToken: input.identity.accountSessionToken,
       } : undefined,
+      queue: input.queue ?? 'direct',
       modeId: input.modeId ?? DEFAULT_MATCH_MODE_ID,
       clockSeconds: input.clockSeconds ?? 600,
       preferredSeat: input.preferredSeat ?? 'white',
@@ -112,6 +114,10 @@ async function unwrapResponse<T>(response: Response): Promise<T> {
       }
     } catch {
       // Keep fallback message.
+    }
+    if (response.status === 429) {
+      const header = response.headers.get('Retry-After');
+      throw new Error(`${message} (rate limited, retry after ${header ?? 'unknown'}s)`);
     }
     throw new Error(message);
   }
