@@ -239,6 +239,15 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			GuestID       string `json:"guestId"`
 			SessionSecret string `json:"sessionSecret"`
 			SessionToken  string `json:"sessionToken"`
+			SeatColor     string `json:"seatColor,omitempty"`
+			PlayerSecret  string `json:"playerSecret,omitempty"`
+			WhiteGuestID  string `json:"whiteGuestId,omitempty"`
+			BlackGuestID  string `json:"blackGuestId,omitempty"`
+			WhiteName     string `json:"whiteName,omitempty"`
+			BlackName     string `json:"blackName,omitempty"`
+			Queue         string `json:"queue,omitempty"`
+			ModeID        string `json:"modeId,omitempty"`
+			MatchStatus   string `json:"matchStatus,omitempty"`
 		}
 		if r.Body != nil {
 			defer r.Body.Close()
@@ -280,20 +289,69 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 
-		matchState, _, ok := archive.LoadMatch(payload.MatchID)
-		if !ok {
-			http.Error(w, `{"error":"unknown match archive"}`, http.StatusNotFound)
-			return
-		}
-		if !isRecoverableMatchStatus(matchState.Status) {
-			http.Error(w, `{"error":"match is no longer active"}`, http.StatusNotFound)
+		matchState, _, archiveOk := archive.LoadMatch(payload.MatchID)
+		if archiveOk {
+			if !isRecoverableMatchStatus(matchState.Status) {
+				http.Error(w, `{"error":"match is no longer active"}`, http.StatusNotFound)
+				return
+			}
+			claim, ok := buildMatchSeatClaim(matchState, session.Guest.GuestID, session.SessionSecret)
+			if !ok {
+				http.Error(w, `{"error":"guest does not own a seat in this match"}`, http.StatusForbidden)
+				return
+			}
+			if err := claims.Put(claim); err != nil {
+				http.Error(w, `{"error":"failed to cache match claim"}`, http.StatusInternalServerError)
+				return
+			}
+			if storedClaim, ok := claims.Get(claim.MatchID, claim.GuestID); ok {
+				claim = storedClaim
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(claim)
 			return
 		}
 
-		claim, ok := buildMatchSeatClaim(matchState, session.Guest.GuestID, session.SessionSecret)
-		if !ok {
+		if payload.SeatColor == "" || payload.MatchStatus == "" {
+			http.Error(w, `{"error":"unknown match archive"}`, http.StatusNotFound)
+			return
+		}
+		if !isRecoverableMatchStatus(payload.MatchStatus) {
+			http.Error(w, `{"error":"match is no longer active"}`, http.StatusNotFound)
+			return
+		}
+		seatColor := strings.ToLower(strings.TrimSpace(payload.SeatColor))
+		if seatColor != "white" && seatColor != "black" {
 			http.Error(w, `{"error":"guest does not own a seat in this match"}`, http.StatusForbidden)
 			return
+		}
+		playerSecret := strings.TrimSpace(payload.PlayerSecret)
+		if playerSecret == "" {
+			playerSecret = session.SessionSecret
+		}
+		var ownerGuestID string
+		if seatColor == "white" {
+			ownerGuestID = payload.WhiteGuestID
+		} else {
+			ownerGuestID = payload.BlackGuestID
+		}
+		if session.Guest.GuestID != ownerGuestID {
+			http.Error(w, `{"error":"guest does not own a seat in this match"}`, http.StatusForbidden)
+			return
+		}
+		claim := platform.MatchSeatClaim{
+			MatchID:      payload.MatchID,
+			GuestID:      session.Guest.GuestID,
+			SeatColor:    seatColor,
+			PlayerID:     session.Guest.GuestID,
+			PlayerSecret: playerSecret,
+			Queue:        strings.TrimSpace(payload.Queue),
+			ModeID:       contracts.MatchModeID(strings.TrimSpace(payload.ModeID)),
+			WhiteGuestID: strings.TrimSpace(payload.WhiteGuestID),
+			BlackGuestID: strings.TrimSpace(payload.BlackGuestID),
+			WhiteName:    strings.TrimSpace(payload.WhiteName),
+			BlackName:    strings.TrimSpace(payload.BlackName),
+			Status:       strings.TrimSpace(payload.MatchStatus),
 		}
 		if err := claims.Put(claim); err != nil {
 			http.Error(w, `{"error":"failed to cache match claim"}`, http.StatusInternalServerError)

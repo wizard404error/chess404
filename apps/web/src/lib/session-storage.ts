@@ -305,6 +305,58 @@ export function syncRequestedMatchQuery(matchId: string | null): void {
   replaceUrl(url.pathname, url.searchParams, url.hash);
 }
 
+export function syncAllQueries(params: {
+  profileHandle?: string | null;
+  historyMatchId?: string | null;
+  historyGuestId?: string | null;
+  matchId?: string | null;
+}): void {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  const { profileHandle, historyMatchId, historyGuestId, matchId } = params;
+
+  if (profileHandle?.trim()) {
+    url.searchParams.delete('match');
+    url.searchParams.delete('replay');
+    url.searchParams.delete('guest');
+    url.searchParams.set('profile', profileHandle.trim().toLowerCase());
+  } else {
+    url.searchParams.delete('profile');
+  }
+
+  if (historyMatchId?.trim() || historyGuestId?.trim()) {
+    url.searchParams.delete('match');
+    url.searchParams.delete('profile');
+    if (historyMatchId?.trim()) url.searchParams.set('replay', historyMatchId.trim());
+    else url.searchParams.delete('replay');
+    if (historyGuestId?.trim()) url.searchParams.set('guest', historyGuestId.trim());
+    else url.searchParams.delete('guest');
+  } else {
+    url.searchParams.delete('replay');
+    url.searchParams.delete('guest');
+  }
+
+  if (matchId?.trim()) {
+    url.searchParams.delete('replay');
+    url.searchParams.delete('guest');
+    url.searchParams.delete('profile');
+    const normalized = matchId.trim();
+    if (isMatchRoute(url.pathname)) {
+      url.searchParams.delete('match');
+      replaceUrl(`${MATCH_ROUTE_PREFIX}${encodeURIComponent(normalized)}`, url.searchParams, url.hash);
+      return;
+    }
+    url.searchParams.set('match', normalized);
+  } else {
+    url.searchParams.delete('match');
+    if (isMatchRoute(url.pathname)) {
+      replaceUrl(PLAY_ROUTE, url.searchParams, url.hash);
+      return;
+    }
+  }
+  replaceUrl(url.pathname, url.searchParams, url.hash);
+}
+
 // ── URL builders ──────────────────────────────────────────────────────────────
 
 export function buildLiveMatchUrl(matchId: string): string | null {

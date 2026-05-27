@@ -146,6 +146,7 @@ type GatewayBootstrapPayload struct {
 type GatewayPrivateMatchRequest struct {
 	Guest         GatewayGuestIdentity    `json:"guest"`
 	Account       *GatewayAccountIdentity `json:"account,omitempty"`
+	Queue         string                  `json:"queue,omitempty"`
 	ModeID        contracts.MatchModeID   `json:"modeId,omitempty"`
 	ClockSeconds  int64                   `json:"clockSeconds,omitempty"`
 	PreferredSeat string                  `json:"preferredSeat,omitempty"`
@@ -558,13 +559,13 @@ func bootstrapMatchClaims(config GatewayConfig, client *http.Client, matchID str
 	claims := &GatewayBootstrapMatchClaims{}
 	errors := &GatewayBootstrapErrors{}
 
-	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.White); claim != nil {
+	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.White, nil); claim != nil {
 		claims.White = sanitizeSeatClaim(claim)
 	} else if errMessage != "" {
 		errors.White = errMessage
 	}
 
-	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.Black); claim != nil {
+	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.Black, nil); claim != nil {
 		claims.Black = sanitizeSeatClaim(claim)
 	} else if errMessage != "" {
 		errors.Black = errMessage
@@ -580,16 +581,40 @@ func bootstrapMatchClaims(config GatewayConfig, client *http.Client, matchID str
 	return claims, errors
 }
 
-func bootstrapMatchClaimForSide(config GatewayConfig, client *http.Client, matchID string, session *platform.GuestSession) (*GatewaySeatClaim, string) {
+type matchClaimBootstrapFields struct {
+	SeatColor    string
+	PlayerSecret string
+	WhiteGuestID string
+	BlackGuestID string
+	WhiteName    string
+	BlackName    string
+	Queue        string
+	ModeID       string
+	MatchStatus  string
+}
+
+func bootstrapMatchClaimForSide(config GatewayConfig, client *http.Client, matchID string, session *platform.GuestSession, matchFields *matchClaimBootstrapFields) (*GatewaySeatClaim, string) {
 	if session == nil || session.Guest.GuestID == "" || session.SessionSecret == "" {
 		return nil, ""
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims", map[string]string{
+	body := map[string]string{
 		"matchId":       matchID,
 		"guestId":       session.Guest.GuestID,
 		"sessionSecret": session.SessionSecret,
-	})
+	}
+	if matchFields != nil {
+		body["seatColor"] = matchFields.SeatColor
+		body["playerSecret"] = matchFields.PlayerSecret
+		body["whiteGuestId"] = matchFields.WhiteGuestID
+		body["blackGuestId"] = matchFields.BlackGuestID
+		body["whiteName"] = matchFields.WhiteName
+		body["blackName"] = matchFields.BlackName
+		body["queue"] = matchFields.Queue
+		body["modeId"] = matchFields.ModeID
+		body["matchStatus"] = matchFields.MatchStatus
+	}
+	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims", body)
 	if !result.Healthy {
 		return nil, gatewayErrorMessage(result, "failed to recover match claim")
 	}
@@ -983,7 +1008,7 @@ func createGatewayPrivateMatch(config GatewayConfig, client *http.Client, reques
 	if accountSessionErr != nil {
 		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
 	}
-	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.ModeID, request.ClockSeconds, request.PreferredSeat)
+	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.Queue, request.ModeID, request.ClockSeconds, request.PreferredSeat)
 }
 
 func createGatewayPrivateMatchForSession(
@@ -991,6 +1016,7 @@ func createGatewayPrivateMatchForSession(
 	client *http.Client,
 	session *platform.GuestSession,
 	accountSession *platform.AccountSession,
+	queue string,
 	modeID contracts.MatchModeID,
 	clockSeconds int64,
 	preferredSeat string,
@@ -1003,9 +1029,16 @@ func createGatewayPrivateMatchForSession(
 		preferredSeat = "white"
 	}
 
+	matchQueue := strings.TrimSpace(queue)
+	if matchQueue == "" {
+		matchQueue = "direct"
+	} else if matchQueue != "rated" && matchQueue != "casual" && matchQueue != "direct" {
+		matchQueue = "direct"
+	}
+
 	createReq := contracts.CreateMatchRequest{
 		ClockSeconds: clockSeconds,
-		Queue:        "direct",
+		Queue:        matchQueue,
 		ModeID:       contracts.NormalizeMatchModeID(string(modeID)),
 	}
 	if createReq.ModeID == "" {
@@ -1039,12 +1072,28 @@ func createGatewayPrivateMatchForSession(
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode private match snapshot: %v", err)
 	}
 
-	claim, claimErr := bootstrapMatchClaimForSide(config, client, snapshot.Match.MatchID, session)
+	seatColor := strings.ToLower(strings.TrimSpace(preferredSeat))
+	if seatColor != "black" {
+		seatColor = "white"
+	}
+	matchFields := &matchClaimBootstrapFields{
+		SeatColor:    seatColor,
+		PlayerSecret: session.SessionSecret,
+		WhiteGuestID: strings.TrimSpace(snapshot.Match.WhiteGuestID),
+		BlackGuestID: strings.TrimSpace(snapshot.Match.BlackGuestID),
+		WhiteName:    strings.TrimSpace(snapshot.Match.WhiteName),
+		BlackName:    strings.TrimSpace(snapshot.Match.BlackName),
+		Queue:        strings.TrimSpace(snapshot.Match.Queue),
+		ModeID:       string(snapshot.Match.ModeID),
+		MatchStatus:  strings.TrimSpace(snapshot.Match.Status),
+	}
+	claim, claimErr := bootstrapMatchClaimForSide(config, client, snapshot.Match.MatchID, session, matchFields)
 	if claimErr != "" {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to bootstrap match claim: %s", claimErr)
 	}
-
-	seatColor := claim.SeatColor
+	if claim != nil {
+		seatColor = claim.SeatColor
+	}
 
 	return GatewayPrivateMatchResponse{
 		MatchID:            snapshot.Match.MatchID,
@@ -1087,14 +1136,32 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode private join response: %v", err)
 	}
 
-	claim, claimErr := bootstrapMatchClaimForSide(config, client, matchID, session)
+	joinSeatColor := strings.ToLower(strings.TrimSpace(request.PreferredSeat))
+	if joinSeatColor != "black" {
+		joinSeatColor = "white"
+	}
+	joinMatchFields := &matchClaimBootstrapFields{
+		SeatColor:    joinSeatColor,
+		PlayerSecret: session.SessionSecret,
+		WhiteGuestID: strings.TrimSpace(joined.Match.Match.WhiteGuestID),
+		BlackGuestID: strings.TrimSpace(joined.Match.Match.BlackGuestID),
+		WhiteName:    strings.TrimSpace(joined.Match.Match.WhiteName),
+		BlackName:    strings.TrimSpace(joined.Match.Match.BlackName),
+		Queue:        strings.TrimSpace(joined.Match.Match.Queue),
+		ModeID:       string(joined.Match.Match.ModeID),
+		MatchStatus:  strings.TrimSpace(joined.Match.Match.Status),
+	}
+	claim, claimErr := bootstrapMatchClaimForSide(config, client, matchID, session, joinMatchFields)
 	if claimErr != "" {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to bootstrap match claim: %s", claimErr)
 	}
 
+	if claim != nil {
+		joinSeatColor = claim.SeatColor
+	}
 	return GatewayPrivateMatchResponse{
 		MatchID:            joined.Match.Match.MatchID,
-		SeatColor:          claim.SeatColor,
+		SeatColor:          joinSeatColor,
 		WaitingForOpponent: joined.WaitingForOpponent,
 		Snapshot:           joined.Match,
 		Claim:              sanitizeSeatClaim(claim),
@@ -1149,6 +1216,7 @@ func rematchGatewayPrivateMatch(config GatewayConfig, client *http.Client, match
 		client,
 		session,
 		accountSession,
+		snapshot.Match.Queue,
 		snapshot.Match.ModeID,
 		clockSeconds,
 		requesterSeat,

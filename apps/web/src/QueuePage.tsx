@@ -3,7 +3,7 @@ import type { MatchModeId } from '@chess404/contracts';
 import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { GuestProfile } from './lib/platform-service';
 import type { QueueName, QueueSnapshot, QueueTicket } from './lib/matchmaking-service';
-import { cancelTicket, enqueueGuest, fetchQueueSnapshots, fetchQueueTickets, fetchTicket } from './lib/matchmaking-service';
+import { cancelTicket, enqueueGuest, fetchQueueSnapshots, fetchQueueTickets, fetchTicket, RateLimitError } from './lib/matchmaking-service';
 import { ensureMatch, readStoredRoomMeta, resolveSeatSecret, writeStoredRoomMeta, type StoredRoomMeta } from './lib/match-service';
 
 interface QueuePageProps {
@@ -216,66 +216,7 @@ export default function QueuePage({
   }, [modeId]);
 
   React.useEffect(() => {
-    let cancelled = false;
-
-    const restoreTickets = async () => {
-      const whiteRef = readStoredTicketRef('white');
-      const blackRef = readStoredTicketRef('black');
-      const activeRef = whiteRef ?? blackRef;
-
-      if (activeRef) {
-        setQueue(activeRef.queue);
-        setModeId(activeRef.modeId);
-      }
-
-      if (!whiteRef && !blackRef) {
-        setRestoringTickets(false);
-        return;
-      }
-
-      const hydrate = async (side: QueueSide, stored: StoredTicketRef | null): Promise<QueueTicket | null> => {
-        if (!stored) {
-          return null;
-        }
-        try {
-          const { ticket } = await fetchTicket(stored.ticketId);
-          return ticket;
-        } catch (err) {
-          const message = err instanceof Error ? err.message : '';
-          if (message.includes('404')) {
-            clearStoredTicketRef(side);
-            return null;
-          }
-          throw err;
-        }
-      };
-
-      try {
-        const [restoredWhite, restoredBlack] = await Promise.all([
-          hydrate('white', whiteRef),
-          hydrate('black', blackRef),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        setWhiteTicket(restoredWhite);
-        setBlackTicket(restoredBlack);
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to resume saved queue tickets.');
-        }
-      } finally {
-        if (!cancelled) {
-          setRestoringTickets(false);
-        }
-      }
-    };
-
-    void restoreTickets();
-
-    return () => {
-      cancelled = true;
-    };
+    setRestoringTickets(false);
   }, []);
 
   React.useEffect(() => {
@@ -399,11 +340,14 @@ export default function QueuePage({
     window.location.href = `/match/${encodeURIComponent(ticket.assignedRoom)}`;
   }, [hostedRuntime, restoringTickets, whiteTicket, whiteProfile, buildHostedAssignedRoomMeta]);
 
+  const pollingBackoffRef = React.useRef(0);
+
   React.useEffect(() => {
     if (restoringTickets) {
       return;
     }
     if (!whiteTicket && !blackTicket) {
+      pollingBackoffRef.current = 0;
       return;
     }
 
@@ -412,6 +356,7 @@ export default function QueuePage({
       if (whiteTicket?.status === 'queued') {
         tasks.push(
           fetchTicket(whiteTicket.ticketId).then(({ ticket }) => {
+            pollingBackoffRef.current = 0;
             setWhiteTicket(ticket);
           })
         );
@@ -419,15 +364,18 @@ export default function QueuePage({
       if (blackTicket?.status === 'queued') {
         tasks.push(
           fetchTicket(blackTicket.ticketId).then(({ ticket }) => {
+            pollingBackoffRef.current = 0;
             setBlackTicket(ticket);
           })
         );
       }
       tasks.push(refreshQueue(queue, modeId));
-      void Promise.all(tasks).catch(() => {
-        // Keep last visible state if polling fails.
+      void Promise.all(tasks).catch((err) => {
+        if (err instanceof RateLimitError) {
+          pollingBackoffRef.current = Math.min(pollingBackoffRef.current + 1, 4);
+        }
       });
-    }, 2500);
+    }, 2500 * (pollingBackoffRef.current > 0 ? pollingBackoffRef.current : 1));
 
     return () => window.clearInterval(interval);
   }, [whiteTicket, blackTicket, queue, modeId, refreshQueue, restoringTickets]);

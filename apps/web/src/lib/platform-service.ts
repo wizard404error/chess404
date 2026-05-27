@@ -1468,6 +1468,10 @@ async function unwrapResponse<T>(response: Response): Promise<T> {
     if (restriction) {
       throw new PlatformAccountRestrictionError(message, restriction);
     }
+    if (response.status === 429) {
+      const header = response.headers.get('Retry-After');
+      throw new Error(`${message} (rate limited, retry after ${header ?? 'unknown'}s)`);
+    }
     throw new Error(message);
   }
 

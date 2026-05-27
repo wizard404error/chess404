@@ -2,6 +2,7 @@ import React from 'react';
 import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES, type MatchModeId, type PieceColor } from '@chess404/contracts';
 import { createPrivateMatch, type PrivateMatchIdentity } from './lib/private-match-service';
 import { writeStoredRoomMeta } from './lib/match-service';
+import { queueLabel } from './lib/match-labels';
 
 interface LobbiesPageProps {
   identity: PrivateMatchIdentity | null;
@@ -12,6 +13,7 @@ interface LobbiesPageProps {
 
 export default function LobbiesPage({ identity, displayName, hostedRuntime, embedded = false }: LobbiesPageProps): React.ReactElement {
   const [modeId, setModeId] = React.useState<MatchModeId>(DEFAULT_MATCH_MODE_ID);
+  const [queue, setQueue] = React.useState<'direct' | 'casual' | 'rated'>('direct');
   const [preferredSeat, setPreferredSeat] = React.useState<PieceColor>('white');
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -22,18 +24,23 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
       setError('Your hosted player session is still loading.');
       return;
     }
+    if (queue === 'rated' && (!identity.accountId || !identity.accountSessionToken)) {
+      setError('Rated private matches require a signed-in Chess404 account.');
+      return;
+    }
     setCreating(true);
     setError('');
     try {
       const result = await createPrivateMatch({
         identity,
+        queue,
         modeId,
         preferredSeat,
         clockSeconds: 600,
       });
       const inviteUrl = `${window.location.origin}/match/${encodeURIComponent(result.matchId)}`;
       writeStoredRoomMeta(result.matchId, {
-        queue: 'direct',
+        queue,
         modeId,
         clockSeconds: 600,
         viewerSeat: result.seatColor,
@@ -60,7 +67,7 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
     } finally {
       setCreating(false);
     }
-  }, [identity, modeId, preferredSeat]);
+  }, [identity, modeId, queue, preferredSeat]);
 
   const copyInviteLink = React.useCallback(async () => {
     if (!created?.inviteUrl) return;
@@ -98,6 +105,47 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
                   <option key={mode.id} value={mode.id}>{mode.label}</option>
                 ))}
               </select>
+            </label>
+
+            <label style={{ display: 'grid', gap: '8px' }}>
+              <span style={{ color: '#dbe8ff', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Queue</span>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                {(['direct', 'casual', 'rated'] as const).map(name => {
+                  const ratedBlocked = name === 'rated' && (!identity?.accountId || !identity?.accountSessionToken);
+                  const displayLabel = name === 'direct' ? 'private' : name === 'rated' && ratedBlocked ? 'rated (sign in)' : name;
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => { if (!ratedBlocked) setQueue(name); }}
+                      style={{
+                        padding: '10px 16px',
+                        borderRadius: '999px',
+                        border: ratedBlocked
+                          ? '1px solid rgba(255,180,60,0.2)'
+                          : queue === name
+                            ? '1px solid rgba(110,200,255,0.55)'
+                            : '1px solid rgba(255,255,255,0.10)',
+                        background: ratedBlocked
+                          ? 'rgba(255,180,60,0.06)'
+                          : queue === name
+                            ? 'rgba(54,116,255,0.22)'
+                            : 'rgba(255,255,255,0.04)',
+                        color: ratedBlocked
+                          ? 'rgba(255,232,180,0.5)'
+                          : queue === name
+                            ? '#dbe8ff'
+                            : 'rgba(214,224,255,0.68)',
+                        cursor: ratedBlocked ? 'not-allowed' : 'pointer',
+                        fontWeight: 800,
+                        fontSize: '12px',
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {displayLabel}
+                    </button>
+                  );
+                })}
+              </div>
             </label>
 
             <label style={{ display: 'grid', gap: '8px' }}>
@@ -162,7 +210,32 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
           {created ? (
             <div style={{ marginTop: '18px', display: 'grid', gap: '12px' }}>
               <div style={{ padding: '12px 14px', borderRadius: '12px', background: 'rgba(75,150,255,0.10)', border: '1px solid rgba(95,165,255,0.24)' }}>
-                <div style={{ color: '#9ed0ff', fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Invite Link</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <div style={{ color: '#9ed0ff', fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Invite Link</div>
+                  <span style={{
+                    padding: '3px 8px',
+                    borderRadius: '999px',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    textTransform: 'uppercase',
+                    color: queue === 'rated' ? '#ffd28a' : '#9ee6b8',
+                    background: queue === 'rated' ? 'rgba(168,110,22,0.22)' : 'rgba(24,120,62,0.22)',
+                    border: queue === 'rated' ? '1px solid rgba(255,180,60,0.28)' : '1px solid rgba(78,210,132,0.28)',
+                  }}>
+                    {queue === 'rated' ? 'Rated' : 'Casual'}
+                  </span>
+                  <span style={{
+                    padding: '3px 8px',
+                    borderRadius: '999px',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    color: 'rgba(180,210,255,0.8)',
+                    background: 'rgba(100,150,255,0.12)',
+                    border: '1px solid rgba(100,150,255,0.2)',
+                  }}>
+                    Private
+                  </span>
+                </div>
                 <div style={{ marginTop: '8px', color: '#eef4ff', fontSize: '12px', lineHeight: 1.5, wordBreak: 'break-all' }}>{created.inviteUrl}</div>
               </div>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
