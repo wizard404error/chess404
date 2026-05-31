@@ -8,7 +8,7 @@ import QueuePage from './QueuePage';
 import LobbiesPage from './LobbiesPage';
 
 interface PlayHubPageProps {
-  hostedRuntime: boolean;
+  hostedRuntime: boolean | null;
   whiteProfile: GuestProfile | null;
   blackProfile: GuestProfile | null;
   preferredQueue?: QueueName | null;

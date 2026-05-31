@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  go-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/realtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: services/realtime/go.sum
+      - run: go build ./...
+
+  go-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/realtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: services/realtime/go.sum
+      - run: go test ./internal/... ./cmd/... -v -count=1 -timeout 120s
+
+  web-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable && pnpm install
+      - run: pnpm run lint
+
+  web-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable && pnpm install
+      - run: pnpm run build

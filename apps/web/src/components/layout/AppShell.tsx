@@ -50,7 +50,7 @@ function SidebarItem({
   onClick: () => void;
 }): React.ReactElement {
   return (
-    <button className={`app-shell__nav-item${active ? ' app-shell__nav-item--active' : ''}`} onClick={onClick}>
+    <button className={`app-shell__nav-item${active ? ' app-shell__nav-item--active' : ''}`} onClick={onClick} aria-current={active ? 'page' : undefined}>
       <span className="app-shell__nav-main">
         <span className="app-shell__nav-icon">{item.icon}</span>
         <span className="app-shell__nav-text">{item.label}</span>
@@ -124,7 +124,7 @@ export default function AppShell({
           ))}
 
           <div className="app-shell__sidebar-footer">
-            <button className={`app-shell__nav-item${activeKey === 'Account' ? ' app-shell__nav-item--active' : ''}`} onClick={onOpenAccount}>
+            <button className={`app-shell__nav-item${activeKey === 'Account' ? ' app-shell__nav-item--active' : ''}`} onClick={onOpenAccount} aria-current={activeKey === 'Account' ? 'page' : undefined}>
               <span className="app-shell__nav-main">
                 <span className="app-shell__nav-icon"><AccountIcon /></span>
                 <span className="app-shell__nav-text">{accountLabel}</span>
@@ -169,6 +169,7 @@ export default function AppShell({
               <button
                 key={item.key}
                 className={active ? 'is-active' : ''}
+                aria-current={active ? 'page' : undefined}
                 onClick={() => {
                   if (isAccount) {
                     onOpenAccount();

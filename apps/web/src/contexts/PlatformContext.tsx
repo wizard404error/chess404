@@ -3,8 +3,8 @@
 import React, { createContext, useContext } from 'react';
 
 export interface PlatformContextShape {
-  hostedRuntime: boolean;
-  setHostedRuntime: (v: boolean) => void;
+  hostedRuntime: boolean | null;
+  setHostedRuntime: (v: boolean | null) => void;
   whiteProfile: unknown;
   blackProfile: unknown;
   queueLaunchIntent: unknown;

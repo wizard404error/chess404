@@ -178,7 +178,7 @@ export interface UseMatchEngineProps {
   historyFocusGuestId: string | null;
   historyFocusMatchId: string | null;
   historyQueryReady: boolean;
-  hostedRuntime: boolean;
+  hostedRuntime: boolean | null;
   inboxUnreadCount: number;
   matchDestinationNotice: string;
   matchQueryReady: boolean;
@@ -213,7 +213,7 @@ export interface UseMatchEngineProps {
   setHistoryFocusGuestId: React.Dispatch<React.SetStateAction<string | null>>;
   setHistoryFocusMatchId: React.Dispatch<React.SetStateAction<string | null>>;
   setHistoryQueryReady: React.Dispatch<React.SetStateAction<boolean>>;
-  setHostedRuntime: React.Dispatch<React.SetStateAction<boolean>>;
+  setHostedRuntime: React.Dispatch<React.SetStateAction<boolean | null>>;
   setInboxUnreadCount: React.Dispatch<React.SetStateAction<number>>;
   setMatchDestinationNotice: React.Dispatch<React.SetStateAction<string>>;
   setMatchQueryReady: React.Dispatch<React.SetStateAction<boolean>>;
@@ -244,6 +244,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const [turn,      setTurn]      = React.useState<PieceColor>('white');
   const [sel,       setSel]       = React.useState<Sq | null>(null);
   const [hints,     setHints]     = React.useState<Sq[]>([]);
+  const [premove,   setPremove]   = React.useState<{ from: Sq; to: Sq } | null>(null);
   const [moved,     setMoved]     = React.useState<Set<string>>(new Set());
   const [lm,        setLm]        = React.useState<{ from: Sq; to: Sq } | null>(null);
   const [drag,      setDrag]      = React.useState<Sq | null>(null);
@@ -799,11 +800,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     if (!input) {
       return;
     }
-
-    setBootstrapQueueRecovery({
-      white: input.queueTickets?.white?.status === 'queued' ? input.queueTickets.white : null,
-      black: input.queueTickets?.black?.status === 'queued' ? input.queueTickets.black : null,
-    });
 
     if (input.recoveredMatch?.matchId) {
       applyGatewayRecoveredMatch(input.recoveredMatch);
@@ -1416,6 +1412,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const fmnRef     = React.useRef(fmn);
   const posHistRef = React.useRef(posHist);
   const overRef    = React.useRef(over);
+  const premoveRef = React.useRef<{ from: Sq; to: Sq } | null>(null);
 
   React.useEffect(() => { boardRef.current      = board;      }, [board]);
   React.useEffect(() => { lavaSquaresRef.current = lavaSquares; }, [lavaSquares]);
@@ -1426,17 +1423,13 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   React.useEffect(() => { fmnRef.current        = fmn;        }, [fmn]);
   React.useEffect(() => { posHistRef.current    = posHist;    }, [posHist]);
   React.useEffect(() => { overRef.current       = over;       }, [over]);
+  React.useEffect(() => { premoveRef.current    = premove;    }, [premove]);
 
+  const isMountedRef = React.useRef(true);
   React.useEffect(() => {
     return () => {
-      if (swapAnimTimerRef.current) clearTimeout(swapAnimTimerRef.current);
-      if (transformAnimTimerRef.current) clearTimeout(transformAnimTimerRef.current);
-      if (sacrificeAnimTimerRef.current) clearTimeout(sacrificeAnimTimerRef.current);
-      if (mindControlAnimTimerRef.current) clearTimeout(mindControlAnimTimerRef.current);
-      if (fuseAnimTimerRef.current) clearTimeout(fuseAnimTimerRef.current);
-      if (jumpAnimTimerRef.current) clearTimeout(jumpAnimTimerRef.current);
-      if (sniperAnimTimerRef.current) clearTimeout(sniperAnimTimerRef.current);
-      if (teleportAnimTimerRef.current) clearTimeout(teleportAnimTimerRef.current);
+      isMountedRef.current = false;
+      setAuthoritativeMatchId(null);
     };
   }, []);
 
@@ -1446,6 +1439,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const authoritativeBootstrapRef = React.useRef(0);
   const requestedMatchIdRef = React.useRef<string | null>(null);
   const finalizedResultRef = React.useRef<string | null>(null);
+  const lastAppliedSeqNumRef = React.useRef<number>(0);
 
   const buildMoveRows = React.useCallback((history: string[]) => {
     const rows: { n: string; w?: string; b?: string }[] = [];
@@ -1494,6 +1488,12 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   }, []);
 
   const applyAuthoritativeSnapshot = React.useCallback((snapshot: MatchSnapshotMessage) => {
+    if (snapshot.seqNum != null && snapshot.seqNum <= lastAppliedSeqNumRef.current) {
+      return;
+    }
+    if (snapshot.seqNum != null) {
+      lastAppliedSeqNumRef.current = snapshot.seqNum;
+    }
     const match = snapshot.match as AuthoritativeMatchState;
     const nextBoard = cloneBoard(match.board as Board);
     const nextMoved = new Set(match.moved);
@@ -1695,6 +1695,28 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     setTicking(nextTicking);
     finalPositionRef.current = nextOver ? { fen: nextFen, turn: nextTurn } : null;
   }, [buildMoveRows, buildPendingCardFromSnapshot, setTicking]);
+
+  const prevTurnRef = React.useRef<PieceColor>('white');
+  const premoveActorRef = React.useRef<(color: PieceColor) => { playerId: string; playerSecret?: string; playerClaimToken?: string }>(() => ({ playerId: '' }));
+  const premoveCanSubmitRef = React.useRef<(fr: number, fc: number, tr: number, tc: number) => boolean>(() => false);
+  React.useEffect(() => {
+    if (prevTurnRef.current !== turn && turn === viewerSeat && premove && !over && authoritativeMatchIdRef.current) {
+      const pm = premoveRef.current;
+      if (pm && premoveCanSubmitRef.current(pm.from.row, pm.from.col, pm.to.row, pm.to.col)) {
+        const backendMoveIntent: Omit<Extract<PlayerIntent, { type: 'make_move' }>, 'matchId'> = {
+          type: 'make_move',
+          ...premoveActorRef.current(turnRef.current),
+          from: { row: pm.from.row, col: pm.from.col },
+          to: { row: pm.to.row, col: pm.to.col },
+        };
+        void applyIntent(authoritativeMatchIdRef.current!, backendMoveIntent).then(snapshot => {
+          applyAuthoritativeSnapshot(snapshot);
+        }).catch(() => {});
+      }
+      setPremove(null);
+    }
+    prevTurnRef.current = turn;
+  }, [turn, viewerSeat, premove, over, applyAuthoritativeSnapshot]);
 
   const bootstrapAuthoritativeMatch = React.useCallback(async () => {
     const bootstrapId = authoritativeBootstrapRef.current + 1;
@@ -2091,6 +2113,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
     return playerSecret ? { playerId, playerSecret } : { playerId };
   }, [authoritativePlayerIdForColor, authoritativePlayerSecretForColor, authoritativePlayerClaimTokenForColor, hostedRuntime]);
+  premoveActorRef.current = authoritativeActorForColor;
 
   // ── NEW: Bomb explosion logic ──────────────────────────────────────────────
   // Called at start of each turn.
@@ -2459,7 +2482,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }))
   );
   const activeSecondaryNav = secondaryNavItems.some((item) => item.key === activePage);
-  const showReturnToMatch = hostedRuntime && Boolean(authoritativeMatchId);
+  const showReturnToMatch = !!hostedRuntime && Boolean(authoritativeMatchId);
   const showPlayHub = hostedRuntime
     ? (activePage === 'Play' || activePage === 'Modes' || activePage === 'Queue' || activePage === 'Lobbies')
     : (activePage === 'Modes' || activePage === 'Queue' || activePage === 'Lobbies');
@@ -2658,7 +2681,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     ? (actorSeatForHostedControls === 'white' ? 'White' : 'Black')
     : 'Spectator';
   const controlSender: PieceColor = actorSeatForHostedControls ?? turn;
-  const hostedActionLocked = hostedRuntime && !viewerSeat;
+  const hostedActionLocked = !!hostedRuntime && !viewerSeat;
   const canRespondToDrawOffer = !hostedRuntime || (!!viewerSeat && viewerSeat === turn);
   const actorSeatLabel = actorSeatForHostedControls
     ? (actorSeatForHostedControls === 'white' ? '⚪ White' : '⚫ Black')
@@ -2942,6 +2965,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     if (target?.fusedWith || target?.shielded || target?.invisible) return false;
     return true;
     }, [cardPending, selectedCard, promo, promoPicker, cardPromo, jokerPicker, hostedRuntime]);
+  premoveCanSubmitRef.current = canSubmitAuthoritativeMove;
 
   // ── doMove ─────────────────────────────────────────────────────────────────
   const doMove = React.useCallback((fr: number, fc: number, tr: number, tc: number, forcePromo?: PieceType) => {
@@ -5048,6 +5072,27 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     const p = board[r][c];
     const ghost = ghostRef.current;
     const isGhostSq = ghost && canActWithColor(ghost.ownerColor) && ghost.row === r && ghost.col === c;
+    const myColor = hostedRuntime ? viewerSeatRef.current : turnRef.current;
+    const isMyTurn = turnRef.current === myColor;
+    const canPremove = hostedRuntime && authoritativeMatchIdRef.current && myColor && !isMyTurn && !overRef.current;
+
+    if (canPremove && !sel) {
+      if (p && p.color === myColor && canSelectPiece(r, c)) {
+        setSel({ row: r, col: c });
+        setHints(getMoves(r, c));
+        setCardMsg('🔄 Premove set: click destination');
+      }
+      return;
+    }
+
+    if (canPremove && sel && hints.some(m => m.row === r && m.col === c)) {
+      setPremove({ from: sel, to: { row: r, col: c } });
+      setSel(null);
+      setHints([]);
+      setCardMsg('✔ Premove queued');
+      setTimeout(() => { if (premoveRef.current) setCardMsg('⏳ Premove will fire when turn starts'); }, 1200);
+      return;
+    }
 
     if (!sel) {
       if (isGhostSq || (p && canActWithColor(p.color) && canSelectPiece(r, c))) {
@@ -5068,7 +5113,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     doMove(sel.row, sel.col, r, c);
     setSel(null);
     setHints([]);
-  }, [cardPending, isReviewing, over, promo, board, sel, hints, canSelectPiece, getMoves, doMove, handleCardClick, canActWithColor, canControlColor]);
+  }, [cardPending, isReviewing, over, promo, board, sel, hints, canSelectPiece, getMoves, doMove, handleCardClick, canActWithColor, canControlColor, hostedRuntime, viewerSeatRef]);
 
   // ── Board highlight helpers ─────────────────────────────────────────────────
   const getCardHighlight = React.useCallback((row: number, col: number): string | null => {
@@ -5434,7 +5479,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       .filter(c => !authoritativeMatchIdRef.current || AUTHORITATIVE_JOKER_MECHANICS.has(c.mechanic));
 
     return (
-      <div style={{
+      <div role="dialog" aria-modal="true" aria-label="Select card" style={{
         position:'fixed', inset:0, zIndex:1000,
         background:'rgba(0,0,0,0.88)',
         backdropFilter:'blur(8px)',
@@ -5890,6 +5935,9 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     evalLabel,
     renderHand,
     renderPlayerCard,
-    renderJokerPicker
+    renderJokerPicker,
+    premove,
+    setPremove,
+    premoveRef,
   };
 }

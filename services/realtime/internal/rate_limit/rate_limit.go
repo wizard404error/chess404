@@ -28,12 +28,40 @@ type Limiter struct {
 	now     func() time.Time
 	mu      sync.Mutex
 	buckets map[string]bucket
+	stopCh  chan struct{}
 }
 
 func New() *Limiter {
-	return &Limiter{
+	l := &Limiter{
 		now:     time.Now,
 		buckets: make(map[string]bucket),
+		stopCh:  make(chan struct{}),
+	}
+	go l.cleanupLoop()
+	return l
+}
+
+func (l *Limiter) Close() {
+	close(l.stopCh)
+}
+
+func (l *Limiter) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			l.mu.Lock()
+			now := l.now().UTC()
+			for key, b := range l.buckets {
+				if now.Sub(b.windowStart) > 2*DefaultAPIWindow {
+					delete(l.buckets, key)
+				}
+			}
+			l.mu.Unlock()
+		case <-l.stopCh:
+			return
+		}
 	}
 }
 
@@ -64,6 +92,7 @@ func (l *Limiter) Allow(key string, window time.Duration, limit int) (bool, time
 func (l *Limiter) Middleware(window time.Duration, limit int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 			ip := ClientIP(r)
 			key := "rl:" + ip
 			allowed, retryAfter := l.Allow(key, window, limit)
@@ -83,6 +112,46 @@ func (l *Limiter) Middleware(window time.Duration, limit int) func(http.Handler)
 	}
 }
 
+func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		origin := r.Header.Get("Origin")
+		referer := r.Header.Get("Referer")
+		if origin == "" && referer == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		check := origin
+		if check == "" {
+			check = referer
+		}
+		if len(allowedOrigins) > 0 {
+			for _, allowed := range allowedOrigins {
+				if strings.HasPrefix(check, allowed) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+		} else {
+			scheme := "https://"
+			if r.TLS == nil {
+				scheme = "http://"
+			}
+			selfOrigin := scheme + r.Host
+			if strings.HasPrefix(check, selfOrigin) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"CSRF check failed: origin not allowed"}`))
+	})
+}
+
 func ClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -90,7 +159,7 @@ func ClientIP(r *http.Request) string {
 	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
 		parts := strings.Split(forwarded, ",")
 		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
+			return strings.TrimSpace(parts[len(parts)-1])
 		}
 	}
 	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {

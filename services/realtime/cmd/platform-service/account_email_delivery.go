@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/platform"
 )
 
@@ -209,7 +210,7 @@ func openAccountEmailSender() (accountEmailSender, error) {
 }
 
 func configuredAccountEmailDeliveryProvider() string {
-	switch strings.TrimSpace(strings.ToLower(envOrDefault("ACCOUNT_EMAIL_DELIVERY_PROVIDER", "preview"))) {
+	switch strings.TrimSpace(strings.ToLower(httputil.EnvOrDefault("ACCOUNT_EMAIL_DELIVERY_PROVIDER", "preview"))) {
 	case "disabled":
 		return "disabled"
 	case "smtp":

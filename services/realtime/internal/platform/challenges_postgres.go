@@ -2,6 +2,7 @@ package platform
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -16,6 +17,9 @@ func NewPostgresDirectChallengeStore(dsn string) (*DirectChallengeStore, error) 
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	store, err := newPostgresDirectChallengePersistenceWithDB(db)
 	if err != nil {
 		_ = db.Close()

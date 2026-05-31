@@ -22,6 +22,7 @@ const (
 )
 
 const (
+	defaultQueuedTTL          = 1 * time.Hour
 	defaultMatchedRecoveryTTL = 3 * time.Minute
 	defaultCancelledTicketTTL = 30 * time.Second
 	defaultMaxRatingDiff      = 400
@@ -67,6 +68,7 @@ type Service struct {
 	tickets             map[string]Ticket
 	creator             MatchCreator
 	now                 func() time.Time
+	queuedTTL           time.Duration
 	matchedRecoveryTTL  time.Duration
 	cancelledTicketTTL  time.Duration
 }
@@ -144,6 +146,7 @@ func newService(store ticketStore) *Service {
 		store:              store,
 		tickets:            make(map[string]Ticket),
 		now:                time.Now,
+		queuedTTL:          defaultQueuedTTL,
 		matchedRecoveryTTL: defaultMatchedRecoveryTTL,
 		cancelledTicketTTL: defaultCancelledTicketTTL,
 	}
@@ -249,6 +252,26 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 				}
 				return Ticket{}, err
 			}
+			// Re-check both tickets still queued after lock re-acquire (TOCTOU guard)
+			currentTicket, ticketOK := s.tickets[ticket.TicketID]
+			currentOpponent, opponentOK := s.tickets[opponent.TicketID]
+			if ticketOK && currentTicket.Status != StatusQueued {
+				return Ticket{}, errors.New("ticket status changed during match creation")
+			}
+			if opponentOK && currentOpponent.Status != StatusQueued {
+				// restore our ticket if only opponent was claimed
+				if ticketOK && currentTicket.Status == StatusQueued {
+					s.tickets[ticket.TicketID] = currentTicket
+				}
+				return Ticket{}, errors.New("opponent ticket status changed during match creation")
+			}
+			// Ensure tickets exist with fresh status
+			currTicket := s.tickets[ticket.TicketID]
+			currOpponent := s.tickets[opponent.TicketID]
+			currTicket.Status = StatusQueued
+			currOpponent.Status = StatusQueued
+			s.tickets[ticket.TicketID] = currTicket
+			s.tickets[opponent.TicketID] = currOpponent
 		}
 
 		ticket.Status = StatusMatched
@@ -545,7 +568,7 @@ func (s *Service) pruneExpiredLocked(now time.Time) bool {
 func (s *Service) ticketRecoverableLocked(ticket Ticket, now time.Time) bool {
 	switch ticket.Status {
 	case StatusQueued:
-		return true
+		return ticket.UpdatedAt.Add(s.queuedTTL).After(now)
 	case StatusMatched:
 		return ticket.UpdatedAt.Add(s.matchedRecoveryTTL).After(now)
 	case StatusCancelled:

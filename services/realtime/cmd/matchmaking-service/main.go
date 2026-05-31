@@ -18,6 +18,7 @@ import (
 
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/matchmaking"
+	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/rate_limit"
 )
 
@@ -217,10 +218,10 @@ func main() {
 		}
 	})
 
-	addr := listenAddr("MATCHMAKING_ADDR", 8084)
+	addr := httputil.ListenAddr("MATCHMAKING_ADDR", 8084)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           limitBody(rl.Middleware(rate_limit.DefaultQueueWindow, rate_limit.DefaultQueueLimit)(mux)),
+		Handler:           httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultQueueWindow, rate_limit.DefaultQueueLimit)(mux), nil)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -241,43 +242,16 @@ func main() {
 	_ = srv.Shutdown(ctx)
 }
 
-func envOrDefault(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func listenAddr(key string, fallbackPort int) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	if value := os.Getenv("PORT"); value != "" {
-		if strings.HasPrefix(value, ":") {
-			return value
-		}
-		return ":" + value
-	}
-	return fmt.Sprintf(":%d", fallbackPort)
-}
-
-func limitBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		next.ServeHTTP(w, r)
-	})
-}
-
 func matchmakingTicketStoreSQLitePath() string {
-	return envOrDefault("MATCHMAKING_TICKET_STORE_SQLITE_PATH", "data/matchmaking-tickets.sqlite")
+	return httputil.EnvOrDefault("MATCHMAKING_TICKET_STORE_SQLITE_PATH", "data/matchmaking-tickets.sqlite")
 }
 
 func matchmakingTicketStoreRedisURL() string {
-	return envOrDefault("MATCHMAKING_TICKET_STORE_REDIS_URL", "")
+	return httputil.EnvOrDefault("MATCHMAKING_TICKET_STORE_REDIS_URL", "")
 }
 
 func matchmakingTicketStoreRedisKey() string {
-	return envOrDefault("MATCHMAKING_TICKET_STORE_REDIS_KEY", "chess404:matchmaking:tickets")
+	return httputil.EnvOrDefault("MATCHMAKING_TICKET_STORE_REDIS_KEY", "chess404:matchmaking:tickets")
 }
 
 func matchmakingMatchServiceURL() string {
@@ -313,7 +287,7 @@ func openMatchmakingService() (*matchmaking.Service, error) {
 		service *matchmaking.Service
 		err     error
 	)
-	backend := strings.ToLower(envOrDefault("MATCHMAKING_TICKET_STORE_BACKEND", "file"))
+	backend := strings.ToLower(httputil.EnvOrDefault("MATCHMAKING_TICKET_STORE_BACKEND", "file"))
 	log.Printf("[matchmaking] Using ticket store backend: %s", backend)
 
 	switch backend {
@@ -324,7 +298,7 @@ func openMatchmakingService() (*matchmaking.Service, error) {
 		log.Printf("[matchmaking] Connecting to Redis at: %s", redisURL)
 		service, err = matchmaking.NewRedisPersistentService(redisURL, matchmakingTicketStoreRedisKey())
 	default:
-		service, err = matchmaking.NewPersistentService(envOrDefault("MATCHMAKING_TICKET_STORE_PATH", "data/matchmaking-tickets.json"))
+		service, err = matchmaking.NewPersistentService(httputil.EnvOrDefault("MATCHMAKING_TICKET_STORE_PATH", "data/matchmaking-tickets.json"))
 	}
 	if err != nil {
 		return nil, err

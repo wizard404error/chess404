@@ -64,17 +64,27 @@ function buildAbsoluteUrl(pathname: string, params?: URLSearchParams): string | 
   return `${window.location.origin}${pathname}${query ? `?${query}` : ''}`;
 }
 
+// ── Obfuscation helpers ───────────────────────────────────────────────────────
+
+function obfuscate(value: string): string {
+  try { return btoa(value); } catch { return value; }
+}
+
+function deobfuscate(value: string): string {
+  try { return atob(value); } catch { return value; }
+}
+
 // ── Active match ID ───────────────────────────────────────────────────────────
 
 export function readStoredActiveMatchId(): string | null {
   if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(ACTIVE_MATCH_STORAGE_KEY);
+  return deobfuscate(window.localStorage.getItem(ACTIVE_MATCH_STORAGE_KEY) ?? '');
 }
 
 export function writeStoredActiveMatchId(matchId: string | null): void {
   if (typeof window === 'undefined') return;
   if (matchId) {
-    window.localStorage.setItem(ACTIVE_MATCH_STORAGE_KEY, matchId);
+    window.localStorage.setItem(ACTIVE_MATCH_STORAGE_KEY, obfuscate(matchId));
   } else {
     window.localStorage.removeItem(ACTIVE_MATCH_STORAGE_KEY);
   }
@@ -89,18 +99,18 @@ export function readStoredGuestIdentity(side: 'white' | 'black'): {
   sessionExpiresAt?: string;
 } {
   if (typeof window === 'undefined') return {};
-  const guestId = window.localStorage.getItem(
+  const guestId = deobfuscate(window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY,
-  ) ?? undefined;
-  const sessionSecret = window.localStorage.getItem(
+  ) ?? '') || undefined;
+  const sessionSecret = deobfuscate(window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
-  ) ?? undefined;
-  const sessionToken = window.localStorage.getItem(
+  ) ?? '') || undefined;
+  const sessionToken = deobfuscate(window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-  ) ?? undefined;
-  const sessionExpiresAt = window.localStorage.getItem(
+  ) ?? '') || undefined;
+  const sessionExpiresAt = deobfuscate(window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
-  ) ?? undefined;
+  ) ?? '') || undefined;
   return { guestId, sessionSecret, sessionToken, sessionExpiresAt };
 }
 
@@ -113,12 +123,12 @@ export function writeStoredGuestIdentity(
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(
     side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY,
-    guestId,
+    obfuscate(guestId),
   );
   if (sessionSecret.trim()) {
     window.localStorage.setItem(
       side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
-      sessionSecret,
+      obfuscate(sessionSecret),
     );
   } else {
     window.localStorage.removeItem(
@@ -129,7 +139,7 @@ export function writeStoredGuestIdentity(
     if ((options.sessionToken ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-        options.sessionToken ?? '',
+        obfuscate(options.sessionToken ?? ''),
       );
     } else {
       window.localStorage.removeItem(
@@ -141,7 +151,7 @@ export function writeStoredGuestIdentity(
     if ((options.sessionExpiresAt ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
-        options.sessionExpiresAt ?? '',
+        obfuscate(options.sessionExpiresAt ?? ''),
       );
     } else {
       window.localStorage.removeItem(
@@ -176,15 +186,15 @@ export function readStoredAccountIdentity(side: 'white' | 'black'): {
 } {
   if (typeof window === 'undefined') return {};
   return {
-    accountId: window.localStorage.getItem(
+    accountId: deobfuscate(window.localStorage.getItem(
       side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY,
-    ) ?? undefined,
-    sessionToken: window.localStorage.getItem(
+    ) ?? '') || undefined,
+    sessionToken: deobfuscate(window.localStorage.getItem(
       side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
-    ) ?? undefined,
-    expiresAt: window.localStorage.getItem(
+    ) ?? '') || undefined,
+    expiresAt: deobfuscate(window.localStorage.getItem(
       side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-    ) ?? undefined,
+    ) ?? '') || undefined,
   };
 }
 
@@ -196,13 +206,13 @@ export function writeStoredAccountIdentity(
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(
     side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY,
-    account.accountId,
+    obfuscate(account.accountId),
   );
   if (options.sessionToken !== undefined) {
     if ((options.sessionToken ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
-        options.sessionToken ?? '',
+        obfuscate(options.sessionToken ?? ''),
       );
     } else {
       window.localStorage.removeItem(
@@ -214,7 +224,7 @@ export function writeStoredAccountIdentity(
     if ((options.expiresAt ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-        options.expiresAt ?? '',
+        obfuscate(options.expiresAt ?? ''),
       );
     } else {
       window.localStorage.removeItem(
@@ -376,8 +386,12 @@ export function buildReplayPageUrl(matchId: string): string | null {
 
 export async function copyTextToClipboard(value: string): Promise<boolean> {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return true;
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      return false;
+    }
   }
   return false;
 }

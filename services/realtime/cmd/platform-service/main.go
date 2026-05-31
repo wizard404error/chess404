@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
+	"github.com/chess404/realtime/internal/envutil"
+	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/chess404/realtime/internal/rate_limit"
 )
@@ -80,10 +82,10 @@ func main() {
 	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
 	rl := rate_limit.New()
 
-	addr := listenAddr("PLATFORM_ADDR", 8083)
+	addr := httputil.ListenAddr("PLATFORM_ADDR", 8083)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           limitBody(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux)),
+		Handler:           httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), nil)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -2615,33 +2617,6 @@ func (e errGuestResult) Error() string {
 	return string(e)
 }
 
-func envOrDefault(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func listenAddr(key string, fallbackPort int) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	if value := os.Getenv("PORT"); value != "" {
-		if strings.HasPrefix(value, ":") {
-			return value
-		}
-		return ":" + value
-	}
-	return fmt.Sprintf(":%d", fallbackPort)
-}
-
-func limitBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		next.ServeHTTP(w, r)
-	})
-}
-
 func parseOptionalModeID(raw string) contracts.MatchModeID {
 	if strings.TrimSpace(raw) == "" {
 		return ""
@@ -2703,7 +2678,7 @@ func archiveSQLitePath() string {
 }
 
 func archivePostgresURL() string {
-	return envOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "")
 }
 
 func guestStorePath() string {
@@ -2721,7 +2696,7 @@ func guestStoreSQLitePath() string {
 }
 
 func guestStorePostgresURL() string {
-	return envOrDefault("GUEST_STORE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("GUEST_STORE_POSTGRES_URL", "")
 }
 
 func accountStorePath() string {
@@ -2739,7 +2714,7 @@ func accountStoreSQLitePath() string {
 }
 
 func accountStorePostgresURL() string {
-	return envOrDefault("ACCOUNT_STORE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("ACCOUNT_STORE_POSTGRES_URL", "")
 }
 
 func friendshipStorePath() string {
@@ -2757,7 +2732,7 @@ func friendshipStoreSQLitePath() string {
 }
 
 func friendshipStorePostgresURL() string {
-	return envOrDefault("FRIEND_STORE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("FRIEND_STORE_POSTGRES_URL", "")
 }
 
 func directChallengeStorePath() string {
@@ -2789,11 +2764,11 @@ func moderationStoreSQLitePath() string {
 }
 
 func moderationStorePostgresURL() string {
-	return envOrDefault("MODERATION_STORE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("MODERATION_STORE_POSTGRES_URL", "")
 }
 
 func directChallengeStorePostgresURL() string {
-	return envOrDefault("DIRECT_CHALLENGE_STORE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("DIRECT_CHALLENGE_STORE_POSTGRES_URL", "")
 }
 
 func notificationStorePath() string {
@@ -2811,7 +2786,7 @@ func notificationStoreSQLitePath() string {
 }
 
 func notificationStorePostgresURL() string {
-	return envOrDefault("NOTIFICATION_STORE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("NOTIFICATION_STORE_POSTGRES_URL", "")
 }
 
 func accountEmailOutboxStorePath() string {
@@ -2829,7 +2804,7 @@ func accountEmailOutboxSQLitePath() string {
 }
 
 func accountEmailOutboxPostgresURL() string {
-	return envOrDefault("ACCOUNT_EMAIL_OUTBOX_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("ACCOUNT_EMAIL_OUTBOX_POSTGRES_URL", "")
 }
 
 func accountSecurityAuditStorePath() string {
@@ -2847,11 +2822,11 @@ func accountSecurityAuditSQLitePath() string {
 }
 
 func accountSecurityAuditPostgresURL() string {
-	return envOrDefault("ACCOUNT_SECURITY_AUDIT_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("ACCOUNT_SECURITY_AUDIT_POSTGRES_URL", "")
 }
 
 func matchClaimStoreRedisURL() string {
-	return envOrDefault("MATCH_CLAIM_STORE_REDIS_URL", "")
+	return httputil.EnvOrDefault("MATCH_CLAIM_STORE_REDIS_URL", "")
 }
 
 func isRecoverableMatchStatus(status string) bool {
@@ -2917,7 +2892,7 @@ func refreshStoredMatchClaim(
 }
 
 func matchClaimStoreRedisKey() string {
-	return envOrDefault("MATCH_CLAIM_STORE_REDIS_KEY", "chess404:platform:match-claims")
+	return httputil.EnvOrDefault("MATCH_CLAIM_STORE_REDIS_KEY", "chess404:platform:match-claims")
 }
 
 func matchClaimStoreTTL() time.Duration {
@@ -2963,7 +2938,7 @@ func parseModerationAdminSet(value string, lowercase bool) map[string]struct{} {
 }
 
 func openGuestDirectory() (platform.GuestDirectory, error) {
-	switch strings.ToLower(envOrDefault("GUEST_STORE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("GUEST_STORE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteGuestStore(guestStoreSQLitePath())
 	case "postgres":
@@ -2974,7 +2949,7 @@ func openGuestDirectory() (platform.GuestDirectory, error) {
 }
 
 func openAccountStore() (platform.AccountDirectory, error) {
-	switch strings.ToLower(envOrDefault("ACCOUNT_STORE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("ACCOUNT_STORE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteAccountStore(accountStoreSQLitePath())
 	case "postgres":
@@ -2985,7 +2960,7 @@ func openAccountStore() (platform.AccountDirectory, error) {
 }
 
 func openFriendshipStore() (platform.FriendshipDirectory, error) {
-	switch strings.ToLower(envOrDefault("FRIEND_STORE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("FRIEND_STORE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteFriendshipStore(friendshipStoreSQLitePath())
 	case "postgres":
@@ -2996,7 +2971,7 @@ func openFriendshipStore() (platform.FriendshipDirectory, error) {
 }
 
 func openModerationStore() (platform.ModerationDirectory, error) {
-	switch strings.ToLower(envOrDefault("MODERATION_STORE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("MODERATION_STORE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteModerationStore(moderationStoreSQLitePath())
 	case "postgres":
@@ -3007,7 +2982,7 @@ func openModerationStore() (platform.ModerationDirectory, error) {
 }
 
 func openDirectChallengeStore() (platform.DirectChallengeDirectory, error) {
-	switch strings.ToLower(envOrDefault("DIRECT_CHALLENGE_STORE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("DIRECT_CHALLENGE_STORE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteDirectChallengeStore(directChallengeStoreSQLitePath())
 	case "postgres":
@@ -3018,7 +2993,7 @@ func openDirectChallengeStore() (platform.DirectChallengeDirectory, error) {
 }
 
 func openNotificationStore() (platform.AccountNotificationDirectory, error) {
-	switch strings.ToLower(envOrDefault("NOTIFICATION_STORE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("NOTIFICATION_STORE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteAccountNotificationStore(notificationStoreSQLitePath())
 	case "postgres":
@@ -3029,7 +3004,7 @@ func openNotificationStore() (platform.AccountNotificationDirectory, error) {
 }
 
 func openAccountEmailOutboxStore() (platform.AccountEmailOutboxDirectory, error) {
-	switch strings.ToLower(envOrDefault("ACCOUNT_EMAIL_OUTBOX_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("ACCOUNT_EMAIL_OUTBOX_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteAccountEmailOutboxStore(accountEmailOutboxSQLitePath())
 	case "postgres":
@@ -3040,7 +3015,7 @@ func openAccountEmailOutboxStore() (platform.AccountEmailOutboxDirectory, error)
 }
 
 func openAccountSecurityAuditStore() (platform.AccountSecurityAuditDirectory, error) {
-	switch strings.ToLower(envOrDefault("ACCOUNT_SECURITY_AUDIT_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("ACCOUNT_SECURITY_AUDIT_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteAccountSecurityAuditStore(accountSecurityAuditSQLitePath())
 	case "postgres":
@@ -3051,7 +3026,7 @@ func openAccountSecurityAuditStore() (platform.AccountSecurityAuditDirectory, er
 }
 
 func openMatchClaimStore() (*platform.MatchClaimStore, error) {
-	switch strings.ToLower(envOrDefault("MATCH_CLAIM_STORE_BACKEND", "memory")) {
+	switch strings.ToLower(httputil.EnvOrDefault("MATCH_CLAIM_STORE_BACKEND", "memory")) {
 	case "redis":
 		return platform.NewRedisMatchClaimStoreWithTTL(matchClaimStoreRedisURL(), matchClaimStoreRedisKey(), matchClaimStoreTTL())
 	default:
@@ -3060,12 +3035,13 @@ func openMatchClaimStore() (*platform.MatchClaimStore, error) {
 }
 
 func accountAuthPreviewEnabled() bool {
-	value := strings.TrimSpace(strings.ToLower(envOrDefault("ACCOUNT_AUTH_EXPOSE_PREVIEW_TOKENS", "false")))
+	value := strings.TrimSpace(strings.ToLower(httputil.EnvOrDefault("ACCOUNT_AUTH_EXPOSE_PREVIEW_TOKENS", "false")))
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func accountAuthPublicBaseURL() string {
-	return envOrDefault("ACCOUNT_AUTH_PUBLIC_BASE_URL", "http://127.0.0.1:3000")
+	envutil.Require("ACCOUNT_AUTH_PUBLIC_BASE_URL")
+	return os.Getenv("ACCOUNT_AUTH_PUBLIC_BASE_URL")
 }
 
 func recordAccountSecurityEvent(store platform.AccountSecurityAuditDirectory, accountID, kind, detail string) {
@@ -3093,7 +3069,7 @@ func sessionTokenFingerprint(token string) string {
 }
 
 func openArchiveStore() (*platform.MatchArchiveStore, error) {
-	switch strings.ToLower(envOrDefault("MATCH_ARCHIVE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("MATCH_ARCHIVE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteMatchArchiveStore(archiveSQLitePath())
 	case "postgres":
@@ -3412,12 +3388,6 @@ func requireAccountInteractionAllowed(moderation platform.ModerationDirectory, a
 func isModerationAdminAccount(account platform.AccountProfile) bool {
 	if account.AccountID != "" {
 		if _, ok := configuredModerationAdminAccountIDs()[account.AccountID]; ok {
-			return true
-		}
-	}
-	if account.Handle != "" {
-		lower := strings.ToLower(strings.TrimSpace(account.Handle))
-		if _, ok := configuredModerationAdminHandles()[lower]; ok {
 			return true
 		}
 	}

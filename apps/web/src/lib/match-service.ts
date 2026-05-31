@@ -63,6 +63,21 @@ export async function createMatch(input: CreateMatchInput = {}): Promise<MatchSn
   return unwrapResponse<MatchSnapshotMessage>(response);
 }
 
+export async function fetchAuthToken(matchId: string, playerId: string, playerSecret: string): Promise<string | null> {
+  try {
+    const response = await fetch(`${httpBaseUrl}/matches/${matchId}/token?i=${encodeURIComponent(playerId)}&s=${encodeURIComponent(playerSecret)}`, {
+      method: 'GET',
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json() as { token: string };
+    return data.token;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchMatch(matchId: string): Promise<MatchSnapshotMessage> {
   const response = await fetch(`${httpBaseUrl}/matches/${matchId}`, {
     method: 'GET',
@@ -187,6 +202,8 @@ export function connectToMatchStream(
   let pollTimer: number | null = null;
   let disposed = false;
   let reconnectAttempt = 0;
+  let lastSeqNum = 0;
+  let isWsConnected = false;
 
   const clearReconnectTimer = () => {
     if (reconnectTimer !== null) {
@@ -206,6 +223,7 @@ export function connectToMatchStream(
     if (disposed) {
       return;
     }
+    if (isWsConnected) { schedulePoll(); return; }
     clearPollTimer();
     pollTimer = window.setTimeout(async () => {
       pollTimer = null;
@@ -228,13 +246,19 @@ export function connectToMatchStream(
     }, delay);
   };
 
+  const maxReconnectAttempts = 20;
   const scheduleReconnect = () => {
     if (disposed) {
       return;
     }
+    if (reconnectAttempt >= maxReconnectAttempts) {
+      console.warn('max reconnect attempts reached, giving up');
+      handlers.onStatusChange?.('disconnected');
+      return;
+    }
     clearReconnectTimer();
     handlers.onStatusChange?.('reconnecting');
-    const delay = Math.min(5000, 500 * 2 ** Math.min(reconnectAttempt, 4));
+    const delay = Math.min(5000, 500 * 2 ** Math.min(reconnectAttempt, 4)) + Math.random() * 1000;
     reconnectAttempt += 1;
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
@@ -253,51 +277,83 @@ export function connectToMatchStream(
       schedulePoll(reconnectAttempt > 0 ? MATCH_POLL_RETRY_INTERVAL_MS : 0);
       return;
     }
-    const params = new URLSearchParams();
-    if (playerIdentity?.playerClaimToken?.trim()) {
-      params.set('playerClaimToken', playerIdentity.playerClaimToken.trim());
-    } else {
-      if (playerIdentity?.playerId?.trim()) {
-        params.set('playerId', playerIdentity.playerId.trim());
-      }
-      if (playerIdentity?.playerSecret?.trim()) {
-        params.set('playerSecret', playerIdentity.playerSecret.trim());
-      }
-    }
-    const wsUrl = `${nextSocketUrl}/api/matches/${matchId}/ws${params.size > 0 ? `?${params.toString()}` : ''}`;
-    const nextSocket = new WebSocket(wsUrl);
-    socket = nextSocket;
 
-    nextSocket.addEventListener('open', () => {
-      reconnectAttempt = 0;
-      handlers.onStatusChange?.('connected');
-    });
-
-    nextSocket.addEventListener('message', event => {
-      try {
-        const payload = JSON.parse(event.data) as { type?: string; payload?: MatchSnapshotMessage };
-        if (payload.type === 'match.snapshot' && payload.payload) {
-          handlers.onSnapshot(payload.payload);
+    const buildWsUrl = async () => {
+      const params = new URLSearchParams();
+      if (playerIdentity?.playerClaimToken?.trim()) {
+        params.set('t', playerIdentity.playerClaimToken.trim());
+      } else if (playerIdentity?.playerId?.trim() && playerIdentity?.playerSecret?.trim()) {
+        const token = await fetchAuthToken(matchId, playerIdentity.playerId.trim(), playerIdentity.playerSecret.trim());
+        if (token) {
+          params.set('t', token);
         }
-      } catch {
-        // Ignore malformed stream payloads for now.
       }
-    });
+      if (!params.has('t')) {
+        console.error('Cannot connect to match: no auth token available');
+        return null;
+      }
+      return `${nextSocketUrl}/api/matches/${matchId}/ws?${params.toString()}`;
+    };
 
-    nextSocket.addEventListener('error', event => {
-      handlers.onError?.(event);
-      // Close the socket so the close handler triggers reconnection
-      if (!disposed) {
-        nextSocket.close();
+    buildWsUrl().then(wsUrl => {
+      if (disposed || !wsUrl) {
+        if (!wsUrl) {
+          handlers.onStatusChange?.('disconnected');
+        }
+        return;
       }
-    });
+      const nextSocket = new WebSocket(wsUrl);
+      socket = nextSocket;
 
-    nextSocket.addEventListener('close', () => {
-      if (socket === nextSocket) {
-        socket = null;
-      }
+      nextSocket.addEventListener('open', () => {
+        reconnectAttempt = 0;
+          isWsConnected = true;
+        handlers.onStatusChange?.('connected');
+      });
+
+      nextSocket.addEventListener('message', event => {
+        try {
+          const payload = JSON.parse(event.data) as { type?: string; payload?: MatchSnapshotMessage };
+          if (payload.type === 'match.snapshot' && payload.payload) {
+            const snapshot = payload.payload;
+            if (snapshot.seqNum && lastSeqNum > 0 && snapshot.seqNum > lastSeqNum + 1) {
+              console.warn(`seqNum gap detected: ${lastSeqNum} -> ${snapshot.seqNum}, refetching`);
+              fetchMatch(matchId).then(fullSnapshot => {
+                if (!disposed) {
+                  handlers.onSnapshot(fullSnapshot);
+                }
+              }).catch(() => {});
+            }
+            if (snapshot.seqNum) {
+              lastSeqNum = snapshot.seqNum;
+            }
+            handlers.onSnapshot(snapshot);
+          }
+        } catch {
+          // Ignore malformed stream payloads for now.
+        }
+      });
+
+      nextSocket.addEventListener('error', event => {
+        handlers.onError?.(event);
+          isWsConnected = false;
+        if (!disposed) {
+          nextSocket.close();
+        }
+      });
+
+      nextSocket.addEventListener('close', () => {
+        if (socket === nextSocket) {
+          socket = null;
+        }
+          isWsConnected = false;
+        if (!disposed) {
+          scheduleReconnect();
+        }
+      });
+    }).catch(() => {
       if (!disposed) {
-        scheduleReconnect();
+        schedulePoll(0);
       }
     });
   };

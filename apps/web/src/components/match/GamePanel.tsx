@@ -44,20 +44,25 @@ export function GamePanel({
               {chatMessages.length === 0 ? (
                 <div className="empty-state__body text-center">No messages yet... say hi! 👋</div>
               ) : (
-                chatMessages.map((msg, i) => (
-                  <div key={i} className="chat-message" style={{ display: 'flex', gap: '6px', marginBottom: '4px' }}>
-                    <span className={`chat-message__sender chat-message__sender--${msg.sender}`} style={{ fontWeight: 'bold', color: msg.sender === 'white' ? '#ffe8a0' : '#b090f0' }}>
-                      {msg.sender === 'white' ? '⚪ W:' : '⚫ B:'}
-                    </span>
-                    <span className="chat-message__text" style={{ color: 'rgba(240,220,180,0.9)' }}>{msg.text}</span>
-                  </div>
-                ))
+                chatMessages.map((msg, i) => {
+                  const ts = (msg as any).timestamp ? new Date((msg as any).timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+                  return (
+                    <div key={i} className="chat-message" style={{ display: 'flex', gap: '6px', marginBottom: '4px', alignItems: 'baseline' }}>
+                      <span className={`chat-message__sender chat-message__sender--${msg.sender}`} style={{ fontWeight: 'bold', color: msg.sender === 'white' ? '#ffe8a0' : '#b090f0', fontSize: '12px' }}>
+                        {msg.sender === 'white' ? '⚪ W:' : '⚫ B:'}
+                      </span>
+                      <span className="chat-message__text" style={{ color: 'rgba(240,220,180,0.9)', fontSize: '12px' }}>{msg.text}</span>
+                      {ts && <span className="chat-message__time" style={{ color: 'rgba(160,184,216,0.35)', fontSize: '9px', marginLeft: 'auto', whiteSpace: 'nowrap' }}>{ts}</span>}
+                    </div>
+                  );
+                })
               )}
               <div ref={messagesEndRef} />
             </div>
             <div className="chat-input-row" style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
               <input
                 className="input chat-input"
+                aria-label="Chat message"
                 style={{ flex: 1, padding: '8px', borderRadius: '4px', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,165,40,0.2)', color: '#fff' }}
                 value={input}
                 onChange={e => setInput(e.target.value)}

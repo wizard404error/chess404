@@ -117,7 +117,7 @@ function formatDateTime(value?: string): string {
 }
 
 interface AuthPageProps {
-  hostedRuntime: boolean;
+  hostedRuntime: boolean | null;
   guestProfile?: GuestProfile | null;
   externalNotice?: string | null;
   onAuthenticated?: (guestSession: GuestSession, accountSession: AccountSession) => void;
@@ -261,6 +261,12 @@ export default function AuthPage({
   }, [onAuthenticated, onAuthStateChange]);
 
   const submitRegistration = React.useCallback(async () => {
+    if (!handle.trim()) { setError('Handle is required'); setBusy(false); return; }
+    if (handle.trim().length < 2) { setError('Handle must be at least 2 characters'); setBusy(false); return; }
+    if (!email.trim()) { setError('Email is required'); setBusy(false); return; }
+    if (!email.includes('@') || !email.includes('.')) { setError('Enter a valid email address'); setBusy(false); return; }
+    if (!password) { setError('Password is required'); setBusy(false); return; }
+    if (password.length < 8) { setError('Password must be at least 8 characters'); setBusy(false); return; }
     setBusy(true);
     setError('');
     setNotice('');
@@ -292,6 +298,8 @@ export default function AuthPage({
   }, [completeAuth, email, handle, password]);
 
   const submitLogin = React.useCallback(async () => {
+    if (!loginIdentifier.trim()) { setError('Email or handle is required'); setBusy(false); return; }
+    if (!loginPassword) { setError('Password is required'); setBusy(false); return; }
     setBusy(true);
     setError('');
     setNotice('');
@@ -312,6 +320,7 @@ export default function AuthPage({
   }, [completeAuth, loginIdentifier, loginPassword]);
 
   const submitPasswordReset = React.useCallback(async () => {
+    if (!resetIdentifier.trim()) { setError('Email or handle is required'); setBusy(false); return; }
     setBusy(true);
     setError('');
     setNotice('');

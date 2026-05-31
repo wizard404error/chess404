@@ -21,6 +21,9 @@ func NewPostgresGuestStore(dsn string) (*PostgresGuestStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	return newPostgresGuestStoreWithDB(db)
 }
 

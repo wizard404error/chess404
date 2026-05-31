@@ -26,6 +26,9 @@ func newSQLiteTicketStore(path string) (*sqliteTicketStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	store := &sqliteTicketStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()
