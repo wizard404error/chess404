@@ -109,6 +109,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
             </div>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
               <select
+                aria-label="Filter by mode"
                 value={selectedModeId}
                 onChange={(event) => setSelectedModeId(parseModeFilterValue(event.target.value))}
                 style={{
@@ -129,6 +130,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
                 ))}
               </select>
               <select
+                aria-label="Filter by season"
                 value={selectedSeasonId}
                 onChange={(event) => setSelectedSeasonId(event.target.value)}
                 style={{

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -236,6 +235,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	rl.Close()
 }
 
 func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
@@ -1552,26 +1552,17 @@ func bootstrapMessage(status GatewaySystemStatus) string {
 
 func gatewayConfigFromEnv() GatewayConfig {
 	return GatewayConfig{
-		MatchServiceURL:       resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://match-service.railway.internal:8080"),
-		PlatformServiceURL:    resolveInternalServiceURL(os.Getenv("PLATFORM_SERVICE_INTERNAL_URL"), "http://platform-service.railway.internal:8080"),
-		MatchmakingServiceURL: resolveInternalServiceURL(os.Getenv("MATCHMAKING_SERVICE_INTERNAL_URL"), "http://matchmaking-service.railway.internal:8080"),
+		MatchServiceURL:       resolveInternalServiceURL("MATCH_SERVICE_INTERNAL_URL", "http://match-service:8080"),
+		PlatformServiceURL:    resolveInternalServiceURL("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service:8080"),
+		MatchmakingServiceURL: resolveInternalServiceURL("MATCHMAKING_SERVICE_INTERNAL_URL", "http://matchmaking-service:8080"),
 	}
 }
 
-func resolveInternalServiceURL(explicit string, fallback string) string {
-	trimmedFallback := strings.TrimRight(strings.TrimSpace(fallback), "/")
-	trimmed := strings.TrimRight(strings.TrimSpace(explicit), "/")
-	if trimmed == "" || strings.Contains(trimmed, "${{") || strings.HasSuffix(trimmed, ":") {
-		return trimmedFallback
+func resolveInternalServiceURL(envKey string, defaultURL string) string {
+	if u := os.Getenv(envKey); u != "" {
+		return u
 	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return trimmedFallback
-	}
-	if parsed.Port() == "" && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".railway.internal") {
-		parsed.Host = net.JoinHostPort(parsed.Hostname(), "8080")
-	}
-	return strings.TrimRight(parsed.String(), "/")
+	return defaultURL
 }
 
 

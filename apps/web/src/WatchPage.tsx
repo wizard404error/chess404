@@ -138,6 +138,7 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
               </button>
             ))}
             <select
+              aria-label="Filter by mode"
               value={modeId}
               onChange={(event) => setModeId(OFFICIAL_MATCH_MODES.some((mode) => mode.id === event.target.value) ? (event.target.value as MatchModeId) : '')}
               style={{

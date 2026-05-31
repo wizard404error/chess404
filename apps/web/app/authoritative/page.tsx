@@ -187,6 +187,7 @@ export default function AuthoritativePage() {
 
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
           <input
+            aria-label="Chat message"
             value={chatText}
             onChange={(event) => setChatText(event.target.value)}
             placeholder="Send backend-owned chat"

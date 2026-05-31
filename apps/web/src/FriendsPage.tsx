@@ -4,6 +4,7 @@ import { acceptDirectChallenge, sendDirectChallenge, type DirectChallengeLaunchR
 import { modeLabel } from './lib/match-labels';
 import {
   type AccountProfile,
+  blockAccount,
   cancelDirectChallenge,
   declineDirectChallenge,
   fetchDirectChallengeOverview,
@@ -225,6 +226,32 @@ export default function FriendsPage({
     }
   }, [accountId, mutateOverview, sessionToken]);
 
+  const handleBlockFriend = React.useCallback(async (friendship: FriendshipView) => {
+    if (!accountId || !sessionToken) {
+      setError('Sign in to manage friends.');
+      return;
+    }
+    if (!window.confirm(`Block @${friendship.account.handle}? They will be removed from your friends list.`)) {
+      return;
+    }
+    setBusyRequestId(`block:${friendship.friendshipId}`);
+    setNotice('');
+    setError('');
+    try {
+      await blockAccount({
+        accountId,
+        sessionToken,
+        targetAccountId: friendship.account.accountId,
+      });
+      setOverview(prev => prev ? { ...prev, friends: prev.friends.filter(f => f.friendshipId !== friendship.friendshipId) } : null);
+      setNotice(`Blocked @${friendship.account.handle}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to block friend.');
+    } finally {
+      setBusyRequestId(null);
+    }
+  }, [accountId, sessionToken]);
+
   const handleSendChallenge = React.useCallback(async (friendship: FriendshipView) => {
     if (!accountId || !sessionToken || !identity?.guestId) {
       setError('Sign in with an active player session to send direct challenges.');
@@ -406,6 +433,7 @@ export default function FriendsPage({
           <div style={{ display: 'grid', gap: '10px', marginTop: '14px' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
+                aria-label="Send friend request"
                 value={targetHandle}
                 onChange={(event) => setTargetHandle(event.target.value)}
                 onKeyDown={(event) => {
@@ -613,30 +641,49 @@ export default function FriendsPage({
                     gap: '10px',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
                     <div>
                       <div style={{ color: '#fff2c8', fontSize: '15px', fontWeight: 800 }}>@{friendship.account.handle}</div>
                       <div style={{ color: 'rgba(255,232,180,0.64)', fontSize: '12px', marginTop: '3px' }}>
                         Rating {friendship.account.rating ?? 1200} | {describePresence(friendship.account).detail}
                       </div>
                     </div>
-                    <button
-                      onClick={() => void handleRemoveFriend(friendship)}
-                      disabled={busyRequestId === friendship.friendshipId}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: '9px',
-                        border: '1px solid rgba(231,76,60,0.32)',
-                        background: 'rgba(120,20,20,0.18)',
-                        color: '#ffd3ce',
-                        fontSize: '11px',
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                        opacity: busyRequestId === friendship.friendshipId ? 0.7 : 1,
-                      }}
-                    >
-                      Remove
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <button
+                        onClick={() => void handleRemoveFriend(friendship)}
+                        disabled={busyRequestId === friendship.friendshipId}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: '9px',
+                          border: '1px solid rgba(231,76,60,0.32)',
+                          background: 'rgba(120,20,20,0.18)',
+                          color: '#ffd3ce',
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          opacity: busyRequestId === friendship.friendshipId ? 0.7 : 1,
+                        }}
+                      >
+                        Remove
+                      </button>
+                      <button
+                        onClick={() => void handleBlockFriend(friendship)}
+                        disabled={busyRequestId === `block:${friendship.friendshipId}`}
+                        style={{
+                          fontSize: '10px',
+                          padding: '2px 6px',
+                          background: '#4a2030',
+                          color: '#e0a0a0',
+                          border: 'none',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          opacity: busyRequestId === `block:${friendship.friendshipId}` ? 0.6 : 1,
+                        }}
+                        aria-label={`Block ${friendship.account.handle}`}
+                      >
+                        Block
+                      </button>
+                    </div>
                   </div>
 
                   <div style={{ color: 'rgba(255,232,180,0.78)', fontSize: '12px', lineHeight: 1.6 }}>

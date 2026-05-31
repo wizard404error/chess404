@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -240,6 +238,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	rl.Close()
 }
 
 func matchmakingTicketStoreSQLitePath() string {
@@ -255,23 +254,7 @@ func matchmakingTicketStoreRedisKey() string {
 }
 
 func matchmakingMatchServiceURL() string {
-	return resolveInternalServiceURL(os.Getenv("MATCH_SERVICE_INTERNAL_URL"), "http://match-service.railway.internal:8080")
-}
-
-func resolveInternalServiceURL(explicit string, fallback string) string {
-	trimmedFallback := strings.TrimRight(strings.TrimSpace(fallback), "/")
-	trimmed := strings.TrimRight(strings.TrimSpace(explicit), "/")
-	if trimmed == "" || strings.Contains(trimmed, "${{") || strings.HasSuffix(trimmed, ":") {
-		return trimmedFallback
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return trimmedFallback
-	}
-	if parsed.Port() == "" && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".railway.internal") {
-		parsed.Host = net.JoinHostPort(parsed.Hostname(), "8080")
-	}
-	return strings.TrimRight(parsed.String(), "/")
+	return httputil.EnvOrDefault("MATCH_SERVICE_INTERNAL_URL", "http://match-service:8080")
 }
 
 func openMatchmakingService() (*matchmaking.Service, error) {
