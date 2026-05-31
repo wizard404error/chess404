@@ -431,6 +431,7 @@ export default function ProfilesPage({
           <div style={{ display: 'grid', gap: '10px', marginTop: '14px' }}>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
+                aria-label="Search by handle"
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
                 onKeyDown={(event) => {
@@ -506,6 +507,7 @@ export default function ProfilesPage({
             </div>
 
             <select
+              aria-label="Filter by mode"
               value={selectedModeId}
               onChange={(event) => setSelectedModeId(parseModeFilterValue(event.target.value))}
               style={{
@@ -891,6 +893,7 @@ export default function ProfilesPage({
                     <div style={{ display: 'grid', gap: '10px' }}>
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <select
+                          aria-label="Report category"
                           value={reportCategory}
                           onChange={(event) => setReportCategory(event.target.value)}
                           style={{

@@ -584,7 +584,7 @@ export default function QueuePage({
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
         <div>
-          <div style={{ color: hostedRuntime ? '#e8f2ff' : side === 'white' ? '#dcffe9' : '#eedcff', fontSize: '15px', fontWeight: 800 }}>{playerTitle}</div>
+          <div style={{ color: hostedRuntime ? '#e8f2ff' : side === 'white' ? '#dcffe9' : '#eedcff', fontSize: '15px', fontWeight: 800 }}>{playerTitle} ({side})</div>
           <div style={{ color: hostedRuntime ? '#9ed0ff' : side === 'white' ? '#7ce3aa' : '#c9a8ff', fontSize: '12px', marginTop: '4px' }}>Rating {profile?.rating ?? 1200}</div>
         </div>
         <div style={{

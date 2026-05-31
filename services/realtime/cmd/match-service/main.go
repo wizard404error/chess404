@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,7 +24,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const defaultAllowedOrigins = ""
 
 func main() {
 	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL")
@@ -92,7 +89,10 @@ func main() {
 		case http.MethodPost:
 			var req contracts.CreateMatchRequest
 			if r.Body != nil {
-				_ = json.NewDecoder(r.Body).Decode(&req)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+					return
+				}
 			}
 			resp := service.CreateMatch(req, httputil.NowUTC())
 			httputil.WriteJSON(w, http.StatusCreated, resp)
@@ -209,6 +209,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	rl.Close()
 }
 
 func archivePath() string {
@@ -409,21 +410,5 @@ func resolveSocketClaim(matchID, claimToken string) (platform.MatchSeatClaim, er
 }
 
 func platformServiceURL() string {
-	return resolveInternalServiceURL(os.Getenv("PLATFORM_SERVICE_INTERNAL_URL"), "http://platform-service.railway.internal:8080")
-}
-
-func resolveInternalServiceURL(explicit string, fallback string) string {
-	trimmedFallback := strings.TrimRight(strings.TrimSpace(fallback), "/")
-	trimmed := strings.TrimRight(strings.TrimSpace(explicit), "/")
-	if trimmed == "" || strings.Contains(trimmed, "${{") || strings.HasSuffix(trimmed, ":") {
-		return trimmedFallback
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return trimmedFallback
-	}
-	if parsed.Port() == "" && strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".railway.internal") {
-		parsed.Host = net.JoinHostPort(parsed.Hostname(), "8080")
-	}
-	return strings.TrimRight(parsed.String(), "/")
+	return httputil.EnvOrDefault("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service:8080")
 }

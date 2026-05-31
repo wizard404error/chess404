@@ -270,7 +270,7 @@ function StatusCard(props: {
         ))}
       </div>
 
-      <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.06)', color: 'rgba(190, 178, 150, 0.52)', fontSize: '11px' }}>
+      <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.06)', color: 'rgba(190, 178, 150, 0.7)', fontSize: '11px' }}>
         Checked {new Date(props.checkedAt).toLocaleString()}
       </div>
     </div>

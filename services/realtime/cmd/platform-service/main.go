@@ -104,6 +104,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	rl.Close()
 }
 
 type jsonContentTypeWriter struct {
@@ -2519,41 +2520,6 @@ func filterPublicArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, s
 		}
 	}
 	return public
-}
-
-func validateGuestResult(entry platform.MatchArchiveEntry, matchID, whiteGuestID, blackGuestID, winner string) error {
-	if err := validateArchivedRatedResult(entry, matchID, winner); err != nil {
-		return err
-	}
-	if entry.WhiteGuestID != "" && entry.WhiteGuestID != whiteGuestID {
-		return errGuestResult("white guest does not match archived seat")
-	}
-	if entry.BlackGuestID != "" && entry.BlackGuestID != blackGuestID {
-		return errGuestResult("black guest does not match archived seat")
-	}
-	return nil
-}
-
-func validateAccountResult(entry platform.MatchArchiveEntry, matchID string, whiteAccount, blackAccount platform.AccountProfile, winner string) error {
-	if err := validateArchivedRatedResult(entry, matchID, winner); err != nil {
-		return err
-	}
-	if entry.WhiteGuestID == "" || entry.BlackGuestID == "" {
-		return errGuestResult("archived match seats are incomplete")
-	}
-	if entry.WhiteAccountID != "" && entry.WhiteAccountID != whiteAccount.AccountID {
-		return errGuestResult("white account does not match archived seat")
-	}
-	if entry.BlackAccountID != "" && entry.BlackAccountID != blackAccount.AccountID {
-		return errGuestResult("black account does not match archived seat")
-	}
-	if !accountOwnsGuest(whiteAccount, entry.WhiteGuestID) {
-		return errGuestResult("white account does not own archived white seat")
-	}
-	if !accountOwnsGuest(blackAccount, entry.BlackGuestID) {
-		return errGuestResult("black account does not own archived black seat")
-	}
-	return nil
 }
 
 func validateArchivedRatedResult(entry platform.MatchArchiveEntry, matchID, winner string) error {

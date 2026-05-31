@@ -7,7 +7,7 @@ export interface EngineEval {
   depth: number;
 }
 
-export const useStockfish = () => {
+export const useStockfish = (shouldInit: boolean) => {
   const engineRef      = useRef<Worker | null>(null);
   const readyRef       = useRef(false);
   const activeRef      = useRef(false);
@@ -135,6 +135,16 @@ export const useStockfish = () => {
   }, [sendSearch]);
 
   useEffect(() => {
+    if (!shouldInit) {
+      genRef.current++;
+      activeRef.current = false;
+      if (engineRef.current) {
+        engineRef.current.terminate();
+        engineRef.current = null;
+      }
+      return;
+    }
+
     const base = (process.env.PUBLIC_URL || '').replace(/\/$/, '');
     const candidates = [
       `${base}/stockfish-18-lite-single.js`,
@@ -170,7 +180,7 @@ export const useStockfish = () => {
       engineRef.current?.terminate();
       engineRef.current = null;
     };
-  }, [spawnWorker]);
+  }, [shouldInit, spawnWorker]);
 
   // ── analyse ───────────────────────────────────────────────────────────────
   const analyse = useCallback((fen: string, turn: 'white' | 'black' = 'white') => {

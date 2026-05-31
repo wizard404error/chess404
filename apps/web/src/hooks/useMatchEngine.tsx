@@ -237,6 +237,31 @@ export interface UseMatchEngineProps {
   setWhiteProfile: React.Dispatch<React.SetStateAction<GuestProfile | null>>;
 }
 
+const useFocusTrap = (ref: React.RefObject<HTMLElement | null>, active: boolean) => {
+  React.useEffect(() => {
+    if (!active || !ref.current) return;
+    const el = ref.current;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (first) first.focus();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first?.focus();
+      }
+    };
+    el.addEventListener('keydown', handler);
+    return () => el.removeEventListener('keydown', handler);
+  }, [active, ref]);
+};
+
 export function useMatchEngine(props: UseMatchEngineProps) {
   const { accountActionQueryDetected, activePage, authoritativeRematchBusy, blackProfile, communityFocusGuestId, friendsAttentionCount, guestProfilesReady, historyFocusGuestId, historyFocusMatchId, historyQueryReady, hostedRuntime, inboxUnreadCount, matchDestinationNotice, matchQueryReady, matchSeatMeta, openedBoardMatchRef, pathname, profileFocusHandle, profileQueryReady, queueLaunchIntent, router, setAccountActionQueryDetected, setActivePage, setAuthoritativeRematchBusy, setBlackProfile, setFriendsAttentionCount, setGuestProfilesReady, setHistoryFocusGuestId, setHistoryFocusMatchId, setHistoryQueryReady, setHostedRuntime, setInboxUnreadCount, setMatchDestinationNotice, setMatchQueryReady, setMatchSeatMeta, setProfileFocusHandle, setProfileQueryReady, setBootstrapQueueRecovery, setQueueLaunchIntent, setSecondaryMenuOpen, setSocialAlert, setSocialLiveToken, setViewerSeat, setWhiteProfile, socialAlert, socialLiveToken, viewerSeat, whiteProfile } = props;
 
@@ -408,6 +433,8 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     filterRarity: Rarity | 'all';
     transforming: boolean;
   } | null>(null);
+  const jokerRef = React.useRef<HTMLDivElement>(null);
+  useFocusTrap(jokerRef, jokerPicker !== null);
 
   // ── Card animation state ───────────────────────────────────────────────────
   const [cardAnim,    setCardAnim]    = React.useState<CardAnimType>(null);
@@ -1377,7 +1404,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   // turnsLeft counts down each time white is about to move (= 1 full round passed)
   const [fogZones, setFogZones] = React.useState<{ centerRow: number; centerCol: number; ownerColor: PieceColor; turnsLeft: number }[]>([]);
 
-  const { isReady: sfReady, isThinking, ev, sfErr, analyse, stop, resetEval } = useStockfish();
+  const { isReady: sfReady, isThinking, ev, sfErr, analyse, stop, resetEval } = useStockfish(engineOn);
 
   const {
     reviewIdx,
@@ -5428,7 +5455,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           );
         })}
         {hand.length === 0 && dealPhase === 'done' && (
-          <div style={{ color:'rgba(255,255,255,0.15)', fontSize:'11px', [isBottom ? 'marginBottom' : 'marginTop']:'28px' }}>
+          <div style={{ color:'rgba(255,255,255,0.55)', fontSize:'11px', [isBottom ? 'marginBottom' : 'marginTop']:'28px' }}>
             No cards in hand
           </div>
         )}
@@ -5479,7 +5506,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       .filter(c => !authoritativeMatchIdRef.current || AUTHORITATIVE_JOKER_MECHANICS.has(c.mechanic));
 
     return (
-      <div role="dialog" aria-modal="true" aria-label="Select card" style={{
+      <div ref={jokerRef} role="dialog" aria-modal="true" aria-label="Select card" style={{
         position:'fixed', inset:0, zIndex:1000,
         background:'rgba(0,0,0,0.88)',
         backdropFilter:'blur(8px)',

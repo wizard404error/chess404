@@ -447,7 +447,7 @@ export default function CardsPage({onNavigate, embedded = false}:CardsPageProps)
         <div style={{flex:1}}/>
         <div style={{position:'relative'}}>
           <span style={{position:'absolute',left:11,top:'50%',transform:'translateY(-50%)',fontSize:13,opacity:0.35}}>🔍</span>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{padding:'8px 14px 8px 32px',background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:8,color:'#fff',fontSize:13,outline:'none',width:170,fontFamily:'inherit'}}/>
+          <input aria-label="Search cards" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{padding:'8px 14px 8px 32px',background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:8,color:'#fff',fontSize:13,outline:'none',width:170,fontFamily:'inherit'}}/>
         </div>
       </div>
 

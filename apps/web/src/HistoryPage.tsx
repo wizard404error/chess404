@@ -289,6 +289,7 @@ export default function HistoryPage({
             </div>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <select
+                aria-label="Filter by mode"
                 value={selectedModeId}
                 onChange={(event) => setSelectedModeId(parseModeFilterValue(event.target.value))}
                 style={{
@@ -625,6 +626,7 @@ export default function HistoryPage({
                     </div>
                     {replayFrames.length > 0 && (
                       <input
+                        aria-label="Replay scrubber"
                         type="range"
                         min={0}
                         max={Math.max(replayFrames.length - 1, 0)}

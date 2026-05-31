@@ -1358,6 +1358,7 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
               <div style={{ color: '#fff2c8', fontSize: '16px', fontWeight: 800 }}>Season view</div>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <select
+                  aria-label="Season view mode"
                   value={selectedModeId}
                   onChange={(event) => setSelectedModeId(parseModeFilterValue(event.target.value))}
                   style={{

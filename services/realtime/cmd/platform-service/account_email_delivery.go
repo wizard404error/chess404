@@ -72,8 +72,23 @@ func (s smtpAccountEmailSender) Send(ctx context.Context, delivery platform.Acco
 		return "", err
 	}
 	recipients := []string{strings.TrimSpace(delivery.Email)}
-	if err := smtp.SendMail(s.address, s.auth, s.from.Address, recipients, payload); err != nil {
-		return "", err
+	type sendResult struct {
+		err error
+	}
+	ch := make(chan sendResult, 1)
+	go func() {
+		err := smtp.SendMail(s.address, s.auth, s.from.Address, recipients, payload)
+		ch <- sendResult{err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return "", r.err
+		}
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(30 * time.Second):
+		return "", fmt.Errorf("smtp sendmail timed out after 30s")
 	}
 	return messageID, nil
 }
