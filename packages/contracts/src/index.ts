@@ -308,6 +308,7 @@ export interface MatchSnapshotMessage {
   replayHead: number;
   replayFrames?: ReplayFrame[];
   events?: ResolvedEvent[];
+  seqNum?: number;
 }
 
 export interface IntentRejectedMessage {

@@ -216,7 +216,66 @@ export default function QueuePage({
   }, [modeId]);
 
   React.useEffect(() => {
-    setRestoringTickets(false);
+    return () => {
+      const whiteRef = readStoredTicketRef('white');
+      const blackRef = readStoredTicketRef('black');
+      const ticketId = whiteRef?.ticketId ?? blackRef?.ticketId;
+      if (ticketId) {
+        cancelTicket(ticketId).catch(() => {});
+        clearStoredTicketRef('white');
+        clearStoredTicketRef('black');
+      }
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const restoreTickets = async () => {
+      const whiteRef = readStoredTicketRef('white');
+      const blackRef = readStoredTicketRef('black');
+
+      if (whiteRef) {
+        setQueue(whiteRef.queue);
+        setModeId(whiteRef.modeId);
+      } else if (blackRef) {
+        setQueue(blackRef.queue);
+        setModeId(blackRef.modeId);
+      }
+
+      if (!whiteRef && !blackRef) {
+        setRestoringTickets(false);
+        return;
+      }
+
+      const hydrate = async (side: QueueSide, stored: StoredTicketRef | null): Promise<QueueTicket | null> => {
+        if (!stored) return null;
+        try {
+          const { ticket } = await fetchTicket(stored.ticketId);
+          return ticket;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : '';
+          if (message.includes('404')) {
+            clearStoredTicketRef(side);
+          }
+          return null;
+        }
+      };
+
+      const [restoredWhite, restoredBlack] = await Promise.all([
+        hydrate('white', whiteRef),
+        hydrate('black', blackRef),
+      ]);
+      if (cancelled) return;
+      setWhiteTicket(restoredWhite);
+      setBlackTicket(restoredBlack);
+    };
+
+    void restoreTickets().finally(() => {
+      if (!cancelled) setRestoringTickets(false);
+    });
+
+    return () => { cancelled = true; };
   }, []);
 
   React.useEffect(() => {

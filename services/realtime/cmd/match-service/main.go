@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
+	"github.com/chess404/realtime/internal/envutil"
+	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/match"
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/chess404/realtime/internal/rate_limit"
@@ -27,6 +29,7 @@ import (
 const defaultAllowedOrigins = ""
 
 func main() {
+	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL")
 	mux := http.NewServeMux()
 	archive, err := openArchiveStore()
 	if err != nil {
@@ -35,14 +38,16 @@ func main() {
 	defer func() { _ = archive.Close() }()
 	service := match.NewServiceWithArchive(archive)
 	rl := rate_limit.New()
-	allowed := parseAllowedOrigins()
+	allowed := httputil.ParseAllowedOrigins()
 	upgrader := websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
 				return false
 			}
-			return isOriginAllowed(origin, allowed)
+			return httputil.IsOriginAllowed(origin, allowed)
 		},
 	}
 
@@ -51,33 +56,33 @@ func main() {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":       "ok",
 			"service":      "match-service",
 			"rulesVersion": "v1-alpha-foundation",
-			"checkedAt":    nowUTC(),
+			"checkedAt":    httputil.NowUTC(),
 		})
 	})
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":       "ok",
 			"service":      "match-service",
 			"rulesVersion": "v1-alpha-foundation",
-			"checkedAt":    nowUTC(),
+			"checkedAt":    httputil.NowUTC(),
 		})
 	})
 
 	mux.HandleFunc("/api/system/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":       "ok",
 			"service":      "match-service",
 			"rulesVersion": "v1-alpha-foundation",
-			"checkedAt":    nowUTC(),
+			"checkedAt":    httputil.NowUTC(),
 			"stats":        service.Stats(),
 		})
 	})
@@ -89,17 +94,17 @@ func main() {
 			if r.Body != nil {
 				_ = json.NewDecoder(r.Body).Decode(&req)
 			}
-			resp := service.CreateMatch(req, nowUTC())
-			writeJSON(w, http.StatusCreated, resp)
+			resp := service.CreateMatch(req, httputil.NowUTC())
+			httputil.WriteJSON(w, http.StatusCreated, resp)
 		default:
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	})
 
 	mux.HandleFunc("/api/matches/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/matches/")
 		if path == "" {
-			writeError(w, http.StatusNotFound, "match id required")
+			httputil.WriteError(w, http.StatusNotFound, "match id required")
 			return
 		}
 
@@ -112,48 +117,60 @@ func main() {
 				writeMatchError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, resp)
+			httputil.WriteJSON(w, http.StatusOK, resp)
 			return
 		}
 
 		if len(parts) == 2 && parts[1] == "join" && r.Method == http.MethodPost {
 			var req contracts.JoinMatchSeatRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid request body")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 				return
 			}
-			resp, err := service.JoinMatchSeat(matchID, req, nowUTC())
+			resp, err := service.JoinMatchSeat(matchID, req, httputil.NowUTC())
 			if err != nil {
 				writeMatchError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, resp)
+			httputil.WriteJSON(w, http.StatusOK, resp)
 			return
 		}
 
 		if len(parts) == 2 && parts[1] == "intents" && r.Method == http.MethodPost {
 			var req contracts.ApplyIntentRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid request body")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 				return
 			}
 			req.Intent.MatchID = matchID
-			resp, err := service.ApplyIntent(req.Intent, nowUTC())
+			resp, err := service.ApplyIntent(req.Intent, httputil.NowUTC())
 			if err != nil {
 				writeMatchError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, resp)
+			httputil.WriteJSON(w, http.StatusOK, resp)
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "token" && (r.Method == http.MethodPost || r.Method == http.MethodGet) {
+			playerID := strings.TrimSpace(r.URL.Query().Get("i"))
+			playerSecret := strings.TrimSpace(r.URL.Query().Get("s"))
+			if playerID == "" {
+				httputil.WriteError(w, http.StatusBadRequest, "playerId is required")
+				return
+			}
+			token := service.CreateAuthToken(playerID, playerSecret, httputil.NowUTC())
+			httputil.WriteJSON(w, http.StatusOK, map[string]string{"token": token})
 			return
 		}
 
 		if len(parts) == 2 && parts[1] == "presence" && r.Method == http.MethodPost {
 			var req contracts.MatchPresenceRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid request body")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 				return
 			}
-			if err := service.HeartbeatPresence(matchID, req, nowUTC()); err != nil {
+			if err := service.HeartbeatPresence(matchID, req, httputil.NowUTC()); err != nil {
 				writeMatchError(w, err)
 				return
 			}
@@ -166,13 +183,13 @@ func main() {
 			return
 		}
 
-		writeError(w, http.StatusNotFound, "route not found")
+		httputil.WriteError(w, http.StatusNotFound, "route not found")
 	})
 
-	addr := listenAddr("MATCH_SERVICE_ADDR", 8081)
+	addr := httputil.ListenAddr("MATCH_SERVICE_ADDR", 8081)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           limitBody(withCORS(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux))),
+		Handler:           httputil.LimitBody(rate_limit.CSRFMiddleware(withCORS(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux)), httputil.ParseAllowedOrigins())),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -180,6 +197,7 @@ func main() {
 	}
 	go func() {
 		log.Printf("match-service listening on %s", addr)
+		service.Log.Info("listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %v", err)
 		}
@@ -191,26 +209,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
-}
-
-func envOrDefault(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func listenAddr(key string, fallbackPort int) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	if value := os.Getenv("PORT"); value != "" {
-		if strings.HasPrefix(value, ":") {
-			return value
-		}
-		return ":" + value
-	}
-	return fmt.Sprintf(":%d", fallbackPort)
 }
 
 func archivePath() string {
@@ -228,11 +226,11 @@ func archiveSQLitePath() string {
 }
 
 func archivePostgresURL() string {
-	return envOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "")
+	return httputil.EnvOrDefault("MATCH_ARCHIVE_POSTGRES_URL", "")
 }
 
 func openArchiveStore() (*platform.MatchArchiveStore, error) {
-	switch strings.ToLower(envOrDefault("MATCH_ARCHIVE_BACKEND", "file")) {
+	switch strings.ToLower(httputil.EnvOrDefault("MATCH_ARCHIVE_BACKEND", "file")) {
 	case "sqlite":
 		return platform.NewSQLiteMatchArchiveStore(archiveSQLitePath())
 	case "postgres":
@@ -242,39 +240,16 @@ func openArchiveStore() (*platform.MatchArchiveStore, error) {
 	}
 }
 
-func nowUTC() time.Time {
-	return time.Now().UTC()
-}
-
-func limitBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]any{
-		"error": message,
-	})
-}
-
 func writeMatchError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, match.ErrMatchNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
+		httputil.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, match.ErrMatchSeatFull):
-		writeError(w, http.StatusConflict, err.Error())
+		httputil.WriteError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, match.ErrMatchJoinFinished):
-		writeError(w, http.StatusConflict, err.Error())
+		httputil.WriteError(w, http.StatusConflict, err.Error())
 	default:
-		writeError(w, http.StatusBadRequest, err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
 	}
 }
 
@@ -285,18 +260,27 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		return
 	}
 
-	playerID := strings.TrimSpace(r.URL.Query().Get("playerId"))
-	playerSecret := strings.TrimSpace(r.URL.Query().Get("playerSecret"))
-	playerClaimToken := strings.TrimSpace(r.URL.Query().Get("playerClaimToken"))
+	playerClaimToken := strings.TrimSpace(r.URL.Query().Get("t"))
+	var playerID, playerSecret string
 	if playerClaimToken != "" {
-		claim, err := resolveSocketClaim(matchID, playerClaimToken)
-		if err != nil {
-			unsubscribe()
-			writeError(w, http.StatusUnauthorized, "unauthorized room claim")
-			return
+		if pid, psec, ok := service.ResolveAuthToken(playerClaimToken); ok {
+			playerID = pid
+			playerSecret = psec
+		} else {
+			claim, err := resolveSocketClaim(matchID, playerClaimToken)
+			if err != nil {
+				unsubscribe()
+				httputil.WriteError(w, http.StatusUnauthorized, "unauthorized room claim")
+				return
+			}
+			playerID = strings.TrimSpace(claim.PlayerID)
+			playerSecret = strings.TrimSpace(claim.PlayerSecret)
 		}
-		playerID = strings.TrimSpace(claim.PlayerID)
-		playerSecret = strings.TrimSpace(claim.PlayerSecret)
+	}
+	if playerID == "" || playerSecret == "" {
+		unsubscribe()
+		httputil.WriteError(w, http.StatusUnauthorized, "valid auth token required")
+		return
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -304,16 +288,28 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		unsubscribe()
 		return
 	}
-	conn.SetCloseHandler(func(code int, text string) error {
-		if playerID != "" && playerSecret != "" {
-			_ = service.MarkDisconnected(matchID, playerID, playerSecret, nowUTC())
+	done := make(chan struct{})
+
+	// Read pump - required by gorilla/websocket to process close/ping/pong control frames.
+	// Without this loop the connection leaks and SetCloseHandler / SetPongHandler are never invoked.
+	go func() {
+		defer close(done)
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		conn.SetPongHandler(func(string) error {
+			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			return nil
+		})
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
 		}
-		return conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, ""), time.Now().Add(5*time.Second))
-	})
+	}()
+
 	defer func() {
 		unsubscribe()
 		if playerID != "" && playerSecret != "" {
-			_ = service.MarkDisconnected(matchID, playerID, playerSecret, nowUTC())
+			_ = service.MarkDisconnected(matchID, playerID, playerSecret, httputil.NowUTC())
 		}
 		_ = conn.Close()
 	}()
@@ -338,6 +334,8 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 			if err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second)); err != nil {
 				return
 			}
+		case <-done:
+			return
 		}
 	}
 }
@@ -351,10 +349,10 @@ func writeEnvelope(conn *websocket.Conn, messageType string, payload any) error 
 }
 
 func withCORS(next http.Handler) http.Handler {
-	allowed := parseAllowedOrigins()
+	allowed := httputil.ParseAllowedOrigins()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "" || isOriginAllowed(origin, allowed) {
+		if origin == "" || httputil.IsOriginAllowed(origin, allowed) {
 			if origin == "" {
 				origin = allowed[0]
 			}
@@ -373,31 +371,6 @@ func withCORS(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func parseAllowedOrigins() []string {
-	raw := envOrDefault("ALLOWED_ORIGINS", defaultAllowedOrigins)
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	if len(out) == 0 {
-		out = append(out, defaultAllowedOrigins)
-	}
-	return out
-}
-
-func isOriginAllowed(origin string, allowed []string) bool {
-	for _, a := range allowed {
-		if strings.EqualFold(origin, a) {
-			return true
-		}
-	}
-	return false
 }
 
 func resolveSocketClaim(matchID, claimToken string) (platform.MatchSeatClaim, error) {

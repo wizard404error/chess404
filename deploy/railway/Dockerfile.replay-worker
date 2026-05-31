@@ -1,0 +1,11 @@
+FROM golang:1.25-alpine AS builder
+WORKDIR /build
+COPY services/realtime/ .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go build -o /build/replay-worker ./cmd/replay-worker/
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+COPY --from=builder /build/replay-worker .
+CMD ["./replay-worker"]

@@ -77,6 +77,7 @@ type MatchClock struct {
 	BlackMS    int64  `json:"blackMs"`
 	RunningFor string `json:"runningFor,omitempty"`
 	StartedAt  *int64 `json:"startedAtMs,omitempty"`
+	Increment  int64  `json:"increment,omitempty"`
 }
 
 type DoubleMoveState struct {
@@ -256,6 +257,7 @@ type CreateMatchRequest struct {
 	MatchID           string      `json:"matchId,omitempty"`
 	Seed              int64       `json:"seed,omitempty"`
 	ClockSeconds      int64       `json:"clockSeconds,omitempty"`
+	ClockIncrement    int64       `json:"clockIncrement,omitempty"`
 	StarterHandMode   string      `json:"starterHandMode,omitempty"`
 	Queue             string      `json:"queue,omitempty"`
 	ModeID            MatchModeID `json:"modeId,omitempty"`

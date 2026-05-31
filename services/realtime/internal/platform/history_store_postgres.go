@@ -3,6 +3,7 @@ package platform
 import (
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -16,6 +17,9 @@ func newPostgresArchiveStore(dsn string) (*postgresArchiveStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	return newPostgresArchiveStoreWithDB(db)
 }
 

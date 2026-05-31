@@ -7,7 +7,7 @@ import { queueLabel } from './lib/match-labels';
 interface LobbiesPageProps {
   identity: PrivateMatchIdentity | null;
   displayName?: string | null;
-  hostedRuntime: boolean;
+  hostedRuntime: boolean | null;
   embedded?: boolean;
 }
 

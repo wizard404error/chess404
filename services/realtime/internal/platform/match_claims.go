@@ -125,8 +125,10 @@ func (s *MatchClaimStore) GetByToken(matchID, claimToken string) (MatchSeatClaim
 	defer s.mu.Unlock()
 	now := time.Now().UTC()
 	s.pruneExpiredLocked(now)
-	for _, claim := range s.claims {
+	for key, claim := range s.claims {
 		if claim.MatchID == matchID && claim.ClaimToken == claimToken {
+			delete(s.claims, key)
+			_ = s.persistLocked()
 			return claim, true
 		}
 	}

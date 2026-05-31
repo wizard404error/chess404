@@ -301,6 +301,24 @@ func findKing(board [][]*contracts.Piece, color string) *contracts.Square {
 	return nil
 }
 
+func pieceTypes(piece *contracts.Piece) []string {
+	types := []string{piece.Type}
+	if piece.FusedWith != "" {
+		types = append(types, piece.FusedWith)
+	}
+	return types
+}
+
+func hasEffectiveType(piece *contracts.Piece, targetType string) bool {
+	if piece.Type == targetType {
+		return true
+	}
+	if piece.FusedWith == targetType {
+		return true
+	}
+	return false
+}
+
 func insufficientMaterial(board [][]*contracts.Piece) bool {
 	nonKings := make([]*contracts.Piece, 0, 8)
 	for r := 0; r < 8; r++ {
@@ -316,13 +334,12 @@ func insufficientMaterial(board [][]*contracts.Piece) bool {
 	case 0:
 		return true
 	case 1:
-		return nonKings[0].Type == "bishop" || nonKings[0].Type == "knight"
+		return hasEffectiveType(nonKings[0], "bishop") || hasEffectiveType(nonKings[0], "knight")
 	case 2:
-		typeA, typeB := nonKings[0].Type, nonKings[1].Type
-		return (typeA == "knight" && typeB == "knight") ||
-			(typeA == "bishop" && typeB == "bishop") ||
-			(typeA == "bishop" && typeB == "knight") ||
-			(typeA == "knight" && typeB == "bishop")
+		return (hasEffectiveType(nonKings[0], "knight") && hasEffectiveType(nonKings[1], "knight")) ||
+			(hasEffectiveType(nonKings[0], "bishop") && hasEffectiveType(nonKings[1], "bishop")) ||
+			(hasEffectiveType(nonKings[0], "bishop") && hasEffectiveType(nonKings[1], "knight")) ||
+			(hasEffectiveType(nonKings[0], "knight") && hasEffectiveType(nonKings[1], "bishop"))
 	default:
 		return false
 	}

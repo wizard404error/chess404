@@ -31,6 +31,11 @@ import StatusPage from './StatusPage';
 import AccountPage from './AccountPage';
 import AppShell, { type ShellNavGroup, type ShellNavItem, type ShellPageMeta } from './components/layout/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { useSound, playSound } from './hooks/useSound';
+import { useAccessibility } from './hooks/useAccessibility';
+import { useToast } from './hooks/useToast';
+import { ToastContainer } from './components/Toast';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 import {
   AdminIcon,
   CardsIcon,
@@ -169,7 +174,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     httpBaseUrl: runtimeConfig?.matchServiceHttpBase,
     wsBaseUrl: runtimeConfig?.matchServiceWsBase,
   } satisfies MatchServiceRuntimeConfig);
-  const [hostedRuntime, setHostedRuntime] = React.useState(false);
+  const [hostedRuntime, setHostedRuntime] = React.useState<boolean | null>(null);
   const [activePage, setActivePage] = React.useState<AppPage>('Play');
   
   // App Router pathname -> activePage bridge
@@ -191,6 +196,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     else if (pathname === '/admin') setActivePage('Admin');
     else if (pathname.startsWith('/match/')) setActivePage('Match');
   }, [pathname]);
+
   const [secondaryMenuOpen, setSecondaryMenuOpen] = React.useState(false);
   const [friendsAttentionCount, setFriendsAttentionCount] = React.useState(0);
   const [inboxUnreadCount, setInboxUnreadCount] = React.useState(0);
@@ -225,6 +231,21 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
   const [confirmResign, setConfirmResign] = React.useState<'idle' | 'prompting'>('idle');
   const lastDrawOfferTime = React.useRef(0);
   const DRAW_COOLDOWN_MS = 15000;
+  const boardWrapperRef = React.useRef<HTMLDivElement>(null);
+  const [boardWrapperPx, setBoardWrapperPx] = React.useState(SQ * 8);
+
+  React.useEffect(() => {
+    const el = boardWrapperRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = entry.contentBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+        if (w > 0) setBoardWrapperPx(Math.round(w));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const matchEngine = useMatchEngine({
     accountActionQueryDetected,
     activePage,
@@ -610,6 +631,8 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     canSelectPiece,
     toggleAnalysisArrow,
     clearAnalysisArrows,
+    premove,
+    setPremove,
     clickSq,
     getCardHighlight,
     getDoubleMoveHighlight,
@@ -621,9 +644,116 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     renderJokerPicker
   } = matchEngine;
 
+  const { soundEnabled, toggleSound } = useSound();
+  const { colorBlindMode, toggleColorBlind } = useAccessibility();
+  const { messages: toastMessages, toast: showToast, dismiss: dismissToast } = useToast();
+  const online = useOnlineStatus();
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest?.('button') || target.closest?.('a') || target.closest?.('textarea') || target.closest?.('input') || target.closest?.('select')) return;
+      if (e.key === 'ArrowLeft' && reviewIdx > 0) {
+        e.preventDefault();
+        reviewPrev();
+      }
+      if (e.key === 'ArrowRight' && reviewIdx < snapshots.length - 1) {
+        e.preventDefault();
+        reviewNext();
+      }
+      if (e.key === 'Escape') {
+        setSel(null); setHints([]); setDrag(null); setDragPos(null);
+        setPromo(null); setCardPromo(null);
+      }
+      if (e.key === ' ' && over) {
+        e.preventDefault();
+        setEngineOn(v => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [reviewIdx, snapshots.length, over, reviewPrev, reviewNext]);
+
+  const prevCheckRef = React.useRef(check);
+  const prevOverRef = React.useRef(over);
+  const prevMoveLenRef = React.useRef(movHist.length);
+  const prevChatLenRef = React.useRef(chatMessages.length);
+
+  React.useEffect(() => {
+    if (check && check !== prevCheckRef.current) {
+      playSound('check');
+    }
+    prevCheckRef.current = check;
+  }, [check]);
+
+  React.useEffect(() => {
+    if (over && over !== prevOverRef.current) {
+      playSound('game_over');
+    }
+    prevOverRef.current = over;
+  }, [over]);
+
+  React.useEffect(() => {
+    if (movHist.length > prevMoveLenRef.current) {
+      playSound('move');
+    }
+    prevMoveLenRef.current = movHist.length;
+  }, [movHist.length]);
+
+  React.useEffect(() => {
+    if (chatMessages.length > prevChatLenRef.current) {
+      playSound('chat');
+    }
+    prevChatLenRef.current = chatMessages.length;
+  }, [chatMessages.length]);
+
+  const timerWarningPlayedRef = React.useRef<boolean>(false);
+  React.useEffect(() => {
+    if (tickingState && clockActive && !over && authoritativeLive) {
+      const warned = tickingState === 'white' ? timeW <= 15000 : timeB <= 15000;
+      if (warned && !timerWarningPlayedRef.current) {
+        playSound('timer_warning');
+        timerWarningPlayedRef.current = true;
+      } else if (!warned) {
+        timerWarningPlayedRef.current = false;
+      }
+    }
+  }, [timeW, timeB, tickingState, clockActive, over, authoritativeLive]);
+
+  // ── Loading skeleton ────────────────────────────────────────────────────────
+  if (hostedRuntime === null) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        minHeight: '100vh', background: '#0a0d16', color: '#ffbe5a', gap: '16px'
+      }}>
+        <div style={{ fontSize: '28px', fontWeight: 800, letterSpacing: '2px' }}>♟ CHESS404</div>
+        <div style={{
+          width: '200px', height: '4px', borderRadius: '2px',
+          background: 'rgba(255,190,90,0.15)', overflow: 'hidden'
+        }}>
+          <div style={{
+            width: '40%', height: '100%', borderRadius: '2px',
+            background: '#ffbe5a', animation: 'loadingSlide 1.2s ease-in-out infinite'
+          }} />
+        </div>
+      </div>
+    );
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <>
+    {!online && (
+      <div style={{
+        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+        background: '#dc2626', color: '#fff', textAlign: 'center',
+        padding: '10px 16px', fontWeight: 700, fontSize: '14px'
+      }}>
+        🔴 You are offline — some features may not work
+      </div>
+    )}
     <PlatformContext.Provider value={React.useMemo(() => ({
       hostedRuntime, setHostedRuntime,
       whiteProfile, blackProfile,
@@ -690,7 +820,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
       copyLiveMatchLink,
     ])}>
     <ErrorBoundary>
-    <div style={{
+    <main id="main-content" style={{
       display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
       fontFamily:"'Segoe UI', sans-serif",
       backgroundImage:'url(/background.png)',
@@ -704,6 +834,10 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
       <div style={{ position:'fixed', inset:0, background:'linear-gradient(160deg, rgba(8,4,20,0.45) 0%, rgba(15,6,30,0.35) 50%, rgba(5,2,15,0.50) 100%)', pointerEvents:'none', zIndex:0 }} />
       <style>{GLOBAL_STYLES}</style>
       <style>{`
+        @keyframes toastSlideIn {
+          from { opacity: 0; transform: translateX(20px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
         @keyframes sacrificePulse {
           0%, 100% { filter: drop-shadow(0 0 4px rgba(220,20,20,0.6)); transform: scale(1); }
           50% { filter: drop-shadow(0 0 14px rgba(255,60,60,0.95)); transform: scale(1.12); }
@@ -1311,7 +1445,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                 <div style={{ color:'#a0b8d8', fontSize:'11px', textAlign:'center', lineHeight:1.5, padding:'8px 10px', background: (cardPending.mechanic === 'smallsacrifice' || cardPending.mechanic === 'bigsacrifice') ? 'rgba(220,20,20,0.08)' : cardPending.mechanic === 'mindcontrol' ? 'rgba(139,0,255,0.08)' : (cardPending.mechanic === 'halffuse') ? 'rgba(251,191,36,0.08)' : (cardPending.mechanic === 'fullfusion') ? 'rgba(167,139,250,0.08)' : 'rgba(74,144,210,0.1)', border:`1px solid ${(cardPending.mechanic === 'smallsacrifice' || cardPending.mechanic === 'bigsacrifice') ? 'rgba(220,20,20,0.3)' : cardPending.mechanic === 'mindcontrol' ? 'rgba(139,0,255,0.35)' : (cardPending.mechanic === 'halffuse') ? 'rgba(251,191,36,0.35)' : (cardPending.mechanic === 'fullfusion') ? 'rgba(167,139,250,0.35)' : 'rgba(74,144,210,0.3)'}`, borderRadius:'8px' }}>{cardMsg || 'Click a square on the board...'}</div>
                 <button onClick={cancelCard} style={{ padding:'7px 18px', background:'rgba(231,76,60,0.2)', color:'#e74c3c', border:'1px solid rgba(231,76,60,0.4)', borderRadius:'6px', cursor:'pointer', fontSize:'12px', fontWeight:700 }}>✕ Cancel</button>
                 {promoPicker && (
-                  <div style={{ display:'flex', gap:'6px', flexWrap:'wrap', justifyContent:'center', marginTop:'4px' }}>
+                  <div role="dialog" aria-modal="true" aria-label="Choose promotion piece" style={{ display:'flex', gap:'6px', flexWrap:'wrap', justifyContent:'center', marginTop:'4px' }}>
                     {promoPicker.options.map(t => (
                       <button key={t} onClick={() => handlePromoPick(t)}
                         style={{ padding:'6px 10px', background:'rgba(245,158,11,0.2)', color:'#f59e0b', border:'1px solid rgba(245,158,11,0.5)', borderRadius:'6px', cursor:'pointer', fontSize:'11px', fontWeight:700, textTransform:'capitalize' }}>
@@ -1484,8 +1618,36 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
 
           {renderHand(topHand, topSeat, 'top')}
 
-          <div style={{ display:'flex', alignItems:'flex-start' }}>
-            <div style={{ position:'relative', border:'2px solid rgba(220,160,40,0.8)', borderRadius:'4px', display:'inline-block', boxShadow:'0 0 0 1px rgba(255,200,60,0.2), 0 0 60px rgba(200,100,10,0.5), 0 0 120px rgba(180,60,0,0.25)' }}>
+          <div
+            ref={boardWrapperRef}
+            className="match-layout__board-wrapper"
+            style={{
+              border:'2px solid rgba(220,160,40,0.8)',
+              borderRadius:'4px',
+              boxShadow:'0 0 0 1px rgba(255,200,60,0.2), 0 0 60px rgba(200,100,10,0.5), 0 0 120px rgba(180,60,0,0.25)',
+              maxWidth: `${SQ * 8}px`,
+              boxSizing:'border-box',
+            }}
+          >
+              {hostedRuntime && !viewerSeat && authoritativeMatchId && (
+                <div style={{ position:'absolute', inset:0, zIndex:40, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none' }}>
+                  <div style={{
+                    padding:'8px 20px',
+                    borderRadius:'8px',
+                    background:'rgba(0,0,0,0.55)',
+                    backdropFilter:'blur(4px)',
+                    border:'1px solid rgba(255,212,135,0.3)',
+                    color:'#ffd487',
+                    fontSize:'13px',
+                    fontWeight:800,
+                    letterSpacing:'1.5px',
+                    textTransform:'uppercase',
+                    boxShadow:'0 4px 20px rgba(0,0,0,0.5)',
+                  }}>
+                    Spectating
+                  </div>
+                </div>
+              )}
               <BoardCanvas
                 reverseAnim={null}
                 board={board}
@@ -1508,6 +1670,8 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                 reviewBoard={reviewBoard}
                 cardPending={cardPending}
                 onClick={clickSq}
+                onPremove={() => { if (premove) { setPremove(null); } }}
+                premove={premove}
                 onDragStart={(e, r, c) => {
                   if (cardPending || isReviewing || over || promo || (hostedRuntime && authoritativeStatus !== 'active')) return;
                   const p = board[r][c];
@@ -1553,6 +1717,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                 analysisArrows={analysisArrows}
                 onToggleAnalysisArrow={toggleAnalysisArrow}
                 onClearAnalysisArrows={clearAnalysisArrows}
+                colorBlindMode={colorBlindMode}
               />
 
               {/* Promotion overlay */}
@@ -1560,15 +1725,16 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                 const order: PieceType[] = promo.color === 'white'
                   ? ['queen','knight','rook','bishop']
                   : ['bishop','rook','knight','queen'];
-                const left = promo.col * SQ + 4;
-                const top  = promo.color === 'white' ? 4 : 4 * SQ + 4;
+                const vSQ = boardWrapperPx / 8;
+                const left = promo.col * vSQ + 4;
+                const top  = promo.color === 'white' ? 4 : 4 * vSQ + 4;
                 return (
                   <>
-                    <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.45)', zIndex:50 }} />
+                    <div role="dialog" aria-modal="true" aria-label="Choose promotion piece" style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.45)', zIndex:50 }} />
                     <div style={{ position:'absolute', left:`${left}px`, top:`${top}px`, zIndex:51, display:'flex', flexDirection:'column' }}>
                       {order.map(t => (
                         <div key={t} onClick={() => doPromo(t)}
-                          style={{ width:`${SQ}px`, height:`${SQ}px`, background:'#c8c8c8', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', boxShadow:'0 2px 8px rgba(0,0,0,0.6)', userSelect:'none' }}
+                          style={{ width:`${vSQ}px`, height:`${vSQ}px`, background:'#c8c8c8', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', boxShadow:'0 2px 8px rgba(0,0,0,0.6)', userSelect:'none' }}
                           onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#e8a020'; }}
                           onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = '#c8c8c8'; }}
                         >
@@ -1585,11 +1751,12 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                 const order: PieceType[] = cardPromo.color === 'white'
                   ? ['queen','knight','rook','bishop']
                   : ['bishop','rook','knight','queen'];
-                const left = cardPromo.sq.col * SQ + 4;
-                const top  = cardPromo.color === 'white' ? 4 : 4 * SQ + 4;
+                const vSQ = boardWrapperPx / 8;
+                const left = cardPromo.sq.col * vSQ + 4;
+                const top  = cardPromo.color === 'white' ? 4 : 4 * vSQ + 4;
                 return (
                   <>
-                    <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.45)', zIndex:50 }} />
+                    <div role="dialog" aria-modal="true" aria-label="Choose promotion piece" style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.45)', zIndex:50 }} />
                     <div style={{ position:'absolute', left:`${left}px`, top:`${top}px`, zIndex:51, display:'flex', flexDirection:'column' }}>
                       {order.map(t => (
                         <div key={t} onClick={() => {
@@ -1608,7 +1775,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                           setPosHist(newPh);
                           checkEndGame(nb, turn, moved, lm, hmc, newPh, posKey, toFEN(nb, turn, moved, lm, hmc, fmn), OPP[turn]);
                         }}
-                          style={{ width:`${SQ}px`, height:`${SQ}px`, background:'#c8c8c8', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', boxShadow:'0 2px 8px rgba(0,0,0,0.6)', userSelect:'none' }}
+                          style={{ width:`${vSQ}px`, height:`${vSQ}px`, background:'#c8c8c8', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', boxShadow:'0 2px 8px rgba(0,0,0,0.6)', userSelect:'none' }}
                           onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#e8a020'; }}
                           onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = '#c8c8c8'; }}
                         >
@@ -1621,7 +1788,6 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
                   </>
                 );
               })()}
-            </div>
           </div>
 
           {renderHand(bottomHand, bottomSeat, 'bottom')}
@@ -1931,13 +2097,37 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
             </div>
           </div>
 
+          <div style={{ display:'flex', justifyContent:'center', gap:'6px', flexShrink:0, marginTop:'4px', flexWrap:'wrap' }}>
+            <button onClick={toggleSound} style={{
+              padding:'5px 10px', fontSize:'10px', fontWeight:700, cursor:'pointer',
+              background: soundEnabled ? 'rgba(74,222,128,0.12)' : 'rgba(100,100,120,0.15)',
+              color: soundEnabled ? '#86efac' : 'rgba(200,200,220,0.5)',
+              border: soundEnabled ? '1px solid rgba(74,222,128,0.3)' : '1px solid rgba(200,200,220,0.08)',
+              borderRadius:'6px',
+            }}>
+              {soundEnabled ? '🔊 Sound On' : '🔇 Sound Off'}
+            </button>
+            <button onClick={toggleColorBlind} style={{
+              padding:'5px 10px', fontSize:'10px', fontWeight:700, cursor:'pointer',
+              background: colorBlindMode ? 'rgba(96,165,250,0.12)' : 'rgba(100,100,120,0.15)',
+              color: colorBlindMode ? '#93c5fd' : 'rgba(200,200,220,0.5)',
+              border: colorBlindMode ? '1px solid rgba(96,165,250,0.3)' : '1px solid rgba(200,200,220,0.08)',
+              borderRadius:'6px',
+            }}>
+              {colorBlindMode ? '🎨 CB On' : '🏳 CB Off'}
+            </button>
+            <div style={{ padding:'5px 10px', fontSize:'9px', color:'rgba(160,184,216,0.3)' }}>
+              ← → review · Esc cancel
+            </div>
+          </div>
 
         </div>
       </div>
       ) : null}
       </AppShell>
-    </div>
+    </main>
     </ErrorBoundary>
+    <ToastContainer messages={toastMessages} onDismiss={dismissToast} />
     </PlatformContext.Provider>
     </>
   );

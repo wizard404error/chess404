@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
+	"github.com/chess404/realtime/internal/envutil"
+	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/matchmaking"
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/chess404/realtime/internal/rate_limit"
@@ -197,15 +199,16 @@ func isValidPathParam(param string) bool {
 }
 
 func main() {
+	envutil.Require("MATCH_SERVICE_INTERNAL_URL", "PLATFORM_SERVICE_INTERNAL_URL", "MATCHMAKING_SERVICE_INTERNAL_URL")
 	config := gatewayConfigFromEnv()
 	client := &http.Client{Timeout: 3 * time.Second}
 	mux := buildGatewayMux(config, client)
 	rl := rate_limit.New()
 
-	addr := listenAddr("GATEWAY_ADDR", 8080)
+	addr := httputil.ListenAddr("GATEWAY_ADDR", 8080)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux),
+		Handler:           rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins()),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -246,7 +249,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":    "ok",
 			"service":   "gateway",
 			"checkedAt": time.Now().UTC(),
@@ -254,7 +257,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 	})
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"status":    "ok",
 			"service":   "gateway",
 			"checkedAt": time.Now().UTC(),
@@ -263,15 +266,15 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 
 	mux.HandleFunc("/api/system/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(w, http.StatusOK, collectGatewayStatus(config, client))
+		httputil.WriteJSON(w, http.StatusOK, collectGatewayStatus(config, client))
 	})
 
 	mux.HandleFunc("/api/session/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 
@@ -282,7 +285,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 				defer r.Body.Close()
 				r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					writeError(w, http.StatusBadRequest, "invalid bootstrap payload")
+					httputil.WriteError(w, http.StatusBadRequest, "invalid bootstrap payload")
 					return
 				}
 			}
@@ -291,7 +294,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			payload = buildGatewayBootstrapPayload(config, client, GatewayBootstrapRequest{})
 		}
 
-		writeJSON(w, http.StatusOK, contracts.Envelope{
+		httputil.WriteJSON(w, http.StatusOK, contracts.Envelope{
 			Type:    "gateway.bootstrap",
 			Payload: payload,
 		})
@@ -299,7 +302,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 
 	mux.HandleFunc("/api/private-matches", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		var payload GatewayPrivateMatchRequest
@@ -307,35 +310,35 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			defer r.Body.Close()
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid private match payload")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid private match payload")
 				return
 			}
 		}
 		response, statusCode, err := createGatewayPrivateMatch(config, client, payload)
 		if err != nil {
-			writeError(w, statusCode, err.Error())
+			httputil.WriteError(w, statusCode, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, response)
+		httputil.WriteJSON(w, http.StatusCreated, response)
 	})
 
 	mux.HandleFunc("/api/matches/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/matches/")
 		if path == "" {
-			writeError(w, http.StatusNotFound, "match id required")
+			httputil.WriteError(w, http.StatusNotFound, "match id required")
 			return
 		}
 		parts := strings.Split(path, "/")
 		if len(parts) != 2 || (parts[1] != "intents" && parts[1] != "presence") {
-			writeError(w, http.StatusNotFound, "route not found")
+			httputil.WriteError(w, http.StatusNotFound, "route not found")
 			return
 		}
 		if !isValidPathParam(parts[0]) {
-			writeError(w, http.StatusBadRequest, "invalid match id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid match id")
 			return
 		}
 		if parts[1] == "intents" {
@@ -347,17 +350,17 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 
 	mux.HandleFunc("/api/private-matches/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/private-matches/")
 		if path == "" {
-			writeError(w, http.StatusNotFound, "match id required")
+			httputil.WriteError(w, http.StatusNotFound, "match id required")
 			return
 		}
 		parts := strings.Split(path, "/")
 		if len(parts) != 2 || (parts[1] != "join" && parts[1] != "rematch") {
-			writeError(w, http.StatusNotFound, "route not found")
+			httputil.WriteError(w, http.StatusNotFound, "route not found")
 			return
 		}
 		var payload GatewayPrivateMatchRequest
@@ -365,12 +368,12 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			defer r.Body.Close()
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid private match join payload")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid private match join payload")
 				return
 			}
 		}
 		if !isValidPathParam(parts[0]) {
-			writeError(w, http.StatusBadRequest, "invalid match id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid match id")
 			return
 		}
 		var (
@@ -384,15 +387,15 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			response, statusCode, err = rematchGatewayPrivateMatch(config, client, parts[0], payload)
 		}
 		if err != nil {
-			writeError(w, statusCode, err.Error())
+			httputil.WriteError(w, statusCode, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, response)
+		httputil.WriteJSON(w, http.StatusOK, response)
 	})
 
 	mux.HandleFunc("/api/challenges", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		var payload GatewayDirectChallengeRequest
@@ -400,27 +403,27 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			defer r.Body.Close()
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid direct challenge payload")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid direct challenge payload")
 				return
 			}
 		}
 		response, statusCode, err := createGatewayDirectChallenge(config, client, payload)
 		if err != nil {
-			writeError(w, statusCode, err.Error())
+			httputil.WriteError(w, statusCode, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, response)
+		httputil.WriteJSON(w, http.StatusCreated, response)
 	})
 
 	mux.HandleFunc("/api/challenges/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/challenges/")
 		parts := strings.Split(path, "/")
 		if len(parts) != 2 || parts[1] != "accept" || strings.TrimSpace(parts[0]) == "" {
-			writeError(w, http.StatusNotFound, "route not found")
+			httputil.WriteError(w, http.StatusNotFound, "route not found")
 			return
 		}
 		var payload GatewayDirectChallengeAcceptRequest
@@ -428,20 +431,20 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			defer r.Body.Close()
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid challenge accept payload")
+				httputil.WriteError(w, http.StatusBadRequest, "invalid challenge accept payload")
 				return
 			}
 		}
 		if !isValidPathParam(parts[0]) {
-			writeError(w, http.StatusBadRequest, "invalid challenge id")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid challenge id")
 			return
 		}
 		response, statusCode, err := acceptGatewayDirectChallenge(config, client, parts[0], payload)
 		if err != nil {
-			writeError(w, statusCode, err.Error())
+			httputil.WriteError(w, statusCode, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, response)
+		httputil.WriteJSON(w, http.StatusOK, response)
 	})
 
 	return mux
@@ -1372,7 +1375,7 @@ func ensureGatewayPrivateAccountSession(config GatewayConfig, client *http.Clien
 
 func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayConfig, client *http.Client, matchID string) {
 	if !isValidPathParam(matchID) {
-		writeError(w, http.StatusBadRequest, "invalid match id")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid match id")
 		return
 	}
 	var req contracts.ApplyIntentRequest
@@ -1380,7 +1383,7 @@ func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayCo
 		defer r.Body.Close()
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 	}
@@ -1389,7 +1392,7 @@ func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayCo
 	if strings.TrimSpace(req.Intent.PlayerClaimToken) != "" {
 		claim, errMessage := resolveGatewayClaimByToken(config, client, matchID, strings.TrimSpace(req.Intent.PlayerClaimToken))
 		if errMessage != "" {
-			writeError(w, http.StatusUnauthorized, errMessage)
+			httputil.WriteError(w, http.StatusUnauthorized, errMessage)
 			return
 		}
 		req.Intent.PlayerID = claim.PlayerID
@@ -1399,15 +1402,15 @@ func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayCo
 
 	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/intents", req)
 	if result.Error != "" && result.StatusCode == 0 {
-		writeError(w, http.StatusBadGateway, result.Error)
+		httputil.WriteError(w, http.StatusBadGateway, result.Error)
 		return
 	}
-	writeJSON(w, statusOrDefault(result.StatusCode, http.StatusBadGateway), result.Payload)
+	httputil.WriteJSON(w, statusOrDefault(result.StatusCode, http.StatusBadGateway), result.Payload)
 }
 
 func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config GatewayConfig, client *http.Client, matchID string) {
 	if !isValidPathParam(matchID) {
-		writeError(w, http.StatusBadRequest, "invalid match id")
+		httputil.WriteError(w, http.StatusBadRequest, "invalid match id")
 		return
 	}
 	var req contracts.MatchPresenceRequest
@@ -1415,7 +1418,7 @@ func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config Gateway
 		defer r.Body.Close()
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
+			httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 	}
@@ -1423,7 +1426,7 @@ func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config Gateway
 	if strings.TrimSpace(req.PlayerClaimToken) != "" {
 		claim, errMessage := resolveGatewayClaimByToken(config, client, matchID, strings.TrimSpace(req.PlayerClaimToken))
 		if errMessage != "" {
-			writeError(w, http.StatusUnauthorized, errMessage)
+			httputil.WriteError(w, http.StatusUnauthorized, errMessage)
 			return
 		}
 		req.PlayerID = claim.PlayerID
@@ -1433,14 +1436,14 @@ func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config Gateway
 
 	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/presence", req)
 	if result.Error != "" && result.StatusCode == 0 {
-		writeError(w, http.StatusBadGateway, result.Error)
+		httputil.WriteError(w, http.StatusBadGateway, result.Error)
 		return
 	}
 	if result.StatusCode == http.StatusNoContent {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeJSON(w, statusOrDefault(result.StatusCode, http.StatusBadGateway), result.Payload)
+	httputil.WriteJSON(w, statusOrDefault(result.StatusCode, http.StatusBadGateway), result.Payload)
 }
 
 func fetchGatewayJSON(client *http.Client, url string) GatewayServiceHealth {
@@ -1555,13 +1558,6 @@ func gatewayConfigFromEnv() GatewayConfig {
 	}
 }
 
-func envOrDefault(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
 func resolveInternalServiceURL(explicit string, fallback string) string {
 	trimmedFallback := strings.TrimRight(strings.TrimSpace(fallback), "/")
 	trimmed := strings.TrimRight(strings.TrimSpace(explicit), "/")
@@ -1578,30 +1574,7 @@ func resolveInternalServiceURL(explicit string, fallback string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-func listenAddr(key string, fallbackPort int) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	if value := os.Getenv("PORT"); value != "" {
-		if strings.HasPrefix(value, ":") {
-			return value
-		}
-		return ":" + value
-	}
-	return fmt.Sprintf(":%d", fallbackPort)
-}
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]any{
-		"error": message,
-	})
-}
 
 func sanitizeSeatClaim(claim *GatewaySeatClaim) *GatewaySeatClaim {
 	if claim == nil {

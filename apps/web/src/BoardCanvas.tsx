@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Board, Piece, PieceType, PieceColor, Sq, CardPendingState, BombPiece, LavaSquare, DoubleMove } from './types';
-import { SQ, FILES } from './constants';
+import { SQ as IMPORTED_SQ, FILES } from './constants';
+let SQ = IMPORTED_SQ;
 
 // ─── BoardCanvas ─────────────────────────────────────────────────────────────
 export interface TransformAnim {
@@ -110,6 +111,9 @@ export interface BoardCanvasProps {
   analysisArrows: BoardArrow[];
   onToggleAnalysisArrow: (from: Sq, to: Sq) => void;
   onClearAnalysisArrows: () => void;
+  colorBlindMode?: boolean;
+  premove?: { from: Sq; to: Sq } | null;
+  onPremove?: () => void;
 }
 
 // Preload all piece images once
@@ -189,7 +193,7 @@ function drawBoardArrow(
   from: Sq,
   to: Sq,
   color = ANALYSIS_ARROW_COLOR,
-  options: { alpha?: number; preview?: boolean } = {},
+  options: { alpha?: number; preview?: boolean; lineWidth?: number } = {},
 ) {
   const alpha = options.alpha ?? 0.88;
   const fromX = from.col * SQ + SQ / 2;
@@ -232,7 +236,7 @@ function drawBoardArrow(
   ctx.translate(fromX, fromY);
   ctx.rotate(angle);
 
-  ctx.lineWidth = shaftWidth;
+  ctx.lineWidth = options.lineWidth ?? shaftWidth;
   if (options.preview) {
     ctx.setLineDash([16, 10]);
   }
@@ -1998,7 +2002,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     cardHighlight, doubleMoveHighlight, bombPieces, bombExploding,
     lavaSquares, lavaExploding, swapAnim, isReviewing, reviewBoard,
     cardPending, onClick, onDragStart, onDrop, doubleMove, transformAnim,
-    sniperAnim, teleportAnim, jumpAnim, reverseAnim, sacrificeAnim, sacrificeSelectedSquares, mindControlAnim, mindControlTargetSquare, fuseAnim, fuseSelectedSq, fogZones, viewerColor, invisibleUnder, analysisArrows, onToggleAnalysisArrow, onClearAnalysisArrows,
+    sniperAnim, teleportAnim, jumpAnim, reverseAnim, sacrificeAnim, sacrificeSelectedSquares, mindControlAnim, mindControlTargetSquare, fuseAnim, fuseSelectedSq,     fogZones, viewerColor, invisibleUnder, analysisArrows, onToggleAnalysisArrow, onClearAnalysisArrows, colorBlindMode, premove, onPremove,
   } = props;
 
   const canvasRef  = React.useRef<HTMLCanvasElement>(null);
@@ -2058,7 +2062,35 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
   }, [reverseAnim]);
 
   const displayBoard = reviewBoard ?? board;
-  const W = 8 * SQ, H = 8 * SQ;
+
+  // ── Responsive board size ─────────────────────────────────────────────────
+  const MAX_BOARD_PX = 8 * IMPORTED_SQ;
+  const [boardPx, setBoardPx] = React.useState(() =>
+    typeof window !== 'undefined'
+      ? Math.min(MAX_BOARD_PX, Math.floor((window.innerWidth * 0.9) / 8) * 8)
+      : MAX_BOARD_PX
+  );
+
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = entry.contentBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+        if (w > 0) {
+          setBoardPx(prev => {
+            const next = Math.min(MAX_BOARD_PX, Math.floor(w / 8) * 8);
+            return next >= 32 * 8 ? next : prev;
+          });
+        }
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
+  SQ = boardPx / 8;
+  const W = boardPx, H = boardPx;
   const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
 
   React.useEffect(() => {
@@ -2184,10 +2216,19 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
           const isBombCenter = bombPieces.some((b: BombPiece) => b.row===row && b.col===col);
           const isExplodingBomb = bombExploding.some((s: Sq) => s.row===row && s.col===col);
 
-          let baseColor = light ? '#F0D9B5' : '#B58863';
-          if (isLM)  baseColor = light ? '#cdd26a' : '#aaa23a';
-          if (isSel) baseColor = '#FFD700';
-          if (isChk) baseColor = '#e85555';
+          const cb = colorBlindMode;
+          let baseColor: string;
+          if (cb) {
+            baseColor = light ? '#FFD9B3' : '#8B7D6B';
+            if (isLM)  baseColor = light ? '#A3C4F3' : '#6A9BD1';
+            if (isSel) baseColor = '#4A90D9';
+            if (isChk) baseColor = '#E85D5D';
+          } else {
+            baseColor = light ? '#F0D9B5' : '#B58863';
+            if (isLM)  baseColor = light ? '#cdd26a' : '#aaa23a';
+            if (isSel) baseColor = '#FFD700';
+            if (isChk) baseColor = '#e85555';
+          }
 
           if (isBombRadius && !isBombCenter) {
             const pulse = 0.4 + Math.sin(now/500 + row * 0.7 + col * 0.3) * 0.15;
@@ -2338,13 +2379,34 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
               ctx.arc(x + SQ/2, y + SQ/2, 10, 0, Math.PI*2);
               ctx.fillStyle = 'rgba(0,0,0,0.22)';
               ctx.fill();
+              if (cb) {
+                ctx.strokeStyle = '#4A90D9';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(x + SQ/2, y + SQ/2, 14, 0, Math.PI*2);
+                ctx.stroke();
+              }
             } else {
-              ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-              ctx.lineWidth = 4;
+              ctx.strokeStyle = cb ? '#4A90D9' : 'rgba(0,0,0,0.22)';
+              ctx.lineWidth = cb ? 3 : 4;
               ctx.beginPath();
               ctx.arc(x + SQ/2, y + SQ/2, SQ/2 - 4, 0, Math.PI*2);
               ctx.stroke();
             }
+          }
+          if (cb && isSel) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${SQ * 0.25}px sans-serif`;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+            ctx.fillText('◆', x + SQ - 4, y + 4);
+          }
+          if (cb && isChk) {
+            ctx.fillStyle = '#FF4444';
+            ctx.font = `bold ${SQ * 0.35}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('⚠', x + SQ/2, y + SQ/2);
           }
         }
       }
@@ -2371,6 +2433,21 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
       }
       if (annotationStartRef.current && annotationTargetRef.current) {
         drawBoardArrow(ctx, annotationStartRef.current, annotationTargetRef.current, ANALYSIS_ARROW_COLOR, { alpha: 0.6, preview: true });
+      }
+
+      if (premove) {
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        drawBoardArrow(ctx, premove.from, premove.to, 'rgba(96,165,250,0.8)', { lineWidth: 3 });
+        ctx.setLineDash([]);
+        const pmFrom = { row: 7 - premove.from.row, col: premove.from.col };
+        const pmTo = { row: 7 - premove.to.row, col: premove.to.col };
+        ctx.fillStyle = 'rgba(96,165,250,0.85)';
+        ctx.font = `bold ${SQ * 0.2}px sans-serif`;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText('P➜', pmFrom.col * SQ + SQ - 3, pmFrom.row * SQ + 3);
+        ctx.restore();
       }
 
       // ── Draw ghost (invisible) piece and any piece on same square ────────
@@ -3450,13 +3527,16 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     displayBoard, sel, hints, lm, check, kingPos,
     cardHighlight, doubleMoveHighlight, bombPieces, bombExploding,
     lavaSquares, lavaExploding, isReviewing, doubleMove, transformAnim, sniperAnim, reverseAnim, sacrificeAnim, sacrificeSelectedSquares, mindControlAnim, mindControlTargetSquare, fuseAnim, fuseSelectedSq,
-    fogZones, viewerColor, analysisArrows,
+    fogZones, viewerColor, analysisArrows, colorBlindMode, premove,
+    boardPx,
   ]);
 
   const [localDrag, setLocalDrag] = React.useState<Sq | null>(null);
   const [localDragPos, setLocalDragPos] = React.useState<{ x: number; y: number } | null>(null);
   const [annotationStart, setAnnotationStart] = React.useState<Sq | null>(null);
   const [annotationTarget, setAnnotationTarget] = React.useState<Sq | null>(null);
+  const [focusedSquare, setFocusedSquare] = React.useState<{row: number, col: number} | null>(null);
+  const [lastMoveAnnouncement, setLastMoveAnnouncement] = React.useState('');
   const localDragRef    = React.useRef<Sq | null>(null);
   const localDragPosRef = React.useRef<{ x: number; y: number } | null>(null);
   const annotationStartRef = React.useRef<Sq | null>(null);
@@ -3465,27 +3545,38 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
   React.useEffect(() => { localDragPosRef.current = localDragPos; }, [localDragPos]);
   React.useEffect(() => { annotationStartRef.current = annotationStart; }, [annotationStart]);
   React.useEffect(() => { annotationTargetRef.current = annotationTarget; }, [annotationTarget]);
+  React.useEffect(() => {
+    if (lm) {
+      const fromFile = FILES[lm.from.col];
+      const fromRank = lm.from.row + 1;
+      const toFile = FILES[lm.to.col];
+      const toRank = lm.to.row + 1;
+      setLastMoveAnnouncement(`Move from ${fromFile}${fromRank} to ${toFile}${toRank}`);
+    }
+  }, [lm]);
 
   const getSquare = (e: React.MouseEvent): Sq => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
-    return { row: 7 - Math.floor(y / SQ), col: Math.floor(x / SQ) };
+    const effSQ = rect.width / 8;
+    return { row: 7 - Math.floor(y / effSQ), col: Math.floor(x / effSQ) };
   };
 
-  const getTouchSquare = (e: React.TouchEvent): Sq | null => {
+  const getTouchSquare = (e: TouchEvent): Sq | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const touch = e.touches[0] || e.changedTouches[0];
     if (!touch) return null;
     const x = touch.clientX - rect.left, y = touch.clientY - rect.top;
-    return { row: 7 - Math.floor(y / SQ), col: Math.floor(x / SQ) };
+    const effSQ = rect.width / 8;
+    return { row: 7 - Math.floor(y / effSQ), col: Math.floor(x / effSQ) };
   };
 
   const touchStartSq = React.useRef<Sq | null>(null);
   const touchMoved = React.useRef(false);
 
-  const handleTouchStart = (e: React.TouchEvent) => {
+  const handleTouchStart = (e: TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     touchMoved.current = false;
     const sq = getTouchSquare(e);
@@ -3506,7 +3597,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     }
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  const handleTouchMove = (e: TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     if (!localDrag) return;
     touchMoved.current = true;
@@ -3516,7 +3607,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     setLocalDragPos({ x: touch.clientX - rect.left, y: touch.clientY - rect.top });
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
+  const handleTouchEnd = (e: TouchEvent) => {
     e.preventDefault();
     const sq = getTouchSquare(e);
     if (localDrag) {
@@ -3542,6 +3633,19 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     touchStartSq.current = null;
     touchMoved.current = false;
   };
+
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+    return () => {
+      canvas.removeEventListener('touchstart', handleTouchStart);
+      canvas.removeEventListener('touchmove', handleTouchMove);
+      canvas.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const sq = getSquare(e);
@@ -3616,27 +3720,68 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    let row = focusedSquare?.row ?? 4;
+    let col = focusedSquare?.col ?? 4;
+    switch (e.key) {
+      case 'ArrowUp':
+        e.preventDefault();
+        row = Math.min(7, row + 1);
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        row = Math.max(0, row - 1);
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        col = Math.max(0, col - 1);
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        col = Math.min(7, col + 1);
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (focusedSquare) onClick(focusedSquare.row, focusedSquare.col);
+        return;
+      case 'Escape':
+        e.preventDefault();
+        setFocusedSquare(null);
+        return;
+      default:
+        return;
+    }
+    setFocusedSquare({ row, col });
+  };
+
   return (
-    <canvas
-      ref={canvasRef}
-      width={Math.round(W * dpr)}
-      height={Math.round(H * dpr)}
-      style={{
-        display:'block',
-        width: `${W}px`,
-        height: `${H}px`,
-        cursor: annotationStart ? 'crosshair' : (cardPending ? 'crosshair' : (localDrag ? 'grabbing' : 'pointer')),
-      }}
-      onContextMenu={(e) => e.preventDefault()}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onClick={handleClick}
-      onMouseLeave={handleMouseLeave}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        width={Math.round(W * dpr)}
+        height={Math.round(H * dpr)}
+        role="application"
+        aria-label="Chess board"
+        tabIndex={0}
+        style={{
+          display:'block',
+          width: '100%',
+          height: '100%',
+          cursor: annotationStart ? 'crosshair' : (cardPending ? 'crosshair' : (localDrag ? 'grabbing' : 'pointer')),
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onClick={handleClick}
+        onMouseLeave={handleMouseLeave}
+        onTouchCancel={handleTouchCancel}
+        onKeyDown={handleKeyDown}
+      />
+      <div aria-live="polite" className="sr-only">
+        {lastMoveAnnouncement}
+      </div>
+    </>
   );
 });

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"strings"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -21,6 +22,9 @@ func NewPostgresAccountSecurityAuditStore(rawURL string) (*PostgresAccountSecuri
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	store := &PostgresAccountSecurityAuditStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

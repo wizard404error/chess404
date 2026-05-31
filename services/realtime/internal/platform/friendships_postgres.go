@@ -2,6 +2,7 @@ package platform
 
 import (
 	"database/sql"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -15,6 +16,9 @@ func NewPostgresFriendshipStore(dsn string) (*FriendshipStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
 	store, err := newPostgresFriendshipPersistenceWithDB(db)
 	if err != nil {
 		_ = db.Close()
