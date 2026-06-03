@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -132,6 +133,37 @@ func respondJSON(w http.ResponseWriter, code int, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("error encoding JSON response: %v", err)
 	}
+}
+
+func configuredInternalServiceToken() string {
+	for _, name := range []string{"PLATFORM_INTERNAL_SERVICE_TOKEN", "CHESS404_INTERNAL_SERVICE_TOKEN", "INTERNAL_SERVICE_TOKEN"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func requireInternalServiceRequest(w http.ResponseWriter, r *http.Request) bool {
+	expected := configuredInternalServiceToken()
+	if expected == "" {
+		respondError(w, http.StatusNotFound, "not found")
+		return false
+	}
+
+	provided := strings.TrimSpace(r.Header.Get("X-Chess404-Service-Token"))
+	if provided == "" {
+		const prefix = "Bearer "
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		if strings.HasPrefix(auth, prefix) {
+			provided = strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+		}
+	}
+	if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return false
+	}
+	return true
 }
 
 func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.GuestDirectory, accounts platform.AccountDirectory, friends platform.FriendshipDirectory, moderation platform.ModerationDirectory, challenges platform.DirectChallengeDirectory, notifications platform.AccountNotificationDirectory, emailOutbox platform.AccountEmailOutboxDirectory, securityAudit platform.AccountSecurityAuditDirectory, claims *platform.MatchClaimStore) http.Handler {
@@ -2122,6 +2154,9 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireInternalServiceRequest(w, r) {
+			return
+		}
 		var payload struct {
 			MatchID       string `json:"matchId"`
 			GuestID       string `json:"guestId"`
@@ -2209,6 +2244,9 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireInternalServiceRequest(w, r) {
+			return
+		}
 		var payload struct {
 			MatchID      string `json:"matchId"`
 			AccountID    string `json:"accountId"`
@@ -2270,6 +2308,32 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			"whiteAccount": platform.BuildPublicAccountProfile(whiteAccount, guests),
 			"blackAccount": platform.BuildPublicAccountProfile(blackAccount, guests),
 		})
+	})
+
+	mux.HandleFunc("/api/platform/internal/finalize-rated-match", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireInternalServiceRequest(w, r) {
+			return
+		}
+		var payload struct {
+			MatchID string `json:"matchId"`
+		}
+		if r.Body != nil {
+			defer r.Body.Close()
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				respondError(w, http.StatusBadRequest, "invalid finalization payload")
+				return
+			}
+		}
+		response, status, err := finalizeArchivedRatedMatch(archive, guests, accounts, payload.MatchID)
+		if err != nil {
+			respondError(w, status, err.Error())
+			return
+		}
+		respondJSON(w, http.StatusOK, response)
 	})
 
 	mux.HandleFunc("/api/platform/rankings", func(w http.ResponseWriter, r *http.Request) {
@@ -2458,8 +2522,7 @@ func filterArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, status 
 	filtered := make([]platform.MatchArchiveEntry, 0, len(matches))
 	for _, entry := range matches {
 		entryStatus := strings.TrimSpace(entry.Status)
-		
-		
+
 		// When filtering for "active", exclude matches that are actually finished
 		// (have a winner or finish reason) even if their status field says "active"
 		if status == "active" {
@@ -2485,7 +2548,7 @@ func filterArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, status 
 				continue
 			}
 		}
-		
+
 		filtered = append(filtered, entry)
 	}
 	return filtered
@@ -2520,6 +2583,66 @@ func filterPublicArchivedMatchesByStatus(matches []platform.MatchArchiveEntry, s
 		}
 	}
 	return public
+}
+
+func finalizeArchivedRatedMatch(
+	archive *platform.MatchArchiveStore,
+	guests platform.GuestDirectory,
+	accounts platform.AccountDirectory,
+	matchID string,
+) (map[string]any, int, error) {
+	matchID = strings.TrimSpace(matchID)
+	if matchID == "" {
+		return nil, http.StatusBadRequest, errGuestResult("match id is required")
+	}
+	entry, ok := archive.Get(matchID)
+	if !ok {
+		return nil, http.StatusBadRequest, errGuestResult("unknown match archive")
+	}
+	entry = enrichArchiveEntry(accounts, entry)
+	winner := strings.TrimSpace(entry.Winner)
+	if err := validateArchivedRatedResult(entry, matchID, winner); err != nil {
+		return nil, http.StatusBadRequest, err
+	}
+
+	whiteBefore, ok := guests.GetGuest(entry.WhiteGuestID)
+	if !ok {
+		return nil, http.StatusBadRequest, errGuestResult("unknown white guest")
+	}
+	blackBefore, ok := guests.GetGuest(entry.BlackGuestID)
+	if !ok {
+		return nil, http.StatusBadRequest, errGuestResult("unknown black guest")
+	}
+
+	white, black, guestChanged, err := guests.FinalizeMatch(matchID, entry.WhiteGuestID, entry.BlackGuestID, winner)
+	if err != nil {
+		return nil, http.StatusBadRequest, err
+	}
+
+	var (
+		whiteAccountProfile platform.PublicAccountProfile
+		blackAccountProfile platform.PublicAccountProfile
+		accountChanged      bool
+	)
+	_, whiteLinked := accounts.GetAccountByGuest(entry.WhiteGuestID)
+	_, blackLinked := accounts.GetAccountByGuest(entry.BlackGuestID)
+	if whiteLinked && blackLinked {
+		whiteAccount, blackAccount, changed, err := finalizeLinkedAccounts(accounts, matchID, entry.WhiteGuestID, entry.BlackGuestID, winner, entry.Queue, entry.ModeID, whiteBefore, blackBefore)
+		if err != nil {
+			return nil, http.StatusBadRequest, errGuestResult("failed to finalize linked account result")
+		}
+		accountChanged = changed
+		whiteAccountProfile = platform.BuildPublicAccountProfile(whiteAccount, guests)
+		blackAccountProfile = platform.BuildPublicAccountProfile(blackAccount, guests)
+	}
+
+	return map[string]any{
+		"changed":      guestChanged || accountChanged,
+		"white":        white,
+		"black":        black,
+		"whiteAccount": whiteAccountProfile,
+		"blackAccount": blackAccountProfile,
+	}, http.StatusOK, nil
 }
 
 func validateArchivedRatedResult(entry platform.MatchArchiveEntry, matchID, winner string) error {

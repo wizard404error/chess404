@@ -65,10 +65,6 @@ func BuildPublicMatchArchiveEntry(entry MatchArchiveEntry) PublicMatchArchiveEnt
 		RulesVersion:       entry.RulesVersion,
 		Queue:              entry.Queue,
 		ModeID:             entry.ModeID,
-		WhiteGuestID:       entry.WhiteGuestID,
-		BlackGuestID:       entry.BlackGuestID,
-		WhiteAccountID:     entry.WhiteAccountID,
-		BlackAccountID:     entry.BlackAccountID,
 		WhiteAccountHandle: entry.WhiteAccountHandle,
 		BlackAccountHandle: entry.BlackAccountHandle,
 		WhiteName:          entry.WhiteName,
@@ -93,6 +89,13 @@ func sanitizePublicMatchState(state contracts.MatchState) contracts.MatchState {
 	safe.ChatMessages = nil
 	safe.SeenClientMoveIDs = nil
 	safe.History = nil
+	safe.WhiteGuestID = ""
+	safe.BlackGuestID = ""
+	safe.WhiteAccountID = ""
+	safe.BlackAccountID = ""
+	safe.InvisiblePiece = nil
+	safe.CheaterState = nil
+	safe.RadarRevealFor = ""
 	return safe
 }
 

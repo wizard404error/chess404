@@ -25,6 +25,24 @@ a {
   text-decoration: none;
 }
 
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  z-index: 9999;
+  padding: 8px 16px;
+  background: #ffbe5a;
+  color: #000;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 0 0 4px 0;
+  text-decoration: none;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  left: 0;
+}
+
 button,
 input,
 select,

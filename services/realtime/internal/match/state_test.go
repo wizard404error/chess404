@@ -19,11 +19,56 @@ func (a *captureArchiver) Upsert(snapshot contracts.MatchSnapshotResponse) error
 	return nil
 }
 
+func createTestMatch(service *Service, req contracts.CreateMatchRequest, now time.Time) contracts.MatchSnapshotResponse {
+	if req.WhitePlayerSecret == "" {
+		req.WhitePlayerSecret = "white-secret"
+	}
+	if req.BlackPlayerSecret == "" {
+		req.BlackPlayerSecret = "black-secret"
+	}
+	return service.CreateMatch(req, now)
+}
+
+func applyTestIntent(service *Service, intent contracts.PlayerIntent, now time.Time) (contracts.MatchSnapshotResponse, error) {
+	if intent.PlayerSecret == "" {
+		switch testPlayerColor(intent.PlayerID) {
+		case "white":
+			intent.PlayerSecret = "white-secret"
+		case "black":
+			intent.PlayerSecret = "black-secret"
+		}
+	}
+	return service.ApplyIntent(intent, now)
+}
+
+func testPresence(playerID string) contracts.MatchPresenceRequest {
+	req := contracts.MatchPresenceRequest{PlayerID: playerID}
+	switch testPlayerColor(playerID) {
+	case "white":
+		req.PlayerSecret = "white-secret"
+	case "black":
+		req.PlayerSecret = "black-secret"
+	}
+	return req
+}
+
+func testPlayerColor(playerID string) string {
+	value := strings.ToLower(strings.TrimSpace(playerID))
+	switch {
+	case strings.Contains(value, "white"), strings.Contains(value, "aurora"):
+		return "white"
+	case strings.Contains(value, "black"), strings.Contains(value, "velvet"):
+		return "black"
+	default:
+		return ""
+	}
+}
+
 func TestCreateMatchStartsActive(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:      "test_match",
 		ClockSeconds: 120,
 	}, now)
@@ -46,7 +91,7 @@ func TestCreateMatchPreservesModeID(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 30, 0, time.UTC)
 
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID: "mode_match",
 		ModeID:  contracts.MatchModeHiddenCards,
 	}, now)
@@ -60,7 +105,7 @@ func TestCreateMatchWithSingleSeatWaitsForOpponent(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 45, 0, time.UTC)
 
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:      "private_waiting",
 		WhiteGuestID: "guest-white",
 		WhiteName:    "Aurora",
@@ -78,7 +123,7 @@ func TestJoinMatchSeatAssignsOpponentAndActivatesWaitingRoom(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 50, 0, time.UTC)
 
-	service.CreateMatch(contracts.CreateMatchRequest{
+	createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:           "invite_room",
 		WhiteGuestID:      "guest-white",
 		WhiteName:         "Aurora",
@@ -115,7 +160,7 @@ func TestCreateMatchStarterThreeModeStartsWithThreeCards(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 1, 0, 0, time.UTC)
 
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:         "starter_three",
 		StarterHandMode: "starter_three",
 	}, now)
@@ -137,13 +182,13 @@ func TestCreateMatchStarterThreeModeStartsWithThreeCards(t *testing.T) {
 func TestReplayFramesTrackPostMoveAuthoritativeState(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 5, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "replay_frames"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "replay_frames"}, now)
 
 	if len(snapshot.ReplayFrames) != 1 || snapshot.ReplayFrames[0].Turn != "white" {
 		t.Fatalf("expected initial replay frame for white to move, got %#v", snapshot.ReplayFrames)
 	}
 
-	moved, err := service.ApplyIntent(contracts.PlayerIntent{
+	moved, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "replay_frames",
 		PlayerID: "white_player",
@@ -172,7 +217,7 @@ func TestReplayFramesTrackPostMoveAuthoritativeState(t *testing.T) {
 func TestGuestSeatIDsCanOwnMoveIntents(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 7, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:      "guest_owned_move",
 		WhiteGuestID: "aurora-101",
 		BlackGuestID: "velvet-202",
@@ -182,7 +227,7 @@ func TestGuestSeatIDsCanOwnMoveIntents(t *testing.T) {
 		t.Fatalf("expected guest seat ids to persist on match creation, got %#v", snapshot.Match)
 	}
 
-	moved, err := service.ApplyIntent(contracts.PlayerIntent{
+	moved, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "guest_owned_move",
 		PlayerID: "aurora-101",
@@ -204,7 +249,7 @@ func TestGuestSeatSecretsGateMoveIntents(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 8, 0, 0, time.UTC)
 
-	service.CreateMatch(contracts.CreateMatchRequest{
+	createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:           "guest_secret_move",
 		WhiteGuestID:      "aurora-101",
 		BlackGuestID:      "velvet-202",
@@ -212,7 +257,7 @@ func TestGuestSeatSecretsGateMoveIntents(t *testing.T) {
 		BlackPlayerSecret: "black-secret",
 	}, now)
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:         "make_move",
 		MatchID:      "guest_secret_move",
 		PlayerID:     "aurora-101",
@@ -224,7 +269,7 @@ func TestGuestSeatSecretsGateMoveIntents(t *testing.T) {
 		t.Fatalf("expected wrong secret to fail authorization, got %v", err)
 	}
 
-	moved, err := service.ApplyIntent(contracts.PlayerIntent{
+	moved, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:         "make_move",
 		MatchID:      "guest_secret_move",
 		PlayerID:     "aurora-101",
@@ -250,13 +295,13 @@ func TestArchivedMatchReloadKeepsSecretsAndReverseHistory(t *testing.T) {
 
 	now := time.Date(2026, 5, 5, 8, 9, 0, 0, time.UTC)
 	service := NewServiceWithArchive(archive)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:           "restore_room",
 		WhitePlayerSecret: "white-secret",
 		BlackPlayerSecret: "black-secret",
 	}, now)
 
-	afterWhite, err := service.ApplyIntent(contracts.PlayerIntent{
+	afterWhite, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:         "make_move",
 		MatchID:      "restore_room",
 		PlayerID:     "white_player",
@@ -268,7 +313,7 @@ func TestArchivedMatchReloadKeepsSecretsAndReverseHistory(t *testing.T) {
 		t.Fatalf("expected white move to succeed, got %v", err)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:         "make_move",
 		MatchID:      "restore_room",
 		PlayerID:     "black_player",
@@ -293,7 +338,7 @@ func TestArchivedMatchReloadKeepsSecretsAndReverseHistory(t *testing.T) {
 		t.Fatalf("expected match state to survive restart, got %#v", reloaded.Match)
 	}
 
-	if _, err := restarted.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(restarted, contracts.PlayerIntent{
 		Type:         "make_move",
 		MatchID:      "restore_room",
 		PlayerID:     "white_player",
@@ -305,7 +350,7 @@ func TestArchivedMatchReloadKeepsSecretsAndReverseHistory(t *testing.T) {
 	}
 
 	reverseCardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "reverse")
-	reversed, err := restarted.ApplyIntent(contracts.PlayerIntent{
+	reversed, err := applyTestIntent(restarted, contracts.PlayerIntent{
 		Type:         "play_card",
 		MatchID:      "restore_room",
 		PlayerID:     "white_player",
@@ -325,9 +370,9 @@ func TestPersistedArchiveSnapshotKeepsFullEventHistory(t *testing.T) {
 	service := NewServiceWithArchive(archive)
 	now := time.Date(2026, 5, 5, 8, 10, 0, 0, time.UTC)
 
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "archive_events"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "archive_events"}, now)
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "archive_events",
 		PlayerID: "white_player",
@@ -337,7 +382,7 @@ func TestPersistedArchiveSnapshotKeepsFullEventHistory(t *testing.T) {
 		t.Fatalf("expected first move to succeed, got %v", err)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "archive_events",
 		PlayerID: "black_player",
@@ -363,9 +408,9 @@ func TestPersistedArchiveSnapshotKeepsFullEventHistory(t *testing.T) {
 func TestPlayCardRejectsUnknownPlayerID(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "bad_player"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "bad_player"}, now)
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "bad_player",
 		PlayerID: "mystery_actor",
@@ -379,12 +424,12 @@ func TestPlayCardRejectsUnknownPlayerID(t *testing.T) {
 func TestFrozenPieceCannotMove(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "frozen"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "frozen"}, now)
 
 	state := service.matches["frozen"]
 	state.Board[1][4].Frozen = true
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "frozen",
 		PlayerID: "white_player",
@@ -399,7 +444,7 @@ func TestFrozenPieceCannotMove(t *testing.T) {
 func TestShieldedCaptureIsBlockedAndShieldRemoved(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "shielded"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "shielded"}, now)
 
 	state := service.matches["shielded"]
 	state.Board = emptyBoard()
@@ -410,7 +455,7 @@ func TestShieldedCaptureIsBlockedAndShieldRemoved(t *testing.T) {
 	shieldTurn := 2
 	state.Board[4][4] = &contracts.Piece{Type: "knight", Color: "black", Shielded: true, ShieldTurn: &shieldTurn}
 
-	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "shielded",
 		PlayerID: "white_player",
@@ -438,9 +483,9 @@ func TestShieldedCaptureIsBlockedAndShieldRemoved(t *testing.T) {
 func TestDrawOfferCannotBeAcceptedByOfferingSide(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "draw_self_accept"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "draw_self_accept"}, now)
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "offer_draw",
 		MatchID:  "draw_self_accept",
 		PlayerID: "white_player",
@@ -449,7 +494,7 @@ func TestDrawOfferCannotBeAcceptedByOfferingSide(t *testing.T) {
 	}
 
 	accept := true
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "respond_draw",
 		MatchID:  "draw_self_accept",
 		PlayerID: "white_player",
@@ -463,9 +508,9 @@ func TestDrawOfferCannotBeAcceptedByOfferingSide(t *testing.T) {
 func TestAbortFinishesEarlyMatch(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "abort_early"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "abort_early"}, now)
 
-	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "abort",
 		MatchID:  "abort_early",
 		PlayerID: "white_player",
@@ -485,9 +530,9 @@ func TestAbortFinishesEarlyMatch(t *testing.T) {
 func TestAbortRejectedAfterBlackFirstReply(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "abort_late"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "abort_late"}, now)
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "abort_late",
 		PlayerID: "white_player",
@@ -497,7 +542,7 @@ func TestAbortRejectedAfterBlackFirstReply(t *testing.T) {
 		t.Fatalf("expected white opening move to succeed, got %v", err)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "abort_late",
 		PlayerID: "black_player",
@@ -507,7 +552,7 @@ func TestAbortRejectedAfterBlackFirstReply(t *testing.T) {
 		t.Fatalf("expected black reply to succeed, got %v", err)
 	}
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "abort",
 		MatchID:  "abort_late",
 		PlayerID: "white_player",
@@ -520,7 +565,7 @@ func TestAbortRejectedAfterBlackFirstReply(t *testing.T) {
 func TestPawnPromotionResolvedByBackend(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "promotion"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "promotion"}, now)
 
 	state := service.matches["promotion"]
 	state.Board = emptyBoard()
@@ -528,7 +573,7 @@ func TestPawnPromotionResolvedByBackend(t *testing.T) {
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[6][0] = &contracts.Piece{Type: "pawn", Color: "white"}
 
-	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:      "make_move",
 		MatchID:   "promotion",
 		PlayerID:  "white_player",
@@ -551,9 +596,9 @@ func TestPawnPromotionResolvedByBackend(t *testing.T) {
 func TestClockTimeoutFinishesMatchBeforeLateIntent(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "timeout", ClockSeconds: 1}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "timeout", ClockSeconds: 1}, now)
 
-	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "timeout",
 		PlayerID: "white_player",
@@ -575,7 +620,7 @@ func TestClockTimeoutFinishesMatchBeforeLateIntent(t *testing.T) {
 func TestMoveCheckmateFinishesAuthoritatively(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 5, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "mate_finish"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "mate_finish"}, now)
 
 	state := service.matches["mate_finish"]
 	state.Board = emptyBoard()
@@ -590,7 +635,7 @@ func TestMoveCheckmateFinishesAuthoritatively(t *testing.T) {
 	state.MoveHistory = nil
 	state.History = []contracts.PositionState{capturePositionState(state)}
 
-	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "mate_finish",
 		PlayerID: "white_player",
@@ -613,7 +658,7 @@ func TestMoveCheckmateFinishesAuthoritatively(t *testing.T) {
 func TestFiftyMoveRuleFinishesAuthoritatively(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 10, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fifty_move_finish"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fifty_move_finish"}, now)
 
 	state := service.matches["fifty_move_finish"]
 	state.Board = emptyBoard()
@@ -626,7 +671,7 @@ func TestFiftyMoveRuleFinishesAuthoritatively(t *testing.T) {
 	state.MoveHistory = nil
 	state.History = []contracts.PositionState{capturePositionState(state)}
 
-	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "fifty_move_finish",
 		PlayerID: "white_player",
@@ -649,7 +694,7 @@ func TestFiftyMoveRuleFinishesAuthoritatively(t *testing.T) {
 func TestThreefoldRepetitionFinishesAuthoritatively(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 15, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "threefold_finish"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "threefold_finish"}, now)
 
 	state := service.matches["threefold_finish"]
 	state.Board = emptyBoard()
@@ -675,7 +720,7 @@ func TestThreefoldRepetitionFinishesAuthoritatively(t *testing.T) {
 		repeated,
 	}
 
-	snapshot, err := service.ApplyIntent(contracts.PlayerIntent{
+	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "threefold_finish",
 		PlayerID: "white_player",
@@ -698,20 +743,16 @@ func TestThreefoldRepetitionFinishesAuthoritatively(t *testing.T) {
 func TestPresenceHeartbeatMarksSeatsConnectedInSnapshot(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 30, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{
+	createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:      "presence_connected",
 		WhiteGuestID: "guest-white",
 		BlackGuestID: "guest-black",
 	}, now)
 
-	if err := service.HeartbeatPresence("presence_connected", contracts.MatchPresenceRequest{
-		PlayerID: "guest-white",
-	}, now.Add(3*time.Second)); err != nil {
+	if err := service.HeartbeatPresence("presence_connected", testPresence("guest-white"), now.Add(3*time.Second)); err != nil {
 		t.Fatalf("expected white heartbeat to succeed, got %v", err)
 	}
-	if err := service.HeartbeatPresence("presence_connected", contracts.MatchPresenceRequest{
-		PlayerID: "guest-black",
-	}, now.Add(4*time.Second)); err != nil {
+	if err := service.HeartbeatPresence("presence_connected", testPresence("guest-black"), now.Add(4*time.Second)); err != nil {
 		t.Fatalf("expected black heartbeat to succeed, got %v", err)
 	}
 
@@ -730,19 +771,19 @@ func TestPresenceHeartbeatMarksSeatsConnectedInSnapshot(t *testing.T) {
 func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 35, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{
+	createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:      "presence_abandon",
 		WhiteGuestID: "guest-white",
 		BlackGuestID: "guest-black",
 	}, now)
 
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-white"}, now); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", testPresence("guest-white"), now); err != nil {
 		t.Fatalf("expected white heartbeat to succeed, got %v", err)
 	}
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-black"}, now); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", testPresence("guest-black"), now); err != nil {
 		t.Fatalf("expected black heartbeat to succeed, got %v", err)
 	}
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-black"}, now.Add(20*time.Second)); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", testPresence("guest-black"), now.Add(20*time.Second)); err != nil {
 		t.Fatalf("expected follow-up black heartbeat to succeed, got %v", err)
 	}
 
@@ -758,7 +799,7 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 		t.Fatalf("expected match to stay active during grace, got %q", graceSnapshot.Match.Status)
 	}
 
-	if err := service.HeartbeatPresence("presence_abandon", contracts.MatchPresenceRequest{PlayerID: "guest-black"}, now.Add(65*time.Second)); err != nil {
+	if err := service.HeartbeatPresence("presence_abandon", testPresence("guest-black"), now.Add(65*time.Second)); err != nil {
 		t.Fatalf("expected black heartbeat during grace to succeed, got %v", err)
 	}
 	service.collectAndBroadcast(now.Add(80 * time.Second))
@@ -770,10 +811,11 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 	if finishedSnapshot.Match.Status != "finished" || finishedSnapshot.Match.Winner != "black" || finishedSnapshot.Match.FinishReason != "abandon" {
 		t.Fatalf("expected black to win abandoned match, got status=%q winner=%q reason=%q", finishedSnapshot.Match.Status, finishedSnapshot.Match.Winner, finishedSnapshot.Match.FinishReason)
 	}
-	if len(finishedSnapshot.Events) == 0 {
+	events := service.events["presence_abandon"]
+	if len(events) == 0 {
 		t.Fatalf("expected abandon finish event to be recorded")
 	}
-	lastEvent := finishedSnapshot.Events[len(finishedSnapshot.Events)-1]
+	lastEvent := events[len(events)-1]
 	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "abandon" || lastEvent.Payload["disconnected"] != "white" {
 		t.Fatalf("expected abandon finish payload, got %#v", lastEvent)
 	}
@@ -782,13 +824,13 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 func TestDisconnectGraceFinishesBothDisconnectedNoMoveMatchAsAbort(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{
+	createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:      "presence_both_abort",
 		WhiteGuestID: "guest-white",
 		BlackGuestID: "guest-black",
 	}, now)
 
-	service.collectAndBroadcast(now.Add(presenceHeartbeatTimeout + disconnectGracePeriod + time.Second))
+	service.collectAndBroadcast(now.Add(presenceHeartbeatTimeout + disconnectGraceBothPeriod + time.Second))
 
 	finishedSnapshot, err := service.GetMatch("presence_both_abort")
 	if err != nil {
@@ -797,7 +839,11 @@ func TestDisconnectGraceFinishesBothDisconnectedNoMoveMatchAsAbort(t *testing.T)
 	if finishedSnapshot.Match.Status != "finished" || finishedSnapshot.Match.Winner != "aborted" || finishedSnapshot.Match.FinishReason != "abort" {
 		t.Fatalf("expected both-disconnected no-move room to abort, got status=%q winner=%q reason=%q", finishedSnapshot.Match.Status, finishedSnapshot.Match.Winner, finishedSnapshot.Match.FinishReason)
 	}
-	lastEvent := finishedSnapshot.Events[len(finishedSnapshot.Events)-1]
+	events := service.events["presence_both_abort"]
+	if len(events) == 0 {
+		t.Fatalf("expected both-disconnected finish event to be recorded")
+	}
+	lastEvent := events[len(events)-1]
 	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "abort" || lastEvent.Payload["disconnected"] != disconnectGraceBoth {
 		t.Fatalf("expected both-disconnected abort payload, got %#v", lastEvent)
 	}
@@ -814,12 +860,12 @@ func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 
 	base := time.Now().Add(-2 * time.Hour).UTC()
 	service := NewServiceWithArchive(archive)
-	service.CreateMatch(contracts.CreateMatchRequest{
+	createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:      "reconcile_room",
 		WhiteGuestID: "guest-white",
 		BlackGuestID: "guest-black",
 	}, base)
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "reconcile_room",
 		PlayerID: "guest-white",
@@ -850,7 +896,11 @@ func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 	if reconciled.Match.Status != "finished" || reconciled.Match.Winner != "draw" || reconciled.Match.FinishReason != "abandon" {
 		t.Fatalf("expected restarted active room to reconcile into a draw abandon, got status=%q winner=%q reason=%q", reconciled.Match.Status, reconciled.Match.Winner, reconciled.Match.FinishReason)
 	}
-	lastEvent := reconciled.Events[len(reconciled.Events)-1]
+	events := restarted.events["reconcile_room"]
+	if len(events) == 0 {
+		t.Fatalf("expected reconciled finish event to be recorded")
+	}
+	lastEvent := events[len(events)-1]
 	if lastEvent.Type != "match_finished" || lastEvent.Payload["result"] != "abandon" || lastEvent.Payload["disconnected"] != disconnectGraceBoth {
 		t.Fatalf("expected reconciled finish payload to reflect both disconnected players, got %#v", lastEvent)
 	}
@@ -859,10 +909,10 @@ func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 func TestPlayCardCreatesPendingFreezeSelection(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "freeze_card"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "freeze_card"}, now)
 
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "freeze")
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "freeze_card",
 		PlayerID: "white_player",
@@ -879,10 +929,10 @@ func TestPlayCardCreatesPendingFreezeSelection(t *testing.T) {
 func TestSelectTargetAppliesFreezeAndConsumesCard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "freeze_apply"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "freeze_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "freeze")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "freeze_apply",
 		PlayerID: "white_player",
@@ -891,7 +941,7 @@ func TestSelectTargetAppliesFreezeAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "freeze_apply",
 		PlayerID: "white_player",
@@ -915,10 +965,10 @@ func TestSelectTargetAppliesFreezeAndConsumesCard(t *testing.T) {
 func TestSelectTargetAppliesShieldAndSetsExpiry(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "shield_apply"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "shield_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "shield")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "shield_apply",
 		PlayerID: "white_player",
@@ -927,7 +977,7 @@ func TestSelectTargetAppliesShieldAndSetsExpiry(t *testing.T) {
 		t.Fatalf("expected play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "shield_apply",
 		PlayerID: "white_player",
@@ -949,10 +999,10 @@ func TestSelectTargetAppliesShieldAndSetsExpiry(t *testing.T) {
 func TestPlayCardCreatesPendingSniperSelection(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "sniper_card"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "sniper_card"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "sniper")
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "sniper_card",
 		PlayerID: "white_player",
@@ -969,10 +1019,10 @@ func TestPlayCardCreatesPendingSniperSelection(t *testing.T) {
 func TestSelectTargetAppliesSniperAndConsumesCard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "sniper_apply"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "sniper_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "sniper")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "sniper_apply",
 		PlayerID: "white_player",
@@ -981,7 +1031,7 @@ func TestSelectTargetAppliesSniperAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "sniper_apply",
 		PlayerID: "white_player",
@@ -1005,7 +1055,7 @@ func TestSelectTargetAppliesSniperAndConsumesCard(t *testing.T) {
 func TestSelectTargetRejectsSniperIfRemovalChecksEnemyKing(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "sniper_enemy_check"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "sniper_enemy_check"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "sniper")
 
 	state := service.matches["sniper_enemy_check"]
@@ -1015,7 +1065,7 @@ func TestSelectTargetRejectsSniperIfRemovalChecksEnemyKing(t *testing.T) {
 	state.Board[7][0] = &contracts.Piece{Type: "rook", Color: "white"}
 	state.Board[7][2] = &contracts.Piece{Type: "bishop", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "sniper_enemy_check",
 		PlayerID: "white_player",
@@ -1024,7 +1074,7 @@ func TestSelectTargetRejectsSniperIfRemovalChecksEnemyKing(t *testing.T) {
 		t.Fatalf("expected play_card to succeed, got %v", err)
 	}
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "sniper_enemy_check",
 		PlayerID: "white_player",
@@ -1038,7 +1088,7 @@ func TestSelectTargetRejectsSniperIfRemovalChecksEnemyKing(t *testing.T) {
 func TestSelectTargetAppliesBadSniperAndConsumesCard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "badsniper_apply"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "badsniper_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "badsniper")
 
 	state := service.matches["badsniper_apply"]
@@ -1048,7 +1098,7 @@ func TestSelectTargetAppliesBadSniperAndConsumesCard(t *testing.T) {
 	state.Board[2][2] = &contracts.Piece{Type: "knight", Color: "white"}
 	state.Board[6][6] = &contracts.Piece{Type: "rook", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "badsniper_apply",
 		PlayerID: "white_player",
@@ -1057,7 +1107,7 @@ func TestSelectTargetAppliesBadSniperAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "badsniper_apply",
 		PlayerID: "white_player",
@@ -1081,10 +1131,10 @@ func TestSelectTargetAppliesBadSniperAndConsumesCard(t *testing.T) {
 func TestPromoteFlowBuildsOptionsThenAppliesSelection(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "promote_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "promote_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "promote")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "promote_flow",
 		PlayerID: "white_player",
@@ -1093,7 +1143,7 @@ func TestPromoteFlowBuildsOptionsThenAppliesSelection(t *testing.T) {
 		t.Fatalf("expected promote play_card to succeed, got %v", err)
 	}
 
-	targeted, err := service.ApplyIntent(contracts.PlayerIntent{
+	targeted, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "promote_flow",
 		PlayerID: "white_player",
@@ -1110,7 +1160,7 @@ func TestPromoteFlowBuildsOptionsThenAppliesSelection(t *testing.T) {
 		t.Fatalf("expected promote options to include queen, got %#v", targeted.Match.PendingCard.Options)
 	}
 
-	resolved, err := service.ApplyIntent(contracts.PlayerIntent{
+	resolved, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:        "select_target",
 		MatchID:     "promote_flow",
 		PlayerID:    "white_player",
@@ -1134,7 +1184,7 @@ func TestPromoteFlowBuildsOptionsThenAppliesSelection(t *testing.T) {
 func TestDemoteFlowRejectsMissingSelection(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "demote_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "demote_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "demote")
 
 	state := service.matches["demote_flow"]
@@ -1143,7 +1193,7 @@ func TestDemoteFlowRejectsMissingSelection(t *testing.T) {
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[3][3] = &contracts.Piece{Type: "queen", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "demote_flow",
 		PlayerID: "white_player",
@@ -1152,7 +1202,7 @@ func TestDemoteFlowRejectsMissingSelection(t *testing.T) {
 		t.Fatalf("expected demote play_card to succeed, got %v", err)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "demote_flow",
 		PlayerID: "white_player",
@@ -1161,7 +1211,7 @@ func TestDemoteFlowRejectsMissingSelection(t *testing.T) {
 		t.Fatalf("expected demote target step to succeed, got %v", err)
 	}
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "demote_flow",
 		PlayerID: "white_player",
@@ -1174,10 +1224,10 @@ func TestDemoteFlowRejectsMissingSelection(t *testing.T) {
 func TestPromoteHimFlowBuildsOptionsAndAppliesSelection(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "promotehim_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "promotehim_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "promotehim")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "promotehim_flow",
 		PlayerID: "white_player",
@@ -1186,7 +1236,7 @@ func TestPromoteHimFlowBuildsOptionsAndAppliesSelection(t *testing.T) {
 		t.Fatalf("expected promotehim play_card to succeed, got %v", err)
 	}
 
-	targeted, err := service.ApplyIntent(contracts.PlayerIntent{
+	targeted, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "promotehim_flow",
 		PlayerID: "white_player",
@@ -1203,7 +1253,7 @@ func TestPromoteHimFlowBuildsOptionsAndAppliesSelection(t *testing.T) {
 		t.Fatalf("expected promotehim options to include queen, got %#v", targeted.Match.PendingCard.Options)
 	}
 
-	resolved, err := service.ApplyIntent(contracts.PlayerIntent{
+	resolved, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:        "select_target",
 		MatchID:     "promotehim_flow",
 		PlayerID:    "white_player",
@@ -1227,7 +1277,7 @@ func TestPromoteHimFlowBuildsOptionsAndAppliesSelection(t *testing.T) {
 func TestDemoteHimCanTargetOwnPieceAndApplySelection(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "demotehim_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "demotehim_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "demotehim")
 
 	state := service.matches["demotehim_flow"]
@@ -1236,7 +1286,7 @@ func TestDemoteHimCanTargetOwnPieceAndApplySelection(t *testing.T) {
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[3][3] = &contracts.Piece{Type: "queen", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "demotehim_flow",
 		PlayerID: "white_player",
@@ -1245,7 +1295,7 @@ func TestDemoteHimCanTargetOwnPieceAndApplySelection(t *testing.T) {
 		t.Fatalf("expected demotehim play_card to succeed, got %v", err)
 	}
 
-	targeted, err := service.ApplyIntent(contracts.PlayerIntent{
+	targeted, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "demotehim_flow",
 		PlayerID: "white_player",
@@ -1259,7 +1309,7 @@ func TestDemoteHimCanTargetOwnPieceAndApplySelection(t *testing.T) {
 		t.Fatalf("expected demotehim options to include pawn, got %#v", targeted.Match.PendingCard.Options)
 	}
 
-	resolved, err := service.ApplyIntent(contracts.PlayerIntent{
+	resolved, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:        "select_target",
 		MatchID:     "demotehim_flow",
 		PlayerID:    "white_player",
@@ -1280,10 +1330,10 @@ func TestDemoteHimCanTargetOwnPieceAndApplySelection(t *testing.T) {
 func TestTeleportFlowSelectsSourceThenDestination(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "teleport_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "teleport_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "teleport")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "teleport_flow",
 		PlayerID: "white_player",
@@ -1292,7 +1342,7 @@ func TestTeleportFlowSelectsSourceThenDestination(t *testing.T) {
 		t.Fatalf("expected teleport play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "teleport_flow",
 		PlayerID: "white_player",
@@ -1306,7 +1356,7 @@ func TestTeleportFlowSelectsSourceThenDestination(t *testing.T) {
 		t.Fatalf("expected teleport pending source to be stored, got %#v", step1.Match.PendingCard)
 	}
 
-	step2, err := service.ApplyIntent(contracts.PlayerIntent{
+	step2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "teleport_flow",
 		PlayerID: "white_player",
@@ -1333,7 +1383,7 @@ func TestTeleportFlowSelectsSourceThenDestination(t *testing.T) {
 func TestJumpFlowSelectsSourceThenDestination(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "jump_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "jump_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "jump")
 
 	state := service.matches["jump_flow"]
@@ -1343,7 +1393,7 @@ func TestJumpFlowSelectsSourceThenDestination(t *testing.T) {
 	state.Board[3][3] = &contracts.Piece{Type: "rook", Color: "white"}
 	state.Board[3][4] = &contracts.Piece{Type: "pawn", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "jump_flow",
 		PlayerID: "white_player",
@@ -1352,7 +1402,7 @@ func TestJumpFlowSelectsSourceThenDestination(t *testing.T) {
 		t.Fatalf("expected jump play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "jump_flow",
 		PlayerID: "white_player",
@@ -1366,7 +1416,7 @@ func TestJumpFlowSelectsSourceThenDestination(t *testing.T) {
 		t.Fatalf("expected jump pending source to be stored, got %#v", step1.Match.PendingCard)
 	}
 
-	step2, err := service.ApplyIntent(contracts.PlayerIntent{
+	step2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "jump_flow",
 		PlayerID: "white_player",
@@ -1393,7 +1443,7 @@ func TestJumpFlowSelectsSourceThenDestination(t *testing.T) {
 func TestSwapMeFlowSelectsTwoOwnedPieces(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "swapme_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "swapme_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swapme")
 
 	state := service.matches["swapme_flow"]
@@ -1403,7 +1453,7 @@ func TestSwapMeFlowSelectsTwoOwnedPieces(t *testing.T) {
 	state.Board[2][2] = &contracts.Piece{Type: "knight", Color: "white"}
 	state.Board[4][4] = &contracts.Piece{Type: "rook", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "swapme_flow",
 		PlayerID: "white_player",
@@ -1412,7 +1462,7 @@ func TestSwapMeFlowSelectsTwoOwnedPieces(t *testing.T) {
 		t.Fatalf("expected swapme play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "swapme_flow",
 		PlayerID: "white_player",
@@ -1426,7 +1476,7 @@ func TestSwapMeFlowSelectsTwoOwnedPieces(t *testing.T) {
 		t.Fatalf("expected swapme pending first square to be stored, got %#v", step1.Match.PendingCard)
 	}
 
-	step2, err := service.ApplyIntent(contracts.PlayerIntent{
+	step2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "swapme_flow",
 		PlayerID: "white_player",
@@ -1453,7 +1503,7 @@ func TestSwapMeFlowSelectsTwoOwnedPieces(t *testing.T) {
 func TestSwapUsFlowSelectsOwnedThenEnemyPiece(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "swapus_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "swapus_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swapus")
 
 	state := service.matches["swapus_flow"]
@@ -1463,7 +1513,7 @@ func TestSwapUsFlowSelectsOwnedThenEnemyPiece(t *testing.T) {
 	state.Board[2][2] = &contracts.Piece{Type: "rook", Color: "white"}
 	state.Board[5][5] = &contracts.Piece{Type: "knight", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "swapus_flow",
 		PlayerID: "white_player",
@@ -1472,7 +1522,7 @@ func TestSwapUsFlowSelectsOwnedThenEnemyPiece(t *testing.T) {
 		t.Fatalf("expected swapus play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "swapus_flow",
 		PlayerID: "white_player",
@@ -1486,7 +1536,7 @@ func TestSwapUsFlowSelectsOwnedThenEnemyPiece(t *testing.T) {
 		t.Fatalf("expected swapus pending first square to be stored, got %#v", step1.Match.PendingCard)
 	}
 
-	step2, err := service.ApplyIntent(contracts.PlayerIntent{
+	step2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "swapus_flow",
 		PlayerID: "white_player",
@@ -1513,7 +1563,7 @@ func TestSwapUsFlowSelectsOwnedThenEnemyPiece(t *testing.T) {
 func TestSwapHimFlowSelectsTwoEnemyPieces(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "swaphim_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "swaphim_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swaphim")
 
 	state := service.matches["swaphim_flow"]
@@ -1523,7 +1573,7 @@ func TestSwapHimFlowSelectsTwoEnemyPieces(t *testing.T) {
 	state.Board[5][5] = &contracts.Piece{Type: "knight", Color: "black"}
 	state.Board[6][4] = &contracts.Piece{Type: "rook", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "swaphim_flow",
 		PlayerID: "white_player",
@@ -1532,7 +1582,7 @@ func TestSwapHimFlowSelectsTwoEnemyPieces(t *testing.T) {
 		t.Fatalf("expected swaphim play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "swaphim_flow",
 		PlayerID: "white_player",
@@ -1546,7 +1596,7 @@ func TestSwapHimFlowSelectsTwoEnemyPieces(t *testing.T) {
 		t.Fatalf("expected swaphim pending first square to be stored, got %#v", step1.Match.PendingCard)
 	}
 
-	step2, err := service.ApplyIntent(contracts.PlayerIntent{
+	step2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "swaphim_flow",
 		PlayerID: "white_player",
@@ -1573,7 +1623,7 @@ func TestSwapHimFlowSelectsTwoEnemyPieces(t *testing.T) {
 func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "borrow_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "borrow_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "borrow")
 
 	state := service.matches["borrow_flow"]
@@ -1582,7 +1632,7 @@ func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[3][3] = &contracts.Piece{Type: "rook", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "borrow_flow",
 		PlayerID: "white_player",
@@ -1591,7 +1641,7 @@ func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 		t.Fatalf("expected borrow play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "borrow_flow",
 		PlayerID: "white_player",
@@ -1608,7 +1658,7 @@ func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 		t.Fatalf("expected one borrow card to be consumed, got %d cards", len(result.Match.WhiteHand))
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "borrow_flow",
 		PlayerID: "white_player",
@@ -1626,7 +1676,7 @@ func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "mindcontrol_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "mindcontrol_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "mindcontrol")
 
 	state := service.matches["mindcontrol_flow"]
@@ -1635,7 +1685,7 @@ func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[3][3] = &contracts.Piece{Type: "rook", Color: "black"}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "mindcontrol_flow",
 		PlayerID: "white_player",
@@ -1648,7 +1698,7 @@ func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 		t.Fatalf("expected pending mindcontrol state after play_card")
 	}
 
-	result, err = service.ApplyIntent(contracts.PlayerIntent{
+	result, err = applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "mindcontrol_flow",
 		PlayerID: "white_player",
@@ -1665,7 +1715,7 @@ func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 		t.Fatalf("expected one mindcontrol card to be consumed, got %d cards", len(result.Match.WhiteHand))
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "mindcontrol_flow",
 		PlayerID: "white_player",
@@ -1683,7 +1733,7 @@ func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 func TestParasiteLinksHostToEqualValueEnemyPiece(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "parasite_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "parasite_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "parasite")
 
 	state := service.matches["parasite_flow"]
@@ -1693,7 +1743,7 @@ func TestParasiteLinksHostToEqualValueEnemyPiece(t *testing.T) {
 	state.Board[3][3] = &contracts.Piece{Type: "rook", Color: "white"}
 	state.Board[5][5] = &contracts.Piece{Type: "rook", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "parasite_flow",
 		PlayerID: "white_player",
@@ -1702,7 +1752,7 @@ func TestParasiteLinksHostToEqualValueEnemyPiece(t *testing.T) {
 		t.Fatalf("expected parasite play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "parasite_flow",
 		PlayerID: "white_player",
@@ -1716,7 +1766,7 @@ func TestParasiteLinksHostToEqualValueEnemyPiece(t *testing.T) {
 		t.Fatalf("expected parasite host value metadata, got %#v", step1.Match.PendingCard)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "parasite_flow",
 		PlayerID: "white_player",
@@ -1737,7 +1787,7 @@ func TestParasiteLinksHostToEqualValueEnemyPiece(t *testing.T) {
 func TestParasiteTriggerRemovesHostWhenLinkedTargetDies(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "parasite_trigger"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "parasite_trigger"}, now)
 
 	state := service.matches["parasite_trigger"]
 	state.Board = emptyBoard()
@@ -1747,7 +1797,7 @@ func TestParasiteTriggerRemovesHostWhenLinkedTargetDies(t *testing.T) {
 	state.Board[4][4] = &contracts.Piece{Type: "bishop", Color: "white"}
 	state.Board[5][5] = &contracts.Piece{Type: "rook", Color: "black"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "parasite_trigger",
 		PlayerID: "white_player",
@@ -1765,7 +1815,7 @@ func TestParasiteTriggerRemovesHostWhenLinkedTargetDies(t *testing.T) {
 func TestParasiteRejectedCaptureDoesNotMutateBoard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "parasite_reject"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "parasite_reject"}, now)
 
 	state := service.matches["parasite_reject"]
 	state.Board = emptyBoard()
@@ -1776,7 +1826,7 @@ func TestParasiteRejectedCaptureDoesNotMutateBoard(t *testing.T) {
 	state.Board[0][7] = &contracts.Piece{Type: "rook", Color: "black"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "parasite_reject",
 		PlayerID: "white_player",
@@ -1801,7 +1851,7 @@ func TestParasiteRejectedCaptureDoesNotMutateBoard(t *testing.T) {
 func TestCloneFlowSelectsSourceThenAdjacentEmptySquare(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "clone_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "clone_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "clone")
 
 	state := service.matches["clone_flow"]
@@ -1810,7 +1860,7 @@ func TestCloneFlowSelectsSourceThenAdjacentEmptySquare(t *testing.T) {
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[3][3] = &contracts.Piece{Type: "knight", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "clone_flow",
 		PlayerID: "white_player",
@@ -1819,7 +1869,7 @@ func TestCloneFlowSelectsSourceThenAdjacentEmptySquare(t *testing.T) {
 		t.Fatalf("expected clone play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "clone_flow",
 		PlayerID: "white_player",
@@ -1833,7 +1883,7 @@ func TestCloneFlowSelectsSourceThenAdjacentEmptySquare(t *testing.T) {
 		t.Fatalf("expected clone pending source to be stored, got %#v", step1.Match.PendingCard)
 	}
 
-	step2, err := service.ApplyIntent(contracts.PlayerIntent{
+	step2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "clone_flow",
 		PlayerID: "white_player",
@@ -1860,10 +1910,10 @@ func TestCloneFlowSelectsSourceThenAdjacentEmptySquare(t *testing.T) {
 func TestLavaGroundPlacementConsumesCardAndStoresTrap(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "lava_place"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "lava_place"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "lavaground")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "lava_place",
 		PlayerID: "white_player",
@@ -1872,7 +1922,7 @@ func TestLavaGroundPlacementConsumesCardAndStoresTrap(t *testing.T) {
 		t.Fatalf("expected lavaground play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "lava_place",
 		PlayerID: "white_player",
@@ -1897,7 +1947,7 @@ func TestLavaGroundPlacementConsumesCardAndStoresTrap(t *testing.T) {
 func TestLavaGroundBurnsLandingPieceAndTicksOtherTraps(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "lava_trigger"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "lava_trigger"}, now)
 
 	state := service.matches["lava_trigger"]
 	state.Board = emptyBoard()
@@ -1910,7 +1960,7 @@ func TestLavaGroundBurnsLandingPieceAndTicksOtherTraps(t *testing.T) {
 		{Row: 5, Col: 5, MovesLeft: 2},
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "lava_trigger",
 		PlayerID: "white_player",
@@ -1939,7 +1989,7 @@ func TestLavaGroundBurnsLandingPieceAndTicksOtherTraps(t *testing.T) {
 func TestInvisibleRemovesPieceFromBoardAndStoresGhostState(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "invisible_apply"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "invisible_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "invisible")
 
 	state := service.matches["invisible_apply"]
@@ -1948,7 +1998,7 @@ func TestInvisibleRemovesPieceFromBoardAndStoresGhostState(t *testing.T) {
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[0][0] = &contracts.Piece{Type: "rook", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "invisible_apply",
 		PlayerID: "white_player",
@@ -1957,7 +2007,7 @@ func TestInvisibleRemovesPieceFromBoardAndStoresGhostState(t *testing.T) {
 		t.Fatalf("expected invisible play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "invisible_apply",
 		PlayerID: "white_player",
@@ -1984,7 +2034,7 @@ func TestInvisibleRemovesPieceFromBoardAndStoresGhostState(t *testing.T) {
 func TestInvisibleMoveMaterializesWhenGivingCheck(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "invisible_move"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "invisible_move"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "invisible")
 
 	state := service.matches["invisible_move"]
@@ -1993,7 +2043,7 @@ func TestInvisibleMoveMaterializesWhenGivingCheck(t *testing.T) {
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[0][0] = &contracts.Piece{Type: "rook", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "invisible_move",
 		PlayerID: "white_player",
@@ -2001,7 +2051,7 @@ func TestInvisibleMoveMaterializesWhenGivingCheck(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("expected invisible play_card to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "invisible_move",
 		PlayerID: "white_player",
@@ -2010,7 +2060,7 @@ func TestInvisibleMoveMaterializesWhenGivingCheck(t *testing.T) {
 		t.Fatalf("expected invisible target selection to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "invisible_move",
 		PlayerID: "white_player",
@@ -2035,7 +2085,7 @@ func TestInvisibleMoveMaterializesWhenGivingCheck(t *testing.T) {
 func TestUnabomberAttachesBombAndConsumesCard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "unabomber_apply"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "unabomber_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "unabomber")
 
 	state := service.matches["unabomber_apply"]
@@ -2044,7 +2094,7 @@ func TestUnabomberAttachesBombAndConsumesCard(t *testing.T) {
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	state.Board[1][0] = &contracts.Piece{Type: "pawn", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "unabomber_apply",
 		PlayerID: "white_player",
@@ -2053,7 +2103,7 @@ func TestUnabomberAttachesBombAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected unabomber play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "unabomber_apply",
 		PlayerID: "white_player",
@@ -2077,7 +2127,7 @@ func TestUnabomberAttachesBombAndConsumesCard(t *testing.T) {
 func TestUnabomberExplodesOnWhiteTurnHandoff(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "unabomber_explode"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "unabomber_explode"}, now)
 
 	state := service.matches["unabomber_explode"]
 	state.Board = emptyBoard()
@@ -2093,7 +2143,7 @@ func TestUnabomberExplodesOnWhiteTurnHandoff(t *testing.T) {
 	state.Clock.RunningFor = "black"
 	state.Clock.StartedAt = &startedAt
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "unabomber_explode",
 		PlayerID: "black_player",
@@ -2124,7 +2174,7 @@ func TestUnabomberExplodesOnWhiteTurnHandoff(t *testing.T) {
 func TestUnabomberTrackerFollowsMovedCarrier(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 5, 0, 0, time.UTC)
-	service.CreateMatch(contracts.CreateMatchRequest{MatchID: "unabomber_tracker"}, now)
+	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "unabomber_tracker"}, now)
 
 	state := service.matches["unabomber_tracker"]
 	state.Board = emptyBoard()
@@ -2136,7 +2186,7 @@ func TestUnabomberTrackerFollowsMovedCarrier(t *testing.T) {
 	state.Clock.RunningFor = "white"
 	state.Clock.StartedAt = &startedAt
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "unabomber_tracker",
 		PlayerID: "white_player",
@@ -2157,7 +2207,7 @@ func TestUnabomberTrackerFollowsMovedCarrier(t *testing.T) {
 func TestRoundDrawAddsCardsOnAuthoritativeSchedule(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 10, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{
 		MatchID:         "round_draw_schedule",
 		StarterHandMode: "starter_three",
 	}, now)
@@ -2173,7 +2223,7 @@ func TestRoundDrawAddsCardsOnAuthoritativeSchedule(t *testing.T) {
 	state.Clock.RunningFor = "black"
 	state.Clock.StartedAt = &startedAt
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "round_draw_schedule",
 		PlayerID: "black_player",
@@ -2206,7 +2256,7 @@ func TestRoundDrawAddsCardsOnAuthoritativeSchedule(t *testing.T) {
 func TestHalfFuseSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "halffuse_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "halffuse_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "halffuse")
 
 	state := service.matches["halffuse_flow"]
@@ -2216,7 +2266,7 @@ func TestHalfFuseSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 	state.Board[3][3] = &contracts.Piece{Type: "pawn", Color: "white"}
 	state.Board[3][4] = &contracts.Piece{Type: "knight", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "halffuse_flow",
 		PlayerID: "white_player",
@@ -2225,7 +2275,7 @@ func TestHalfFuseSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 		t.Fatalf("expected halffuse play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "halffuse_flow",
 		PlayerID: "white_player",
@@ -2238,7 +2288,7 @@ func TestHalfFuseSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 		t.Fatalf("expected halffuse pending state with metadata, got %#v", step1.Match.PendingCard)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "halffuse_flow",
 		PlayerID: "white_player",
@@ -2262,7 +2312,7 @@ func TestHalfFuseSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 func TestHalfFuseBishopAndRookBecomeQueen(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "halffuse_queen"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "halffuse_queen"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "halffuse")
 
 	state := service.matches["halffuse_queen"]
@@ -2272,7 +2322,7 @@ func TestHalfFuseBishopAndRookBecomeQueen(t *testing.T) {
 	state.Board[3][3] = &contracts.Piece{Type: "bishop", Color: "white"}
 	state.Board[3][4] = &contracts.Piece{Type: "rook", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "halffuse_queen",
 		PlayerID: "white_player",
@@ -2280,7 +2330,7 @@ func TestHalfFuseBishopAndRookBecomeQueen(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("expected halffuse play_card to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "halffuse_queen",
 		PlayerID: "white_player",
@@ -2289,7 +2339,7 @@ func TestHalfFuseBishopAndRookBecomeQueen(t *testing.T) {
 		t.Fatalf("expected halffuse first selection to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "halffuse_queen",
 		PlayerID: "white_player",
@@ -2310,7 +2360,7 @@ func TestHalfFuseBishopAndRookBecomeQueen(t *testing.T) {
 func TestFullFusionSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fullfusion_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fullfusion_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fullfusion")
 
 	state := service.matches["fullfusion_flow"]
@@ -2320,7 +2370,7 @@ func TestFullFusionSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 	state.Board[3][3] = &contracts.Piece{Type: "queen", Color: "white"}
 	state.Board[3][4] = &contracts.Piece{Type: "knight", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fullfusion_flow",
 		PlayerID: "white_player",
@@ -2329,7 +2379,7 @@ func TestFullFusionSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 		t.Fatalf("expected fullfusion play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fullfusion_flow",
 		PlayerID: "white_player",
@@ -2342,7 +2392,7 @@ func TestFullFusionSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 		t.Fatalf("expected fullfusion pending state with metadata, got %#v", step1.Match.PendingCard)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fullfusion_flow",
 		PlayerID: "white_player",
@@ -2366,7 +2416,7 @@ func TestFullFusionSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 func TestFullFusionBishopAndRookBecomeQueen(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fullfusion_queen"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fullfusion_queen"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fullfusion")
 
 	state := service.matches["fullfusion_queen"]
@@ -2376,7 +2426,7 @@ func TestFullFusionBishopAndRookBecomeQueen(t *testing.T) {
 	state.Board[3][3] = &contracts.Piece{Type: "bishop", Color: "white"}
 	state.Board[3][4] = &contracts.Piece{Type: "rook", Color: "white"}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fullfusion_queen",
 		PlayerID: "white_player",
@@ -2384,7 +2434,7 @@ func TestFullFusionBishopAndRookBecomeQueen(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("expected fullfusion play_card to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fullfusion_queen",
 		PlayerID: "white_player",
@@ -2393,7 +2443,7 @@ func TestFullFusionBishopAndRookBecomeQueen(t *testing.T) {
 		t.Fatalf("expected fullfusion first selection to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fullfusion_queen",
 		PlayerID: "white_player",
@@ -2414,10 +2464,10 @@ func TestFullFusionBishopAndRookBecomeQueen(t *testing.T) {
 func TestFogVillagePlacesClampedZone(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 9, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fog_place"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fog_place"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fog_village")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fog_place",
 		PlayerID: "white_player",
@@ -2426,7 +2476,7 @@ func TestFogVillagePlacesClampedZone(t *testing.T) {
 		t.Fatalf("expected fog_village play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fog_place",
 		PlayerID: "white_player",
@@ -2448,10 +2498,10 @@ func TestFogVillagePlacesClampedZone(t *testing.T) {
 func TestFogVillageExpiresAfterTwoFullRounds(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 9, 30, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fog_decay"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fog_decay"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fog_village")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fog_decay",
 		PlayerID: "white_player",
@@ -2459,7 +2509,7 @@ func TestFogVillageExpiresAfterTwoFullRounds(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("expected fog_village play_card to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fog_decay",
 		PlayerID: "white_player",
@@ -2482,7 +2532,7 @@ func TestFogVillageExpiresAfterTwoFullRounds(t *testing.T) {
 	}
 
 	for idx, move := range moves {
-		result, err := service.ApplyIntent(move, moveTimes[idx])
+		result, err := applyTestIntent(service, move, moveTimes[idx])
 		if err != nil {
 			t.Fatalf("expected fog decay move %d to succeed, got %v", idx, err)
 		}
@@ -2500,10 +2550,10 @@ func TestFogVillageExpiresAfterTwoFullRounds(t *testing.T) {
 func TestFortressPlacesClampedZone(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 9, 45, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fortress_place"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fortress_place"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fortress")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fortress_place",
 		PlayerID: "white_player",
@@ -2512,7 +2562,7 @@ func TestFortressPlacesClampedZone(t *testing.T) {
 		t.Fatalf("expected fortress play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fortress_place",
 		PlayerID: "white_player",
@@ -2534,10 +2584,10 @@ func TestFortressPlacesClampedZone(t *testing.T) {
 func TestFortressBlocksEnemyEntry(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 9, 50, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fortress_block"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fortress_block"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fortress")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fortress_block",
 		PlayerID: "white_player",
@@ -2545,7 +2595,7 @@ func TestFortressBlocksEnemyEntry(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("expected fortress play_card to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fortress_block",
 		PlayerID: "white_player",
@@ -2553,7 +2603,7 @@ func TestFortressBlocksEnemyEntry(t *testing.T) {
 	}, now.Add(2*time.Second)); err != nil {
 		t.Fatalf("expected fortress placement to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "fortress_block",
 		PlayerID: "white_player",
@@ -2563,7 +2613,7 @@ func TestFortressBlocksEnemyEntry(t *testing.T) {
 		t.Fatalf("expected white move before fortress test to succeed, got %v", err)
 	}
 
-	_, err := service.ApplyIntent(contracts.PlayerIntent{
+	_, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "fortress_block",
 		PlayerID: "black_player",
@@ -2578,10 +2628,10 @@ func TestFortressBlocksEnemyEntry(t *testing.T) {
 func TestFortressExpiresAfterTwoFullRounds(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 9, 55, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fortress_decay"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fortress_decay"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fortress")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fortress_decay",
 		PlayerID: "white_player",
@@ -2589,7 +2639,7 @@ func TestFortressExpiresAfterTwoFullRounds(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("expected fortress play_card to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fortress_decay",
 		PlayerID: "white_player",
@@ -2612,7 +2662,7 @@ func TestFortressExpiresAfterTwoFullRounds(t *testing.T) {
 	}
 
 	for idx, move := range moves {
-		result, err := service.ApplyIntent(move, moveTimes[idx])
+		result, err := applyTestIntent(service, move, moveTimes[idx])
 		if err != nil {
 			t.Fatalf("expected fortress decay move %d to succeed, got %v", idx, err)
 		}
@@ -2630,10 +2680,10 @@ func TestFortressExpiresAfterTwoFullRounds(t *testing.T) {
 func TestDoubleMoveTwinKeepsTurnForSecondMove(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "doublemove_twin"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "doublemove_twin"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "doublemove_diff")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "doublemove_twin",
 		PlayerID: "white_player",
@@ -2642,7 +2692,7 @@ func TestDoubleMoveTwinKeepsTurnForSecondMove(t *testing.T) {
 		t.Fatalf("expected doublemove_diff play_card to succeed, got %v", err)
 	}
 
-	first, err := service.ApplyIntent(contracts.PlayerIntent{
+	first, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "doublemove_twin",
 		PlayerID: "white_player",
@@ -2662,7 +2712,7 @@ func TestDoubleMoveTwinKeepsTurnForSecondMove(t *testing.T) {
 		t.Fatalf("expected combined notation to wait for second move, got %#v", first.Match.MoveHistory)
 	}
 
-	second, err := service.ApplyIntent(contracts.PlayerIntent{
+	second, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "doublemove_twin",
 		PlayerID: "white_player",
@@ -2686,10 +2736,10 @@ func TestDoubleMoveTwinKeepsTurnForSecondMove(t *testing.T) {
 func TestDoubleMoveSoloRequiresSamePiece(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 10, 30, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "doublemove_solo"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "doublemove_solo"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "doublemove_same")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "doublemove_solo",
 		PlayerID: "white_player",
@@ -2698,7 +2748,7 @@ func TestDoubleMoveSoloRequiresSamePiece(t *testing.T) {
 		t.Fatalf("expected doublemove_same play_card to succeed, got %v", err)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "doublemove_solo",
 		PlayerID: "white_player",
@@ -2708,7 +2758,7 @@ func TestDoubleMoveSoloRequiresSamePiece(t *testing.T) {
 		t.Fatalf("expected first solo double move to succeed, got %v", err)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "doublemove_solo",
 		PlayerID: "white_player",
@@ -2722,10 +2772,10 @@ func TestDoubleMoveSoloRequiresSamePiece(t *testing.T) {
 func TestReverseRestoresPreviousCompletedMoveState(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 11, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "reverse_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "reverse_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "reverse")
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "reverse_flow",
 		PlayerID: "white_player",
@@ -2734,7 +2784,7 @@ func TestReverseRestoresPreviousCompletedMoveState(t *testing.T) {
 	}, now.Add(time.Second)); err != nil {
 		t.Fatalf("expected white move to succeed, got %v", err)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "reverse_flow",
 		PlayerID: "black_player",
@@ -2744,7 +2794,7 @@ func TestReverseRestoresPreviousCompletedMoveState(t *testing.T) {
 		t.Fatalf("expected black move to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "reverse_flow",
 		PlayerID: "white_player",
@@ -2774,11 +2824,11 @@ func TestReverseRestoresPreviousCompletedMoveState(t *testing.T) {
 func TestUndoNullifiesOpponentsNextCardPlay(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 11, 30, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "undo_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "undo_flow"}, now)
 	undoCardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "undo")
 	freezeCardID := cardIDByMechanic(t, snapshot.Match.BlackHand, "freeze")
 
-	armed, err := service.ApplyIntent(contracts.PlayerIntent{
+	armed, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "undo_flow",
 		PlayerID: "white_player",
@@ -2790,7 +2840,7 @@ func TestUndoNullifiesOpponentsNextCardPlay(t *testing.T) {
 	if armed.Match.UndoAgainst != "black" {
 		t.Fatalf("expected undo to arm against black, got %q", armed.Match.UndoAgainst)
 	}
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "undo_flow",
 		PlayerID: "white_player",
@@ -2800,7 +2850,7 @@ func TestUndoNullifiesOpponentsNextCardPlay(t *testing.T) {
 		t.Fatalf("expected white move after undo to succeed, got %v", err)
 	}
 
-	nullified, err := service.ApplyIntent(contracts.PlayerIntent{
+	nullified, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "undo_flow",
 		PlayerID: "black_player",
@@ -2823,7 +2873,7 @@ func TestUndoNullifiesOpponentsNextCardPlay(t *testing.T) {
 func TestMirrorMovesFirstMatchingPieceAndRefreshesCurrentHistoryState(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 11, 45, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "mirror_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "mirror_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "mirror")
 
 	state := service.matches["mirror_flow"]
@@ -2838,7 +2888,7 @@ func TestMirrorMovesFirstMatchingPieceAndRefreshesCurrentHistoryState(t *testing
 	}
 	state.History = []contracts.PositionState{capturePositionState(state)}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "mirror_flow",
 		PlayerID: "white_player",
@@ -2865,7 +2915,7 @@ func TestMirrorMovesFirstMatchingPieceAndRefreshesCurrentHistoryState(t *testing
 func TestFakePiecePlacesAuthoritativePawnOnEmptySquare(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "fakepiece_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fakepiece_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fakepiece")
 
 	state := service.matches["fakepiece_flow"]
@@ -2874,7 +2924,7 @@ func TestFakePiecePlacesAuthoritativePawnOnEmptySquare(t *testing.T) {
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	state.History = []contracts.PositionState{capturePositionState(state)}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "fakepiece_flow",
 		PlayerID: "white_player",
@@ -2883,7 +2933,7 @@ func TestFakePiecePlacesAuthoritativePawnOnEmptySquare(t *testing.T) {
 		t.Fatalf("expected fakepiece play_card to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "fakepiece_flow",
 		PlayerID: "white_player",
@@ -2907,7 +2957,7 @@ func TestFakePiecePlacesAuthoritativePawnOnEmptySquare(t *testing.T) {
 func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 12, 15, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "blackhole_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "blackhole_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "blackhole")
 
 	state := service.matches["blackhole_flow"]
@@ -2919,7 +2969,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 	state.Board[2][2] = &contracts.Piece{Type: "bishop", Color: "white"}
 	state.History = []contracts.PositionState{capturePositionState(state)}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "blackhole_flow",
 		PlayerID: "white_player",
@@ -2928,7 +2978,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 		t.Fatalf("expected blackhole play_card to succeed, got %v", err)
 	}
 
-	step1, err := service.ApplyIntent(contracts.PlayerIntent{
+	step1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "blackhole_flow",
 		PlayerID: "white_player",
@@ -2941,7 +2991,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 		t.Fatalf("expected pending blackhole first target, got %#v", step1.Match.PendingCard)
 	}
 
-	armed, err := service.ApplyIntent(contracts.PlayerIntent{
+	armed, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "blackhole_flow",
 		PlayerID: "white_player",
@@ -2954,7 +3004,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 		t.Fatalf("expected armed black hole with 2 turns left, got %#v", armed.Match.BlackHoles)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "blackhole_flow",
 		PlayerID: "white_player",
@@ -2967,7 +3017,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 		t.Fatalf("expected black hole to remain at 2 until black completes a turn, got %#v", state.BlackHoles)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "blackhole_flow",
 		PlayerID: "black_player",
@@ -2980,7 +3030,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 		t.Fatalf("expected black hole to tick down to 1 after black move, got %#v", state.BlackHoles)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "blackhole_flow",
 		PlayerID: "white_player",
@@ -2990,7 +3040,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 		t.Fatalf("expected white follow-up move to succeed, got %v", err)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "blackhole_flow",
 		PlayerID: "black_player",
@@ -3023,7 +3073,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 func TestSmallSacrificeRemovesPiecesAndDrawsRewardCards(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 12, 30, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "smallsacrifice_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "smallsacrifice_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "smallsacrifice")
 
 	state := service.matches["smallsacrifice_flow"]
@@ -3034,7 +3084,7 @@ func TestSmallSacrificeRemovesPiecesAndDrawsRewardCards(t *testing.T) {
 	state.Board[3][4] = &contracts.Piece{Type: "bishop", Color: "white"}
 	state.History = []contracts.PositionState{capturePositionState(state)}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "smallsacrifice_flow",
 		PlayerID: "white_player",
@@ -3043,7 +3093,7 @@ func TestSmallSacrificeRemovesPiecesAndDrawsRewardCards(t *testing.T) {
 		t.Fatalf("expected smallsacrifice play_card to succeed, got %v", err)
 	}
 
-	if _, err := service.ApplyIntent(contracts.PlayerIntent{
+	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "smallsacrifice_flow",
 		PlayerID: "white_player",
@@ -3052,7 +3102,7 @@ func TestSmallSacrificeRemovesPiecesAndDrawsRewardCards(t *testing.T) {
 		t.Fatalf("expected first sacrifice selection to succeed, got %v", err)
 	}
 
-	step2, err := service.ApplyIntent(contracts.PlayerIntent{
+	step2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "smallsacrifice_flow",
 		PlayerID: "white_player",
@@ -3065,7 +3115,7 @@ func TestSmallSacrificeRemovesPiecesAndDrawsRewardCards(t *testing.T) {
 		t.Fatalf("expected pending sacrifice selections to be tracked, got %#v", step2.Match.PendingCard)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "select_target",
 		MatchID:  "smallsacrifice_flow",
 		PlayerID: "white_player",
@@ -3089,10 +3139,10 @@ func TestSmallSacrificeRemovesPiecesAndDrawsRewardCards(t *testing.T) {
 func TestGamblerResolvesCardTransferOnBackend(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 12, 45, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "gambler_flow", Seed: 2}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "gambler_flow", Seed: 2}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "gambler")
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "gambler_flow",
 		PlayerID: "white_player",
@@ -3123,10 +3173,10 @@ func TestGamblerResolvesCardTransferOnBackend(t *testing.T) {
 func TestRadarRevealsEnemyHandUntilTurnPasses(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 13, 0, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "radar_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "radar_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "radar")
 
-	armed, err := service.ApplyIntent(contracts.PlayerIntent{
+	armed, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "radar_flow",
 		PlayerID: "white_player",
@@ -3139,7 +3189,7 @@ func TestRadarRevealsEnemyHandUntilTurnPasses(t *testing.T) {
 		t.Fatalf("expected radar reveal to arm for white, got %q", armed.Match.RadarRevealFor)
 	}
 
-	moved, err := service.ApplyIntent(contracts.PlayerIntent{
+	moved, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "radar_flow",
 		PlayerID: "white_player",
@@ -3157,10 +3207,10 @@ func TestRadarRevealsEnemyHandUntilTurnPasses(t *testing.T) {
 func TestCheaterCountsDownAfterOwnersTurns(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 13, 15, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "cheater_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "cheater_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "cheater")
 
-	armed, err := service.ApplyIntent(contracts.PlayerIntent{
+	armed, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "cheater_flow",
 		PlayerID: "white_player",
@@ -3173,7 +3223,7 @@ func TestCheaterCountsDownAfterOwnersTurns(t *testing.T) {
 		t.Fatalf("expected cheater state to start at 3 turns for white, got %#v", armed.Match.CheaterState)
 	}
 
-	white1, err := service.ApplyIntent(contracts.PlayerIntent{
+	white1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "cheater_flow",
 		PlayerID: "white_player",
@@ -3187,7 +3237,7 @@ func TestCheaterCountsDownAfterOwnersTurns(t *testing.T) {
 		t.Fatalf("expected cheater to drop to 2 after white turn ends, got %#v", white1.Match.CheaterState)
 	}
 
-	black1, err := service.ApplyIntent(contracts.PlayerIntent{
+	black1, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "cheater_flow",
 		PlayerID: "black_player",
@@ -3201,7 +3251,7 @@ func TestCheaterCountsDownAfterOwnersTurns(t *testing.T) {
 		t.Fatalf("expected cheater to stay at 2 during black turn, got %#v", black1.Match.CheaterState)
 	}
 
-	white2, err := service.ApplyIntent(contracts.PlayerIntent{
+	white2, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "make_move",
 		MatchID:  "cheater_flow",
 		PlayerID: "white_player",
@@ -3219,10 +3269,10 @@ func TestCheaterCountsDownAfterOwnersTurns(t *testing.T) {
 func TestJokerTransformsIntoBackendOwnedCard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 13, 30, 0, 0, time.UTC)
-	snapshot := service.CreateMatch(contracts.CreateMatchRequest{MatchID: "joker_flow"}, now)
+	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "joker_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "joker")
 
-	armed, err := service.ApplyIntent(contracts.PlayerIntent{
+	armed, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:     "play_card",
 		MatchID:  "joker_flow",
 		PlayerID: "white_player",
@@ -3235,7 +3285,7 @@ func TestJokerTransformsIntoBackendOwnedCard(t *testing.T) {
 		t.Fatalf("expected joker to enter pending transform state, got %#v", armed.Match.PendingCard)
 	}
 
-	result, err := service.ApplyIntent(contracts.PlayerIntent{
+	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type:        "select_target",
 		MatchID:     "joker_flow",
 		PlayerID:    "white_player",
