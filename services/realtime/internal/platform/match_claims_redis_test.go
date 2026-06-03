@@ -48,6 +48,9 @@ func TestRedisMatchClaimStoreRoundTripsClaims(t *testing.T) {
 	if !ok || tokenClaim.GuestID != "guest_alpha" {
 		t.Fatalf("expected token lookup to succeed, got %#v %#v", ok, tokenClaim)
 	}
+	if _, ok := store.Get("room_live", "guest_alpha"); ok {
+		t.Fatalf("expected token lookup to consume the stored claim")
+	}
 
 	reloaded, err := NewRedisMatchClaimStore("redis://"+server.Addr()+"/0", "claims:test")
 	if err != nil {
@@ -55,17 +58,10 @@ func TestRedisMatchClaimStoreRoundTripsClaims(t *testing.T) {
 	}
 	defer func() { _ = reloaded.Close() }()
 
-	reloadedClaim, ok := reloaded.Get("room_live", "guest_alpha")
-	if !ok {
-		t.Fatalf("expected reloaded claim lookup to succeed")
+	if _, ok := reloaded.Get("room_live", "guest_alpha"); ok {
+		t.Fatalf("expected consumed claim to stay deleted after reload")
 	}
-	if reloadedClaim.PlayerSecret != claim.PlayerSecret {
-		t.Fatalf("expected redis-backed claim to survive store reload, got %#v", reloadedClaim)
-	}
-	if reloadedClaim.ClaimToken != loaded.ClaimToken {
-		t.Fatalf("expected claim token to survive reload, got %#v %#v", loaded, reloadedClaim)
-	}
-	if reloaded.Stats().CachedClaims != 1 {
+	if reloaded.Stats().CachedClaims != 0 {
 		t.Fatalf("expected cached claim stats to reflect stored claim, got %#v", reloaded.Stats())
 	}
 }

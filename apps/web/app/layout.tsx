@@ -39,12 +39,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className={`${inter.variable} ${jetBrainsMono.variable}`}>
       <body>
-        <a href="#main-content" className="skip-link" style={{
-          position: 'absolute', left: '-9999px', zIndex: 9999,
-          padding: '8px 16px', background: '#ffbe5a', color: '#000',
-          fontWeight: 700, fontSize: '14px', borderRadius: '0 0 4px 0',
-          textDecoration: 'none'
-        }} onFocus={e => { e.target.style.left = '0'; }} onBlur={e => { e.target.style.left = '-9999px'; }}>
+        <a href="#main-content" className="skip-link">
           Skip to content
         </a>
         <App runtimeConfig={{

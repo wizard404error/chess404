@@ -17,15 +17,15 @@ import (
 )
 
 const (
-	rulesVersion               = "v1-alpha-foundation"
-	defaultClock               = int64(10 * 60 * 1000)
-	maxHandSize                = 10
-	drawFromRound              = 8
-	drawEveryRounds            = 3
-	presenceHeartbeatTimeout   = 25 * time.Second
-	disconnectGracePeriod      = 45 * time.Second
-	disconnectGraceBothPeriod  = 2 * time.Minute
-	disconnectGraceBoth        = "both"
+	rulesVersion                 = "v1-alpha-foundation"
+	defaultClock                 = int64(10 * 60 * 1000)
+	maxHandSize                  = 10
+	drawFromRound                = 8
+	drawEveryRounds              = 3
+	presenceHeartbeatTimeout     = 25 * time.Second
+	disconnectGracePeriod        = 45 * time.Second
+	disconnectGraceBothPeriod    = 2 * time.Minute
+	disconnectGraceBoth          = "both"
 	maxIntentsPerSecondPerPlayer = 10
 )
 
@@ -36,17 +36,17 @@ var (
 )
 
 type Service struct {
-	mu         sync.RWMutex
-	matches    map[string]*contracts.MatchState
-	events     map[string][]contracts.ResolvedEvent
-	subs       map[string]map[chan contracts.MatchSnapshotResponse]struct{}
-	presence   map[string]*matchPresenceState
-	matchMu    map[string]*sync.Mutex
-	archive    MatchArchiver
-	stopCh     chan struct{}
+	mu          sync.RWMutex
+	matches     map[string]*contracts.MatchState
+	events      map[string][]contracts.ResolvedEvent
+	subs        map[string]map[chan contracts.MatchSnapshotResponse]struct{}
+	presence    map[string]*matchPresenceState
+	matchMu     map[string]*sync.Mutex
+	archive     MatchArchiver
+	stopCh      chan struct{}
 	matchSeqNum map[string]int64
-	authTokens map[string]authTokenEntry
-	Log        *logging.Logger
+	authTokens  map[string]authTokenEntry
+	Log         *logging.Logger
 	broadcastWG sync.WaitGroup
 }
 
@@ -1155,7 +1155,6 @@ func (s *Service) restoreArchivedMatchesLocked(loader MatchArchiveBootstrapper) 
 		s.loadArchivedMatchLocked(matchID, restored, events)
 	}
 }
-
 
 func (s *Service) lockMatch(matchID string) func() {
 	s.mu.Lock()
@@ -2797,133 +2796,133 @@ func applyMove(state *contracts.MatchState, intent contracts.PlayerIntent, now t
 				TrackedSq: tracked,
 				FirstNote: notation,
 			}
-		startedAt := now.UnixMilli()
-		state.Clock.RunningFor = state.Turn
-		state.Clock.StartedAt = &startedAt
-		state.UpdatedAt = now.UTC()
+			startedAt := now.UnixMilli()
+			state.Clock.RunningFor = state.Turn
+			state.Clock.StartedAt = &startedAt
+			state.UpdatedAt = now.UTC()
 
-		payload := map[string]any{
-			"from":       intent.From,
-			"to":         intent.To,
-			"notation":   notation,
-			"nextTurn":   state.Turn,
-			"doubleMove": state.DoubleMove,
-		}
-		if promotion != "" {
-			payload["promotion"] = promotion
-		}
-		if lavaTriggered {
-			payload["lavaTriggered"] = true
-			if lavaCapturedPiece != "" {
-				payload["lavaCapturedPiece"] = lavaCapturedPiece
+			payload := map[string]any{
+				"from":       intent.From,
+				"to":         intent.To,
+				"notation":   notation,
+				"nextTurn":   state.Turn,
+				"doubleMove": state.DoubleMove,
 			}
+			if promotion != "" {
+				payload["promotion"] = promotion
+			}
+			if lavaTriggered {
+				payload["lavaTriggered"] = true
+				if lavaCapturedPiece != "" {
+					payload["lavaCapturedPiece"] = lavaCapturedPiece
+				}
+			}
+
+			return []contracts.ResolvedEvent{
+				makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, payload),
+				makeEvent(state.MatchID, "clock_updated", now, intent.PlayerID, map[string]any{
+					"runningFor": state.Turn,
+				}),
+			}, nil
 		}
 
-		return []contracts.ResolvedEvent{
-			makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, payload),
-			makeEvent(state.MatchID, "clock_updated", now, intent.PlayerID, map[string]any{
-				"runningFor": state.Turn,
-			}),
-		}, nil
-	}
-
-	if state.DoubleMove.FirstNote != "" {
-		state.MoveHistory = append(state.MoveHistory, state.DoubleMove.FirstNote+"+"+notation)
+		if state.DoubleMove.FirstNote != "" {
+			state.MoveHistory = append(state.MoveHistory, state.DoubleMove.FirstNote+"+"+notation)
+		} else {
+			state.MoveHistory = append(state.MoveHistory, notation)
+		}
+		state.DoubleMove = nil
 	} else {
 		state.MoveHistory = append(state.MoveHistory, notation)
 	}
-	state.DoubleMove = nil
-} else {
-	state.MoveHistory = append(state.MoveHistory, notation)
-}
 
-if state.Turn == "black" {
-	state.FullMoveNum++
-}
-justMovedColor := state.Turn
-state.Turn = opposite(state.Turn)
-cleanupTemporaryEffects(state, justMovedColor)
-resolveFogEffects(state)
-resolveFortressEffects(state)
-bombExplodedSquares := resolveBombEffects(state)
-blackHoleExplodedSquares := resolveBlackHoleEffects(state)
-roundDrawWhite, roundDrawBlack := drawRoundCards(state, now)
-startedAt := now.UnixMilli()
-if state.Clock.Increment > 0 {
-	if justMovedColor == "white" {
-		state.Clock.WhiteMS += state.Clock.Increment
-	} else {
-		state.Clock.BlackMS += state.Clock.Increment
+	if state.Turn == "black" {
+		state.FullMoveNum++
 	}
-}
-state.Clock.RunningFor = state.Turn
-state.Clock.StartedAt = &startedAt
-state.UpdatedAt = now.UTC()
-state.History = append(state.History, capturePositionState(state))
-
-posKey := positionKey(state.Board, state.Turn, sliceToSet(state.Moved), state.LastMove)
-repCount := 1
-for _, pos := range state.History {
-	if positionKey(pos.Board, pos.Turn, sliceToSet(pos.Moved), pos.LastMove) == posKey {
-		repCount++
+	justMovedColor := state.Turn
+	state.Turn = opposite(state.Turn)
+	cleanupTemporaryEffects(state, justMovedColor)
+	resolveFogEffects(state, justMovedColor)
+	resolveFortressEffects(state, justMovedColor)
+	bombExplodedSquares := resolveBombEffects(state)
+	blackHoleExplodedSquares := resolveBlackHoleEffects(state, justMovedColor)
+	roundDrawWhite, roundDrawBlack := drawRoundCards(state, now)
+	startedAt := now.UnixMilli()
+	if state.Clock.Increment > 0 {
+		if justMovedColor == "white" {
+			state.Clock.WhiteMS += state.Clock.Increment
+		} else {
+			state.Clock.BlackMS += state.Clock.Increment
+		}
 	}
-}
-if repCount >= 3 {
-	markMatchFinished(state, "draw", "threefold_repetition", now)
-	return []contracts.ResolvedEvent{
-		makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, map[string]any{"notation": notation, "nextTurn": state.Turn}),
-		makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "threefold_repetition", "winner": "draw"}),
-	}, nil
-}
-if state.HalfMoveClock >= 100 {
-	markMatchFinished(state, "draw", "fifty_move_rule", now)
-	return []contracts.ResolvedEvent{
-		makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, map[string]any{"notation": notation, "nextTurn": state.Turn}),
-		makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "fifty_move_rule", "winner": "draw"}),
-	}, nil
-}
-if insufficientMaterial(state.Board) {
-	markMatchFinished(state, "draw", "insufficient_material", now)
-	return []contracts.ResolvedEvent{
-		makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, map[string]any{"notation": notation, "nextTurn": state.Turn}),
-		makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "insufficient_material", "winner": "draw"}),
-	}, nil
-}
+	state.Clock.RunningFor = state.Turn
+	state.Clock.StartedAt = &startedAt
+	state.UpdatedAt = now.UTC()
+	state.History = append(state.History, capturePositionState(state))
 
-payload := map[string]any{
-	"from":     intent.From,
-	"to":       intent.To,
-	"notation": notation,
-	"nextTurn": state.Turn,
-}
-if promotion != "" {
-	payload["promotion"] = promotion
-}
-if lavaTriggered {
-	payload["lavaTriggered"] = true
-	if lavaCapturedPiece != "" {
-		payload["lavaCapturedPiece"] = lavaCapturedPiece
+	posKey := positionKey(state.Board, state.Turn, sliceToSet(state.Moved), state.LastMove)
+	repCount := 1
+	for _, pos := range state.History {
+		if positionKey(pos.Board, pos.Turn, sliceToSet(pos.Moved), pos.LastMove) == posKey {
+			repCount++
+		}
 	}
-}
-if len(bombExplodedSquares) > 0 {
-	payload["bombExplodedSquares"] = bombExplodedSquares
-}
-if len(blackHoleExplodedSquares) > 0 {
-	payload["blackHoleExplodedSquares"] = blackHoleExplodedSquares
-}
-if len(roundDrawWhite) > 0 {
-	payload["roundDrawWhite"] = roundDrawWhite
-}
-if len(roundDrawBlack) > 0 {
-	payload["roundDrawBlack"] = roundDrawBlack
-}
+	if repCount >= 3 {
+		markMatchFinished(state, "draw", "threefold_repetition", now)
+		return []contracts.ResolvedEvent{
+			makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, map[string]any{"notation": notation, "nextTurn": state.Turn}),
+			makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "threefold_repetition", "winner": "draw"}),
+		}, nil
+	}
+	if state.HalfMoveClock >= 100 {
+		markMatchFinished(state, "draw", "fifty_move_rule", now)
+		return []contracts.ResolvedEvent{
+			makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, map[string]any{"notation": notation, "nextTurn": state.Turn}),
+			makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "fifty_move_rule", "winner": "draw"}),
+		}, nil
+	}
+	if insufficientMaterial(state.Board) {
+		markMatchFinished(state, "draw", "insufficient_material", now)
+		return []contracts.ResolvedEvent{
+			makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, map[string]any{"notation": notation, "nextTurn": state.Turn}),
+			makeEvent(state.MatchID, "match_finished", now, intent.PlayerID, map[string]any{"result": "insufficient_material", "winner": "draw"}),
+		}, nil
+	}
 
-return []contracts.ResolvedEvent{
-	makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, payload),
-	makeEvent(state.MatchID, "clock_updated", now, intent.PlayerID, map[string]any{
-		"runningFor": state.Turn,
-	}),
-}, nil
+	payload := map[string]any{
+		"from":     intent.From,
+		"to":       intent.To,
+		"notation": notation,
+		"nextTurn": state.Turn,
+	}
+	if promotion != "" {
+		payload["promotion"] = promotion
+	}
+	if lavaTriggered {
+		payload["lavaTriggered"] = true
+		if lavaCapturedPiece != "" {
+			payload["lavaCapturedPiece"] = lavaCapturedPiece
+		}
+	}
+	if len(bombExplodedSquares) > 0 {
+		payload["bombExplodedSquares"] = bombExplodedSquares
+	}
+	if len(blackHoleExplodedSquares) > 0 {
+		payload["blackHoleExplodedSquares"] = blackHoleExplodedSquares
+	}
+	if len(roundDrawWhite) > 0 {
+		payload["roundDrawWhite"] = roundDrawWhite
+	}
+	if len(roundDrawBlack) > 0 {
+		payload["roundDrawBlack"] = roundDrawBlack
+	}
+
+	return []contracts.ResolvedEvent{
+		makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, payload),
+		makeEvent(state.MatchID, "clock_updated", now, intent.PlayerID, map[string]any{
+			"runningFor": state.Turn,
+		}),
+	}, nil
 }
 
 func applyInvisibleMove(state *contracts.MatchState, intent contracts.PlayerIntent, now time.Time) ([]contracts.ResolvedEvent, error) {
@@ -3033,10 +3032,10 @@ func applyInvisibleMove(state *contracts.MatchState, intent contracts.PlayerInte
 	justMovedColor := state.Turn
 	state.Turn = opposite(state.Turn)
 	cleanupTemporaryEffects(state, justMovedColor)
-	resolveFogEffects(state)
-	resolveFortressEffects(state)
+	resolveFogEffects(state, justMovedColor)
+	resolveFortressEffects(state, justMovedColor)
 	bombExplodedSquares := resolveBombEffects(state)
-	blackHoleExplodedSquares := resolveBlackHoleEffects(state)
+	blackHoleExplodedSquares := resolveBlackHoleEffects(state, justMovedColor)
 	roundDrawWhite, roundDrawBlack := drawRoundCards(state, now)
 	startedAt := now.UnixMilli()
 	if state.Clock.Increment > 0 {
@@ -3880,14 +3879,16 @@ func resolveBombEffects(state *contracts.MatchState) []contracts.Square {
 	return exploded
 }
 
-func resolveFogEffects(state *contracts.MatchState) {
+func resolveFogEffects(state *contracts.MatchState, justMovedColor string) {
 	if len(state.FogZones) == 0 {
 		return
 	}
 
 	nextFog := make([]contracts.FogZone, 0, len(state.FogZones))
 	for _, zone := range state.FogZones {
-		zone.TurnsLeft--
+		if zone.OwnerColor != justMovedColor {
+			zone.TurnsLeft--
+		}
 		if zone.TurnsLeft > 0 {
 			nextFog = append(nextFog, zone)
 		}
@@ -3895,14 +3896,16 @@ func resolveFogEffects(state *contracts.MatchState) {
 	state.FogZones = nextFog
 }
 
-func resolveFortressEffects(state *contracts.MatchState) {
+func resolveFortressEffects(state *contracts.MatchState, justMovedColor string) {
 	if len(state.FortressZones) == 0 {
 		return
 	}
 
 	nextFortress := make([]contracts.FortressZone, 0, len(state.FortressZones))
 	for _, zone := range state.FortressZones {
-		zone.TurnsLeft--
+		if zone.OwnerColor != justMovedColor {
+			zone.TurnsLeft--
+		}
 		if zone.TurnsLeft > 0 {
 			nextFortress = append(nextFortress, zone)
 		}
@@ -3922,7 +3925,7 @@ func fortressEntryBlocked(zones []contracts.FortressZone, moverColor string, tar
 	return false
 }
 
-func resolveBlackHoleEffects(state *contracts.MatchState) []contracts.Square {
+func resolveBlackHoleEffects(state *contracts.MatchState, justMovedColor string) []contracts.Square {
 	if len(state.BlackHoles) == 0 {
 		return nil
 	}
@@ -3953,7 +3956,9 @@ func resolveBlackHoleEffects(state *contracts.MatchState) []contracts.Square {
 	}
 
 	for _, hole := range state.BlackHoles {
-		hole.TurnsLeft--
+		if hole.OwnerColor != justMovedColor {
+			hole.TurnsLeft--
+		}
 		if hole.TurnsLeft <= 0 {
 			blow(hole.Sq1)
 			blow(hole.Sq2)

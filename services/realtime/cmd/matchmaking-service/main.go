@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
-	"github.com/chess404/realtime/internal/matchmaking"
 	"github.com/chess404/realtime/internal/httputil"
+	"github.com/chess404/realtime/internal/matchmaking"
 	"github.com/chess404/realtime/internal/rate_limit"
 )
 
@@ -254,7 +254,21 @@ func matchmakingTicketStoreRedisKey() string {
 }
 
 func matchmakingMatchServiceURL() string {
-	return httputil.EnvOrDefault("MATCH_SERVICE_INTERNAL_URL", "http://match-service:8080")
+	return resolveInternalServiceURL(
+		httputil.EnvOrDefault("MATCH_SERVICE_INTERNAL_URL", ""),
+		"http://match-service:8080",
+	)
+}
+
+func resolveInternalServiceURL(explicit, fallback string) string {
+	value := strings.TrimRight(strings.TrimSpace(explicit), "/")
+	if value == "" {
+		return strings.TrimRight(strings.TrimSpace(fallback), "/")
+	}
+	if strings.HasSuffix(strings.ToLower(value), ".railway.internal") {
+		return strings.TrimRight(strings.TrimSpace(fallback), "/")
+	}
+	return value
 }
 
 func openMatchmakingService() (*matchmaking.Service, error) {

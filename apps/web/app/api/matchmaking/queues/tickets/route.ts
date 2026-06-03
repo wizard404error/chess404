@@ -32,6 +32,16 @@ interface PlatformAccountSessionPayload {
 
 export async function GET(request: Request): Promise<Response> {
   const { search } = new URL(request.url);
+  if (!isLocalRequest(request)) {
+    const params = new URLSearchParams(search);
+    if (params.has('guestId') || params.has('accountId')) {
+      return jsonError('raw queue ticket lookup is not public', 403);
+    }
+    return Response.json({ tickets: [] }, {
+      status: 200,
+      headers: noStoreHeaders(),
+    });
+  }
   return proxyMatchmaking(request, `/api/queues/tickets${search}`);
 }
 
@@ -187,4 +197,18 @@ function resolveBackendBaseUrl(explicit: string | undefined, fallback: string): 
     return fallback;
   }
   return value;
+}
+
+function isLocalRequest(request: Request): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
+  const host = request.headers.get('host')?.toLowerCase() ?? '';
+  return host.startsWith('localhost') || host.startsWith('127.0.0.1');
+}
+
+function noStoreHeaders(): Headers {
+  const headers = new Headers();
+  headers.set('Cache-Control', 'no-store');
+  return headers;
 }

@@ -1,5 +1,6 @@
 import type { MatchModeId, MatchPresenceRequest, MatchSnapshotMessage, PlayerIntent } from '@chess404/contracts';
 import { DEFAULT_MATCH_MODE_ID } from '@chess404/contracts';
+import { readStoredGuestIdentity } from './session-storage';
 
 const gatewayBaseUrl = '/api/gateway';
 let httpBaseUrl = '/api/realtime';
@@ -81,9 +82,7 @@ export async function fetchAuthToken(matchId: string, playerId: string, playerSe
 export async function fetchMatch(matchId: string): Promise<MatchSnapshotMessage> {
   const response = await fetch(`${httpBaseUrl}/matches/${matchId}`, {
     method: 'GET',
-    headers: {
-      'Content-Type': 'application/json'
-    },
+    headers: buildMatchFetchHeaders(),
     cache: 'no-store'
   });
 
@@ -223,7 +222,10 @@ export function connectToMatchStream(
     if (disposed) {
       return;
     }
-    if (isWsConnected) { schedulePoll(); return; }
+    if (isWsConnected) {
+      clearPollTimer();
+      return;
+    }
     clearPollTimer();
     pollTimer = window.setTimeout(async () => {
       pollTimer = null;
@@ -420,6 +422,25 @@ function buildPresenceUrl(matchId: string, presence?: Partial<MatchPresenceReque
     return `${httpBaseUrl}/matches/${matchId}/presence`;
   }
   return `${httpBaseUrl}/matches/${matchId}/presence`;
+}
+
+function buildMatchFetchHeaders(): Headers {
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  const sides = ['white', 'black'] as const;
+  for (const side of sides) {
+    const identity = readStoredGuestIdentity(side);
+    if (identity.guestId?.trim()) {
+      headers.set(`x-chess404-${side}-guest-id`, identity.guestId.trim());
+    }
+    if (identity.sessionToken?.trim()) {
+      headers.set(`x-chess404-${side}-session-token`, identity.sessionToken.trim());
+    }
+    if (identity.sessionSecret?.trim()) {
+      headers.set(`x-chess404-${side}-session-secret`, identity.sessionSecret.trim());
+    }
+  }
+  return headers;
 }
 
 function normalizeSecret(value?: string | null): string {

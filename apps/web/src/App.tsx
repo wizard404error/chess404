@@ -69,8 +69,6 @@ import {
   formatAccountRestrictionNotice,
   fetchDirectChallengeOverview,
   fetchFriendOverview,
-  finalizeAccountMatch,
-  finalizeGuestMatch,
   fetchAccountNotificationOverview,
   isAccountRestrictionError,
   parseAccountRestrictionMessage,

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,13 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/platform"
 )
+
+func TestMain(m *testing.M) {
+	if os.Getenv("ACCOUNT_AUTH_PUBLIC_BASE_URL") == "" {
+		_ = os.Setenv("ACCOUNT_AUTH_PUBLIC_BASE_URL", "https://example.test")
+	}
+	os.Exit(m.Run())
+}
 
 func buildTestPlatformMux(t *testing.T, archive *platform.MatchArchiveStore, guests platform.GuestDirectory, claims *platform.MatchClaimStore) http.Handler {
 	t.Helper()
@@ -50,6 +58,14 @@ func buildTestPlatformMuxWithAccounts(t *testing.T, archive *platform.MatchArchi
 		t.Fatalf("expected account security audit store to initialize, got %v", err)
 	}
 	return buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
+}
+
+const testInternalServiceToken = "test-internal-token"
+
+func authorizeInternalPlatformRequest(t *testing.T, req *http.Request) {
+	t.Helper()
+	t.Setenv("PLATFORM_INTERNAL_SERVICE_TOKEN", testInternalServiceToken)
+	req.Header.Set("Authorization", "Bearer "+testInternalServiceToken)
 }
 
 func TestPlatformStatusIncludesGuestStoreBackend(t *testing.T) {
@@ -1340,6 +1356,7 @@ func TestModerationAdminCanResolveReportsThroughPlatformAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected admin account claim, got %v", err)
 	}
+	t.Setenv("PLATFORM_ADMIN_ACCOUNT_IDS", adminAccount.Account.AccountID)
 	reporterAccount, err := accounts.ClaimGuest(reporterGuest.Guest, "reporter_mod")
 	if err != nil {
 		t.Fatalf("expected reporter account claim, got %v", err)
@@ -1781,10 +1798,11 @@ func TestAccountDetailIncludesDirectRatingHistory(t *testing.T) {
 	if len(response.Account.RatingHistory) != 1 {
 		t.Fatalf("expected direct rating history entry, got %#v", response.Account.RatingHistory)
 	}
-	if response.Account.CurrentSeason == nil || response.Account.CurrentSeason.SeasonID != "2026-05" || response.Account.CurrentSeason.MatchesPlayed != 1 || response.Account.CurrentSeason.NetDelta != 16 || response.Account.CurrentSeason.RatingEnd != 1216 {
+	expectedSeasonID := time.Now().UTC().Format("2006-01")
+	if response.Account.CurrentSeason == nil || response.Account.CurrentSeason.SeasonID != expectedSeasonID || response.Account.CurrentSeason.MatchesPlayed != 1 || response.Account.CurrentSeason.NetDelta != 16 || response.Account.CurrentSeason.RatingEnd != 1216 {
 		t.Fatalf("unexpected current season summary %#v", response.Account.CurrentSeason)
 	}
-	if len(response.Account.SeasonHistory) != 1 || response.Account.SeasonHistory[0].SeasonID != "2026-05" || response.Account.SeasonHistory[0].MatchesPlayed != 1 || response.Account.SeasonHistory[0].NetDelta != 16 {
+	if len(response.Account.SeasonHistory) != 1 || response.Account.SeasonHistory[0].SeasonID != expectedSeasonID || response.Account.SeasonHistory[0].MatchesPlayed != 1 || response.Account.SeasonHistory[0].NetDelta != 16 {
 		t.Fatalf("unexpected season history %#v", response.Account.SeasonHistory)
 	}
 	if response.Account.RatingHistory[0].MatchID != "account_history_match" || response.Account.RatingHistory[0].Queue != "rated" || response.Account.RatingHistory[0].ModeID != string(contracts.MatchModeHiddenCards) || response.Account.RatingHistory[0].Result != "win" || response.Account.RatingHistory[0].Delta != 16 || response.Account.RatingHistory[0].RatingAfter != 1216 || response.Account.RatingHistory[0].MatchesPlayed != 1 {
@@ -1948,7 +1966,8 @@ func TestAccountsListIncludesCurrentSeasonForDirectAccountHistory(t *testing.T) 
 	if response.Accounts[0].Handle != "rank_history_white" || response.Accounts[0].Rating != 1216 {
 		t.Fatalf("expected direct-history winner to rank first, got %#v", response.Accounts)
 	}
-	if response.Accounts[0].CurrentSeason == nil || response.Accounts[0].CurrentSeason.SeasonID != "2026-05" || response.Accounts[0].CurrentSeason.MatchesPlayed != 1 || response.Accounts[0].CurrentSeason.NetDelta != 16 {
+	expectedSeasonID := time.Now().UTC().Format("2006-01")
+	if response.Accounts[0].CurrentSeason == nil || response.Accounts[0].CurrentSeason.SeasonID != expectedSeasonID || response.Accounts[0].CurrentSeason.MatchesPlayed != 1 || response.Accounts[0].CurrentSeason.NetDelta != 16 {
 		t.Fatalf("expected direct-history account to expose current season, got %#v", response.Accounts[0])
 	}
 }
@@ -1986,7 +2005,8 @@ func TestAccountsListCanFilterToRequestedSeason(t *testing.T) {
 		t.Fatalf("expected direct account finalize to succeed, got changed=%v err=%v", changed, err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/platform/accounts?limit=10&sort=rating&seasonId=2026-05", nil)
+	expectedSeasonID := time.Now().UTC().Format("2006-01")
+	req := httptest.NewRequest(http.MethodGet, "/api/platform/accounts?limit=10&sort=rating&seasonId="+expectedSeasonID, nil)
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMuxWithAccounts(t, archive, guests, accounts, claims).ServeHTTP(rec, req)
@@ -2025,16 +2045,16 @@ func TestAccountsListCanFilterToRequestedSeason(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("expected season-filtered account list to decode, got %v", err)
 	}
-	if response.SelectedSeasonID != "2026-05" {
+	if response.SelectedSeasonID != expectedSeasonID {
 		t.Fatalf("expected selected season id to round-trip, got %#v", response)
 	}
-	if len(response.Accounts) != 2 || response.Accounts[0].SelectedSeason == nil || response.Accounts[0].SelectedSeason.SeasonID != "2026-05" {
+	if len(response.Accounts) != 2 || response.Accounts[0].SelectedSeason == nil || response.Accounts[0].SelectedSeason.SeasonID != expectedSeasonID {
 		t.Fatalf("expected only matching season accounts with selected season, got %#v", response)
 	}
-	if len(response.Seasons) != 1 || response.Seasons[0].SeasonID != "2026-05" {
+	if len(response.Seasons) != 1 || response.Seasons[0].SeasonID != expectedSeasonID {
 		t.Fatalf("expected available season metadata, got %#v", response.Seasons)
 	}
-	if response.Summary == nil || response.Summary.SeasonID != "2026-05" || response.Summary.PlayerCount != 2 || response.Summary.MatchCount != 2 {
+	if response.Summary == nil || response.Summary.SeasonID != expectedSeasonID || response.Summary.PlayerCount != 2 || response.Summary.MatchCount != 2 {
 		t.Fatalf("expected season summary metadata, got %#v", response.Summary)
 	}
 	if response.Summary.Leader == nil || response.Summary.BiggestClimber == nil || response.Summary.Leader.Handle == "" || response.Summary.BiggestClimber.Handle == "" {
@@ -2202,11 +2222,11 @@ func TestArchivedMatchDetailIncludesLinkedAccountHandles(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("expected archived match detail to decode, got %v", err)
 	}
-	if response.WhiteAccountID == "" || response.WhiteAccountHandle != "aurora_archive" {
-		t.Fatalf("expected white account identity to be enriched, got %#v", response)
+	if response.WhiteAccountID != "" || response.WhiteAccountHandle != "aurora_archive" {
+		t.Fatalf("expected public archive detail to expose handle but hide account id, got %#v", response)
 	}
-	if response.Snapshot.Match.WhiteAccountID != response.WhiteAccountID {
-		t.Fatalf("expected snapshot match account id to be enriched, got %#v", response.Snapshot.Match)
+	if response.Snapshot.Match.WhiteAccountID != "" || response.Snapshot.Match.WhiteGuestID != "" {
+		t.Fatalf("expected public snapshot to hide internal seat ids, got %#v", response.Snapshot.Match)
 	}
 }
 
@@ -2283,8 +2303,8 @@ func TestArchivedMatchListCanFilterByAccount(t *testing.T) {
 	if len(response.Matches) != 1 || response.Matches[0].MatchID != "archive_account_filter_match" {
 		t.Fatalf("unexpected archived account match list response %#v", response)
 	}
-	if response.Matches[0].WhiteAccountID != accountSession.Account.AccountID {
-		t.Fatalf("expected account filter response to be enriched with account id, got %#v", response.Matches[0])
+	if response.Matches[0].WhiteAccountID != "" || response.Matches[0].WhiteAccountHandle != "aurora_archive" {
+		t.Fatalf("expected account filter response to expose handle but hide account id, got %#v", response.Matches[0])
 	}
 }
 
@@ -2695,6 +2715,7 @@ func TestGuestResultsRejectNonRatedMatches(t *testing.T) {
 
 	body := fmt.Sprintf(`{"matchId":"casual_room","guestId":"%s","sessionSecret":"%s"}`, white.Guest.GuestID, white.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
+	authorizeInternalPlatformRequest(t, req)
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
@@ -2754,6 +2775,7 @@ func TestGuestResultsFinalizeRatedMatches(t *testing.T) {
 
 	body := fmt.Sprintf(`{"matchId":"rated_room","guestId":"%s","sessionSecret":"%s"}`, whiteSession.Guest.GuestID, whiteSession.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
+	authorizeInternalPlatformRequest(t, req)
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
@@ -2818,6 +2840,7 @@ func TestGuestResultsRejectUnauthenticated(t *testing.T) {
 
 	body := fmt.Sprintf(`{"matchId":"rated_room","guestId":"%s","sessionSecret":"%s"}`, intruder.Guest.GuestID, intruder.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
+	authorizeInternalPlatformRequest(t, req)
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
@@ -2871,6 +2894,7 @@ func TestGuestResultsRejectUnfinishedRatedMatches(t *testing.T) {
 
 	body := fmt.Sprintf(`{"matchId":"rated_room_open","guestId":"%s","sessionSecret":"%s"}`, white.Guest.GuestID, white.SessionSecret)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/guest-results", strings.NewReader(body))
+	authorizeInternalPlatformRequest(t, req)
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
@@ -2932,6 +2956,7 @@ func TestAccountResultsFinalizeRatedMatchesWithLinkedGuestFallback(t *testing.T)
 
 	body := fmt.Sprintf(`{"matchId":"rated_account_room","accountId":"%s","sessionToken":"%s"}`, whiteAccountSession.Account.AccountID, whiteAccountSession.SessionToken)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/account-results", strings.NewReader(body))
+	authorizeInternalPlatformRequest(t, req)
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMuxWithAccounts(t, archive, guests, accounts, claims).ServeHTTP(rec, req)
@@ -3022,6 +3047,7 @@ func TestAccountResultsRejectUnauthorized(t *testing.T) {
 
 	body := fmt.Sprintf(`{"matchId":"rated_account_room","accountId":"%s","sessionToken":"%s"}`, intruderSession.Account.AccountID, intruderSession.SessionToken)
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/account-results", strings.NewReader(body))
+	authorizeInternalPlatformRequest(t, req)
 	rec := httptest.NewRecorder()
 
 	buildTestPlatformMuxWithAccounts(t, archive, guests, accounts, claims).ServeHTTP(rec, req)
@@ -3033,5 +3059,110 @@ func TestAccountResultsRejectUnauthorized(t *testing.T) {
 	refreshedBlack, _ := guests.GetGuest("guest_black")
 	if refreshedWhite.Rating != 1200 || refreshedBlack.Rating != 1200 {
 		t.Fatalf("expected rejected account result to preserve ratings, got %#v %#v", refreshedWhite, refreshedBlack)
+	}
+}
+
+func TestInternalFinalizeRatedMatchRequiresServiceToken(t *testing.T) {
+	t.Setenv("PLATFORM_INTERNAL_SERVICE_TOKEN", testInternalServiceToken)
+	tempDir := t.TempDir()
+	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
+	if err != nil {
+		t.Fatalf("expected archive store to initialize, got %v", err)
+	}
+	guests, err := platform.NewGuestStore(filepath.Join(tempDir, "guests.json"))
+	if err != nil {
+		t.Fatalf("expected guest store to initialize, got %v", err)
+	}
+	claims := platform.NewMatchClaimStore()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/platform/internal/finalize-rated-match", strings.NewReader(`{"matchId":"rated_room"}`))
+	rec := httptest.NewRecorder()
+
+	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected internal finalizer to require service token, got status %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInternalFinalizeRatedMatchFinalizesArchivedRatedMatch(t *testing.T) {
+	tempDir := t.TempDir()
+	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
+	if err != nil {
+		t.Fatalf("expected archive store to initialize, got %v", err)
+	}
+	guests, err := platform.NewGuestStore(filepath.Join(tempDir, "guests.json"))
+	if err != nil {
+		t.Fatalf("expected guest store to initialize, got %v", err)
+	}
+	accounts, err := platform.NewAccountStore(filepath.Join(tempDir, "accounts.json"))
+	if err != nil {
+		t.Fatalf("expected account store to initialize, got %v", err)
+	}
+	claims := platform.NewMatchClaimStore()
+
+	whiteSession, err := guests.EnsureGuest("guest_white", "")
+	if err != nil {
+		t.Fatalf("expected white guest creation to succeed, got %v", err)
+	}
+	blackSession, err := guests.EnsureGuest("guest_black", "")
+	if err != nil {
+		t.Fatalf("expected black guest creation to succeed, got %v", err)
+	}
+	whiteAccountSession, err := accounts.ClaimGuest(whiteSession.Guest, "white_internal")
+	if err != nil {
+		t.Fatalf("expected white account claim to succeed, got %v", err)
+	}
+	blackAccountSession, err := accounts.ClaimGuest(blackSession.Guest, "black_internal")
+	if err != nil {
+		t.Fatalf("expected black account claim to succeed, got %v", err)
+	}
+
+	now := time.Date(2026, 5, 7, 11, 0, 0, 0, time.UTC)
+	if err := archive.Upsert(contracts.MatchSnapshotResponse{
+		Match: contracts.MatchState{
+			MatchID:        "rated_internal_room",
+			RulesVersion:   "v1-alpha-foundation",
+			Queue:          "rated",
+			WhiteGuestID:   whiteSession.Guest.GuestID,
+			BlackGuestID:   blackSession.Guest.GuestID,
+			WhiteAccountID: whiteAccountSession.Account.AccountID,
+			BlackAccountID: blackAccountSession.Account.AccountID,
+			Status:         "finished",
+			Winner:         "white",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+	}); err != nil {
+		t.Fatalf("expected archive upsert to succeed, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/platform/internal/finalize-rated-match", strings.NewReader(`{"matchId":"rated_internal_room"}`))
+	authorizeInternalPlatformRequest(t, req)
+	rec := httptest.NewRecorder()
+
+	buildTestPlatformMuxWithAccounts(t, archive, guests, accounts, claims).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected internal finalizer to succeed, got status %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Changed      bool                          `json:"changed"`
+		White        platform.GuestProfile         `json:"white"`
+		Black        platform.GuestProfile         `json:"black"`
+		WhiteAccount platform.PublicAccountProfile `json:"whiteAccount"`
+		BlackAccount platform.PublicAccountProfile `json:"blackAccount"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("expected internal finalizer response to decode, got %v", err)
+	}
+	if !response.Changed || response.White.Rating != 1216 || response.Black.Rating != 1184 {
+		t.Fatalf("expected internal finalizer to update guest ratings, got %#v", response)
+	}
+	if response.WhiteAccount.AccountID != whiteAccountSession.Account.AccountID || response.WhiteAccount.Rating != 1216 {
+		t.Fatalf("expected internal finalizer to update white account, got %#v", response.WhiteAccount)
+	}
+	if response.BlackAccount.AccountID != blackAccountSession.Account.AccountID || response.BlackAccount.Rating != 1184 {
+		t.Fatalf("expected internal finalizer to update black account, got %#v", response.BlackAccount)
 	}
 }

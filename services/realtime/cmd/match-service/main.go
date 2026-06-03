@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-
 func main() {
 	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL")
 	mux := http.NewServeMux()
@@ -33,7 +33,7 @@ func main() {
 		log.Fatalf("failed to initialize archive store: %v", err)
 	}
 	defer func() { _ = archive.Close() }()
-	service := match.NewServiceWithArchive(archive)
+	service := match.NewServiceWithArchive(newFinalizingArchiveStore(archive))
 	rl := rate_limit.New()
 	allowed := httputil.ParseAllowedOrigins()
 	upgrader := websocket.Upgrader{
@@ -210,6 +210,113 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(ctx)
 	rl.Close()
+}
+
+type finalizingArchiveStore struct {
+	archive      *platform.MatchArchiveStore
+	platformURL  string
+	serviceToken string
+	client       *http.Client
+	mu           sync.Mutex
+	inFlight     map[string]struct{}
+	done         map[string]struct{}
+}
+
+func newFinalizingArchiveStore(archive *platform.MatchArchiveStore) *finalizingArchiveStore {
+	return &finalizingArchiveStore{
+		archive:      archive,
+		platformURL:  platformServiceURL(),
+		serviceToken: internalServiceToken(),
+		client:       &http.Client{Timeout: 5 * time.Second},
+		inFlight:     make(map[string]struct{}),
+		done:         make(map[string]struct{}),
+	}
+}
+
+func (s *finalizingArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) error {
+	if err := s.archive.Upsert(snapshot); err != nil {
+		return err
+	}
+	s.maybeFinalizeRatedMatch(snapshot)
+	return nil
+}
+
+func (s *finalizingArchiveStore) LoadMatch(matchID string) (contracts.MatchState, []contracts.ResolvedEvent, bool) {
+	return s.archive.LoadMatch(matchID)
+}
+
+func (s *finalizingArchiveStore) ListUnfinishedMatchIDs(limit int) []string {
+	return s.archive.ListUnfinishedMatchIDs(limit)
+}
+
+func (s *finalizingArchiveStore) maybeFinalizeRatedMatch(snapshot contracts.MatchSnapshotResponse) {
+	matchState := snapshot.Match
+	matchID := strings.TrimSpace(matchState.MatchID)
+	if matchID == "" || strings.TrimSpace(s.serviceToken) == "" || strings.TrimSpace(s.platformURL) == "" {
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(matchState.Queue), "rated") || !strings.EqualFold(strings.TrimSpace(matchState.Status), "finished") {
+		return
+	}
+	if strings.TrimSpace(matchState.Winner) == "" {
+		return
+	}
+	if !s.beginFinalization(matchID) {
+		return
+	}
+
+	go func() {
+		err := s.finalizeRatedMatch(matchID)
+		s.finishFinalization(matchID, err == nil)
+		if err != nil {
+			log.Printf("trusted rated finalization failed for match %s: %v", matchID, err)
+		}
+	}()
+}
+
+func (s *finalizingArchiveStore) beginFinalization(matchID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.done[matchID]; ok {
+		return false
+	}
+	if _, ok := s.inFlight[matchID]; ok {
+		return false
+	}
+	s.inFlight[matchID] = struct{}{}
+	return true
+}
+
+func (s *finalizingArchiveStore) finishFinalization(matchID string, succeeded bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.inFlight, matchID)
+	if succeeded {
+		s.done[matchID] = struct{}{}
+	}
+}
+
+func (s *finalizingArchiveStore) finalizeRatedMatch(matchID string) error {
+	body, err := json.Marshal(map[string]string{"matchId": matchID})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.platformURL, "/")+"/api/platform/internal/finalize-rated-match", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+s.serviceToken)
+
+	response, err := s.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("platform finalizer returned %d", response.StatusCode)
+	}
+	return nil
 }
 
 func archivePath() string {
@@ -411,4 +518,13 @@ func resolveSocketClaim(matchID, claimToken string) (platform.MatchSeatClaim, er
 
 func platformServiceURL() string {
 	return httputil.EnvOrDefault("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service:8080")
+}
+
+func internalServiceToken() string {
+	for _, name := range []string{"PLATFORM_INTERNAL_SERVICE_TOKEN", "CHESS404_INTERNAL_SERVICE_TOKEN", "INTERNAL_SERVICE_TOKEN"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
