@@ -22,6 +22,9 @@ func ListenAddr(envKey string, defaultPort int) string {
 	if addr != "" {
 		return addr
 	}
+	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
+		return net.JoinHostPort("", port)
+	}
 	return net.JoinHostPort("", itoa(defaultPort))
 }
 
