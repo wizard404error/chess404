@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useMemo } from 'react';
 
 type Rarity   = 'trash' | 'common' | 'rare' | 'epic' | 'legendary';

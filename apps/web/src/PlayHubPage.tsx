@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { type MatchModeId, type PieceColor } from '@chess404/contracts';
 import type { GuestProfile } from './lib/platform-service';
