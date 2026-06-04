@@ -144,6 +144,19 @@ func configuredInternalServiceToken() string {
 	return ""
 }
 
+func envBool(name string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func requireInternalServiceRequest(w http.ResponseWriter, r *http.Request) bool {
 	expected := configuredInternalServiceToken()
 	if expected == "" {
@@ -183,8 +196,18 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 	})
 
 	mux.HandleFunc("/api/platform/capabilities", func(w http.ResponseWriter, _ *http.Request) {
+		trustedResultFinalization := configuredInternalServiceToken() != ""
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cardChessFlagship":       true,
+			"publicBetaReady":         envBool("CHESS404_PUBLIC_BETA_READY", false) && trustedResultFinalization,
+			"freeCorePlay":            true,
+			"serverAuthoritative":     true,
+			"publicSnapshotsSafe":     true,
+			"deterministicReplays":    true,
+			"queueTruth":              true,
+			"modeSeparation":          true,
+			"trustedFinalization":     trustedResultFinalization,
 			"guestPlay":               true,
 			"rankedRequiresID":        true,
 			"accountRegistration":     true,
@@ -202,6 +225,16 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			"authEmailDelivery":       true,
 			"authEmailDispatch":       configuredAccountEmailDeliveryProvider() != "disabled",
 			"accountSecurityActivity": true,
+			"fairPlayTelemetry":       false,
+			"seasons":                 true,
+			"achievements":            false,
+			"dailyChallenges":         false,
+			"cardAcademy":             false,
+			"botPractice":             false,
+			"puzzles":                 false,
+			"postGameReview":          false,
+			"tournaments":             false,
+			"supporterCosmetics":      false,
 		})
 	})
 
