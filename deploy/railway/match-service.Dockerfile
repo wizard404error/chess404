@@ -3,11 +3,11 @@ FROM golang:1.25-bookworm AS build
 WORKDIR /src/services/realtime
 
 COPY services/realtime/go.mod services/realtime/go.sum ./
-RUN --mount=type=cache,id=gomod,target=/go/pkg/mod go mod download -x
+RUN go mod download -x
 
 COPY services/realtime ./
 
-RUN --mount=type=cache,id=gomod,target=/go/pkg/mod CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/match-service ./cmd/match-service
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/match-service ./cmd/match-service
 
 FROM alpine:3.20
 
