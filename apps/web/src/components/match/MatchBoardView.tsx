@@ -1110,8 +1110,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
             if (hostedActionLocked) {
               return;
             }
-            if (confirmResign === 'prompting') {
-              setConfirmResign('idle');
+            if (window.confirm("Are you sure you want to resign?")) {
               if (authoritativeMatchIdRef.current) {
                 void submitAuthoritativeIntent({ type: 'resign', ...authoritativeActorForColor(controlSender) });
                 return;
@@ -1119,19 +1118,16 @@ export function MatchBoardView(props: MatchBoardViewProps) {
               finalPositionRef.current = { fen: toFEN(board, turn, moved, lm, hmc, fmn), turn };
               setOver(true);
               setWinner(OPP[turn]);
-              return;
             }
-            setConfirmResign('prompting');
-            setTimeout(() => setConfirmResign('idle'), 3000);
           }}
           style={{
             flex:1, padding:'9px', fontSize:'12px',
-            background: confirmResign === 'prompting' ? 'linear-gradient(180deg,#cc3300,#991100)' : 'linear-gradient(180deg,#8a1a1a,#5a0f0f)',
+            background: 'linear-gradient(180deg,#8a1a1a,#5a0f0f)',
             color:'#fff',
-            border: confirmResign === 'prompting' ? '2px solid #ff4444' : '1px solid rgba(220,60,60,0.4)',
+            border: '1px solid rgba(220,60,60,0.4)',
             borderRadius:'7px', cursor:'pointer', fontWeight:'bold',
-            boxShadow: confirmResign === 'prompting' ? '0 0 16px rgba(255,60,60,0.6)' : '0 2px 12px rgba(180,30,30,0.4)'
-          }}>{confirmResign === 'prompting' ? '⚠ Confirm Resign?' : '🏳 Resign'}</button>
+            boxShadow: '0 2px 12px rgba(180,30,30,0.4)'
+          }}>🏳 Resign</button>
           {!drawOffer
             ? <button disabled={hostedActionLocked} onClick={() => {
               if (hostedActionLocked) return;

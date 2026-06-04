@@ -3634,18 +3634,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     touchMoved.current = false;
   };
 
-  React.useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
-    return () => {
-      canvas.removeEventListener('touchstart', handleTouchStart);
-      canvas.removeEventListener('touchmove', handleTouchMove);
-      canvas.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
+
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const sq = getSquare(e);
@@ -3768,6 +3757,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
           display:'block',
           width: '100%',
           height: '100%',
+          touchAction: 'none',
           cursor: annotationStart ? 'crosshair' : (cardPending ? 'crosshair' : (localDrag ? 'grabbing' : 'pointer')),
         }}
         onContextMenu={(e) => e.preventDefault()}
@@ -3776,7 +3766,10 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
         onMouseUp={handleMouseUp}
         onClick={handleClick}
         onMouseLeave={handleMouseLeave}
-        onTouchCancel={handleTouchCancel}
+        onTouchStart={handleTouchStart as any}
+        onTouchMove={handleTouchMove as any}
+        onTouchEnd={handleTouchEnd as any}
+        onTouchCancel={handleTouchCancel as any}
         onKeyDown={handleKeyDown}
       />
       <div aria-live="polite" className="sr-only">

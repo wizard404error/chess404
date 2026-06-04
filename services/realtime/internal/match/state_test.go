@@ -174,8 +174,8 @@ func TestCreateMatchStarterThreeModeStartsWithThreeCards(t *testing.T) {
 	if cardIDByMechanic(t, snapshot.Match.WhiteHand, "shield") == "" {
 		t.Fatalf("expected shield in starter hand")
 	}
-	if cardIDByMechanic(t, snapshot.Match.WhiteHand, "joker") == "" {
-		t.Fatalf("expected joker in starter hand")
+	if cardIDByMechanic(t, snapshot.Match.WhiteHand, "smallsacrifice") == "" {
+		t.Fatalf("expected smallsacrifice in starter hand")
 	}
 }
 
@@ -3270,6 +3270,9 @@ func TestJokerTransformsIntoBackendOwnedCard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 13, 30, 0, 0, time.UTC)
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "joker_flow"}, now)
+	state := service.matches["joker_flow"]
+	state.WhiteHand = []contracts.GameCard{cardTemplateByMechanic("joker")}
+	snapshot.Match.WhiteHand = state.WhiteHand
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "joker")
 
 	armed, err := applyTestIntent(service, contracts.PlayerIntent{
