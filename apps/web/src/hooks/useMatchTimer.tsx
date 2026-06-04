@@ -1,4 +1,6 @@
-﻿import React from 'react';
+'use client';
+
+import React from 'react';
 import type { PieceColor } from '@chess404/contracts';
 
 export interface UseMatchTimerProps {

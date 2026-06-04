@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import type { MatchModeId } from '@chess404/contracts';
 import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';

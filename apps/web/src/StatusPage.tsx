@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { fetchSystemStatus, type SystemStatusSnapshot } from './lib/system-service';
 

@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { Board, MatchFinishReason, MatchModeId } from '@chess404/contracts';

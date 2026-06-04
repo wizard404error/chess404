@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES, type MatchModeId, type PieceColor } from '@chess404/contracts';
 import { createPrivateMatch, type PrivateMatchIdentity } from './lib/private-match-service';

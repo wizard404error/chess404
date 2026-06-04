@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { submitPlayerReport } from '../../lib/platform-service';
 

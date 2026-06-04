@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import type { AccountProfile, GuestProfile, MatchArchiveEntry } from './lib/platform-service';
 import { fetchAccounts, fetchGuest, fetchGuestArchivedMatches, fetchGuests } from './lib/platform-service';

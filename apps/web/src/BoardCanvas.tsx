@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import type { Board, Piece, PieceType, PieceColor, Sq, CardPendingState, BombPiece, LavaSquare, DoubleMove } from './types';
 import { SQ as IMPORTED_SQ, FILES } from './constants';
