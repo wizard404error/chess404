@@ -39,7 +39,7 @@ export const CARD_POOL: readonly Omit<GameCard, 'id'>[] = [
   { name: 'Reverse', mechanic: 'reverse', type: 'trap', rarity: 'epic', color: '#2d1a4a', accent: '#c084fc', icon: '⏪', desc: 'Undo opponent last move.' },
   { name: 'Unabomber', mechanic: 'unabomber', type: 'spell', rarity: 'epic', color: '#2d1a4a', accent: '#c084fc', icon: '💣', desc: 'Attach bomb to your piece. Next round it explodes.' },
   { name: 'Mind Control', mechanic: 'mindcontrol', type: 'spell', rarity: 'legendary', color: '#4a2a00', accent: '#f59e0b', icon: '🧠', desc: 'Permanently steal one enemy piece. Not king.' },
-  { name: 'Joker', mechanic: 'joker', type: 'spell', rarity: 'common', color: '#4a2a00', accent: '#f59e0b', icon: '🃏', desc: 'Choose any card from the full card pool instantly.' }
+  { name: 'Joker', mechanic: 'joker', type: 'spell', rarity: 'rare', color: '#4a2a00', accent: '#f59e0b', icon: '🃏', desc: 'Choose any card from the full card pool instantly.' }
 ];
 
 export const RARITY_CUMULATIVE = (() => {

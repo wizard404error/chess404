@@ -362,12 +362,6 @@ func writeMatchError(w http.ResponseWriter, err error) {
 }
 
 func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Service, upgrader *websocket.Upgrader, matchID string) {
-	stream, unsubscribe, initial, err := service.Subscribe(matchID)
-	if err != nil {
-		writeMatchError(w, err)
-		return
-	}
-
 	playerClaimToken := strings.TrimSpace(r.URL.Query().Get("t"))
 	var playerID, playerSecret string
 	if playerClaimToken != "" {
@@ -377,7 +371,6 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		} else {
 			claim, err := resolveSocketClaim(matchID, playerClaimToken)
 			if err != nil {
-				unsubscribe()
 				httputil.WriteError(w, http.StatusUnauthorized, "unauthorized room claim")
 				return
 			}
@@ -386,8 +379,13 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		}
 	}
 	if playerID == "" || playerSecret == "" {
-		unsubscribe()
 		httputil.WriteError(w, http.StatusUnauthorized, "valid auth token required")
+		return
+	}
+
+	stream, unsubscribe, initial, err := service.Subscribe(matchID, playerID)
+	if err != nil {
+		writeMatchError(w, err)
 		return
 	}
 

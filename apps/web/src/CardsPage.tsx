@@ -32,7 +32,7 @@ const CARDS:Card[] = [
   {name:'Promote',         mechanic:'promote',         type:'spell',rarity:'common',   icon:'⬆️', dropRate:40,desc:'Promote one of your pieces to a higher value type. Not king.'},
   {name:'Shield',          mechanic:'shield',          type:'trap', rarity:'common',   icon:'🛡️',dropRate:40,desc:'Protect one of your pieces from capture for 1 turn.'},
   {name:'Fog Village',     mechanic:'fog_village',     type:'spell',rarity:'common',   icon:'🌫️',dropRate:40,desc:'3×3 zone — opponent cannot see pieces inside.'},
-  {name:'Joker',           mechanic:'joker',           type:'spell',rarity:'common',   icon:'🃏',dropRate:40,desc:'Choose any card from the full card pool instantly.'},
+  {name:'Joker',           mechanic:'joker',           type:'spell',rarity:'rare',     icon:'🃏',dropRate:30,desc:'Choose any card from the full card pool instantly.'},
   {name:'Full Fusion',     mechanic:'fullfusion',      type:'spell',rarity:'rare',     icon:'⚡',dropRate:30,desc:'Merge two adjacent pieces. Combined movement. No king.'},
   {name:'Swap Us',         mechanic:'swapus',          type:'spell',rarity:'rare',     icon:'↔️', dropRate:30,desc:'Swap one of YOUR pieces with one ENEMY piece. No kings.'},
   {name:'Swap Him',        mechanic:'swaphim',         type:'spell',rarity:'rare',     icon:'🔁',dropRate:30,desc:"Swap 2 of your opponent's pieces. No kings."},

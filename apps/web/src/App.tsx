@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useMatchEngine, type UseMatchEngineProps } from './hooks/useMatchEngine';
 
 import React from 'react';
@@ -815,7 +815,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
       readStoredGuestIdentity,
       copyLiveMatchLink,
     ])}>
-    <ErrorBoundary>
+
     <main id="main-content" style={{
       display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
       fontFamily:"'Segoe UI', sans-serif",
@@ -1088,6 +1088,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
         }}
       >
       <div style={{ display: 'none' }}>{children}</div>
+      <ErrorBoundary>
       {showPlayHub ? (
         <PlayHubPage
           hostedRuntime={hostedRuntime}
@@ -1415,9 +1416,9 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
         finalPositionRef={finalPositionRef}
       />
       ) : null}
+      </ErrorBoundary>
       </AppShell>
     </main>
-    </ErrorBoundary>
     <ToastContainer messages={toastMessages} onDismiss={dismissToast} />
     </PlatformContext.Provider>
     </>

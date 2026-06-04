@@ -39,7 +39,7 @@ type Service struct {
 	mu          sync.RWMutex
 	matches     map[string]*contracts.MatchState
 	events      map[string][]contracts.ResolvedEvent
-	subs        map[string]map[chan contracts.MatchSnapshotResponse]struct{}
+	subs        map[string]map[chan contracts.MatchSnapshotResponse]string
 	presence    map[string]*matchPresenceState
 	matchMu     map[string]*sync.Mutex
 	archive     MatchArchiver
@@ -97,7 +97,7 @@ func NewServiceWithArchive(archive MatchArchiver) *Service {
 	service := &Service{
 		matches:     make(map[string]*contracts.MatchState),
 		events:      make(map[string][]contracts.ResolvedEvent),
-		subs:        make(map[string]map[chan contracts.MatchSnapshotResponse]struct{}),
+		subs:        make(map[string]map[chan contracts.MatchSnapshotResponse]string),
 		presence:    make(map[string]*matchPresenceState),
 		matchMu:     make(map[string]*sync.Mutex),
 		matchSeqNum: make(map[string]int64),
@@ -520,7 +520,7 @@ var starterCards = []contracts.GameCard{
 		Name:     "Joker",
 		Mechanic: "joker",
 		Type:     "spell",
-		Rarity:   "common",
+		Rarity:   "rare",
 		Color:    "#4a2a00",
 		Accent:   "#f59e0b",
 		Icon:     "\U0001F0CF",
@@ -544,7 +544,7 @@ func starterHandCardsForMode(mode string) []contracts.GameCard {
 		return []contracts.GameCard{
 			cardTemplateByMechanic("freeze"),
 			cardTemplateByMechanic("shield"),
-			cardTemplateByMechanic("joker"),
+			cardTemplateByMechanic("smallsacrifice"),
 		}
 	}
 	return starterCards
@@ -556,7 +556,9 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 
 	matchID := req.MatchID
 	if matchID == "" {
-		matchID = fmt.Sprintf("match_%d", now.UnixMilli())
+		b := make([]byte, 4)
+		rand.Read(b)
+		matchID = fmt.Sprintf("match_%d_%s", now.UnixMilli(), hex.EncodeToString(b))
 	}
 
 	clockMS := defaultClock
@@ -623,7 +625,7 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 
 	s.matches[matchID] = state
 	s.events[matchID] = []contracts.ResolvedEvent{startEvent}
-	s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]struct{})
+	s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]string)
 	s.presence[matchID] = newMatchPresenceState(state, now)
 
 	snapshot := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), s.events[matchID], now)
@@ -1077,7 +1079,7 @@ func (s *Service) persistSnapshot(snapshot contracts.MatchSnapshotResponse) {
 	}
 }
 
-func (s *Service) Subscribe(matchID string) (<-chan contracts.MatchSnapshotResponse, func(), contracts.MatchSnapshotResponse, error) {
+func (s *Service) Subscribe(matchID string, playerID string) (<-chan contracts.MatchSnapshotResponse, func(), contracts.MatchSnapshotResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1087,7 +1089,7 @@ func (s *Service) Subscribe(matchID string) (<-chan contracts.MatchSnapshotRespo
 	}
 
 	if s.subs[matchID] == nil {
-		s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]struct{})
+		s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]string)
 	}
 
 	const maxSubscribersPerMatch = 50
@@ -1095,13 +1097,22 @@ func (s *Service) Subscribe(matchID string) (<-chan contracts.MatchSnapshotRespo
 		return nil, nil, contracts.MatchSnapshotResponse{}, errors.New("max subscribers reached for match")
 	}
 
-	ch := make(chan contracts.MatchSnapshotResponse, 128)
-	s.subs[matchID][ch] = struct{}{}
+	playerColor := ""
+	if (state.WhiteGuestID != "" && strings.EqualFold(state.WhiteGuestID, playerID)) || (state.WhiteAccountID != "" && strings.EqualFold(state.WhiteAccountID, playerID)) {
+		playerColor = "white"
+	} else if (state.BlackGuestID != "" && strings.EqualFold(state.BlackGuestID, playerID)) || (state.BlackAccountID != "" && strings.EqualFold(state.BlackAccountID, playerID)) {
+		playerColor = "black"
+	}
 
+	ch := make(chan contracts.MatchSnapshotResponse, 128)
+	s.subs[matchID][ch] = playerColor
+
+	now := time.Now().UTC()
+	baseInitial := buildSnapshotWithPresence(state, s.ensurePresenceStateLocked(matchID, state, now), len(s.events[matchID]), s.events[matchID], now)
 	initial := contracts.MatchSnapshotResponse{
-		Match:      cloneStateAt(state, s.ensurePresenceStateLocked(matchID, state, time.Now().UTC()), time.Now().UTC()),
-		ReplayHead: len(s.events[matchID]),
-		Events:     cloneEvents(s.events[matchID]),
+		Match:      filterStateForColor(baseInitial.Match, playerColor),
+		ReplayHead: baseInitial.ReplayHead,
+		Events:     baseInitial.Events,
 	}
 
 	unsubscribe := func() {
@@ -1173,7 +1184,7 @@ func (s *Service) loadArchivedMatchLocked(matchID string, restored contracts.Mat
 	s.matches[matchID] = state
 	s.events[matchID] = append([]contracts.ResolvedEvent{}, events...)
 	if s.subs[matchID] == nil {
-		s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]struct{})
+		s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]string)
 	}
 	s.presence[matchID] = newRecoveredMatchPresenceState(state)
 	return state
@@ -1474,8 +1485,22 @@ func (s *Service) broadcastLocked(matchID string, snapshot contracts.MatchSnapsh
 
 	s.matchSeqNum[matchID]++
 	snapshot.SeqNum = s.matchSeqNum[matchID]
-	for ch := range subscribers {
-		pushSnapshot(ch, snapshot)
+
+	cachedWhite := snapshot
+	cachedWhite.Match = filterStateForColor(snapshot.Match, "white")
+	cachedBlack := snapshot
+	cachedBlack.Match = filterStateForColor(snapshot.Match, "black")
+	cachedSpec := snapshot
+	cachedSpec.Match = filterStateForColor(snapshot.Match, "")
+
+	for ch, color := range subscribers {
+		if color == "white" {
+			pushSnapshot(ch, cachedWhite)
+		} else if color == "black" {
+			pushSnapshot(ch, cachedBlack)
+		} else {
+			pushSnapshot(ch, cachedSpec)
+		}
 	}
 }
 
@@ -2296,6 +2321,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			if intent.Target == nil {
 				return nil, errors.New("blackhole requires the first target square")
 			}
+			if intent.Target.Row < 0 || intent.Target.Row > 7 || intent.Target.Col < 0 || intent.Target.Col > 7 {
+				return nil, errors.New("blackhole target out of bounds")
+			}
 			pending.Target = intent.Target
 			state.UpdatedAt = now.UTC()
 			return []contracts.ResolvedEvent{
@@ -2308,6 +2336,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		}
 		if intent.Target == nil {
 			return nil, errors.New("blackhole requires the second target square")
+		}
+		if intent.Target.Row < 0 || intent.Target.Row > 7 || intent.Target.Col < 0 || intent.Target.Col > 7 {
+			return nil, errors.New("blackhole target out of bounds")
 		}
 		if pending.Target.Row == intent.Target.Row && pending.Target.Col == intent.Target.Col {
 			return nil, errors.New("blackhole requires two different target squares")
@@ -3628,6 +3659,22 @@ func cloneStateAt(state *contracts.MatchState, presence *matchPresenceState, now
 	return clone
 }
 
+func filterStateForColor(state contracts.MatchState, color string) contracts.MatchState {
+	if state.InvisiblePiece != nil && state.InvisiblePiece.OwnerColor != color {
+		state.InvisiblePiece = nil
+	}
+	if state.FogZones != nil {
+		filteredFog := make([]contracts.FogZone, 0, len(state.FogZones))
+		for _, fz := range state.FogZones {
+			if fz.OwnerColor == color {
+				filteredFog = append(filteredFog, fz)
+			}
+		}
+		state.FogZones = filteredFog
+	}
+	return state
+}
+
 func buildSnapshot(state *contracts.MatchState, replayHead int, events []contracts.ResolvedEvent, now time.Time) contracts.MatchSnapshotResponse {
 	return contracts.MatchSnapshotResponse{
 		Match:        cloneStateAt(state, nil, now),
@@ -3790,6 +3837,9 @@ func cleanupTemporaryEffects(state *contracts.MatchState, justMovedColor string)
 		if state.CheaterState.TurnsLeft <= 0 {
 			state.CheaterState = nil
 		}
+	}
+	if state.UndoAgainst == justMovedColor {
+		state.UndoAgainst = ""
 	}
 }
 
@@ -4465,7 +4515,13 @@ func selectedSquaresValue(board [][]*contracts.Piece, selected []contracts.Squar
 
 func addCardToHand(state *contracts.MatchState, owner string, card contracts.GameCard) {
 	if owner == "black" {
+		if len(state.BlackHand) >= maxHandSize {
+			return
+		}
 		state.BlackHand = append(state.BlackHand, card)
+		return
+	}
+	if len(state.WhiteHand) >= maxHandSize {
 		return
 	}
 	state.WhiteHand = append(state.WhiteHand, card)
