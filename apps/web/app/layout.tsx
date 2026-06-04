@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
+import ClientApp from './ClientApp';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -21,8 +22,6 @@ export const metadata: Metadata = {
   description: 'Chess404 is competitive online chess with curated card powers.'
 };
 
-import App from '../src/App';
-
 function resolveMatchServiceHttpBase(): string {
   return (process.env.NEXT_PUBLIC_MATCH_SERVICE_HTTP_BASE ?? process.env.NEXT_PUBLIC_MATCH_SERVICE_URL ?? '/api/realtime').replace(/\/$/, '');
 }
@@ -42,13 +41,14 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <a href="#main-content" className="skip-link">
           Skip to content
         </a>
-        <App runtimeConfig={{
+        <ClientApp runtimeConfig={{
           matchServiceHttpBase: resolveMatchServiceHttpBase(),
           matchServiceWsBase: resolveMatchServiceWsBase(),
         }}>
           {children}
-        </App>
+        </ClientApp>
       </body>
     </html>
   );
 }
+
