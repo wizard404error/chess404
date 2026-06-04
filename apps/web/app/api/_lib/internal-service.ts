@@ -128,7 +128,13 @@ function filterHeaders(headers: Headers): Headers {
   const next = new Headers();
   headers.forEach((value, key) => {
     const lower = key.toLowerCase();
-    if (lower === 'host' || lower === 'connection' || lower === 'content-length') {
+    if (
+      lower === 'host' ||
+      lower === 'connection' ||
+      lower === 'content-length' ||
+      lower === 'origin' ||
+      lower === 'referer'
+    ) {
       return;
     }
     next.set(key, value);

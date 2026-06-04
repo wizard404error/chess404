@@ -88,6 +88,9 @@ func ParseAllowedOrigins() []string {
 }
 
 func IsOriginAllowed(origin string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
 	for _, a := range allowed {
 		if strings.EqualFold(origin, a) {
 			return true
