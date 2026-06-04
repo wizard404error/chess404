@@ -459,10 +459,12 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin == "" || httputil.IsOriginAllowed(origin, allowed) {
-			if origin == "" {
+			if origin == "" && len(allowed) > 0 {
 				origin = allowed[0]
 			}
-			w.Header().Set("Access-Control-Allow-Origin", origin)
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
 			w.Header().Set("Vary", "Origin")
 		} else {
 			w.Header().Set("Vary", "Origin")
