@@ -336,8 +336,8 @@ func insufficientMaterial(board [][]*contracts.Piece) bool {
 	case 1:
 		return hasEffectiveType(nonKings[0], "bishop") || hasEffectiveType(nonKings[0], "knight")
 	case 2:
-		return (hasEffectiveType(nonKings[0], "knight") && hasEffectiveType(nonKings[1], "knight")) ||
-			(hasEffectiveType(nonKings[0], "bishop") && hasEffectiveType(nonKings[1], "bishop")) ||
+		// Two knights vs lone king is NOT a forced draw by FIDE rules — removed knight+knight case.
+		return (hasEffectiveType(nonKings[0], "bishop") && hasEffectiveType(nonKings[1], "bishop")) ||
 			(hasEffectiveType(nonKings[0], "bishop") && hasEffectiveType(nonKings[1], "knight")) ||
 			(hasEffectiveType(nonKings[0], "knight") && hasEffectiveType(nonKings[1], "bishop"))
 	default:
@@ -485,6 +485,8 @@ func pieceAt(board [][]*contracts.Piece, square contracts.Square) *contracts.Pie
 	}
 	return board[square.Row][square.Col]
 }
+
+
 
 func clonePieceAsType(piece *contracts.Piece, pieceType string) *contracts.Piece {
 	if piece == nil {

@@ -215,16 +215,28 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 	if opponent, ok := s.findMatchCandidateLocked(queue, modeID, guestID, rating); ok {
 		matchedAt := now
 		roomID := "room_" + randomToken(5)
+		
+		whiteGuest, blackGuest := opponent.GuestID, guestID
+		whiteAccount, blackAccount := opponent.AccountID, ticket.AccountID
+		whiteName, blackName := normalizeDisplayName(opponent.DisplayName, opponent.GuestID), ticket.DisplayName
+		
+		b := make([]byte, 1)
+		if _, err := rand.Read(b); err == nil && b[0]%2 == 0 {
+			whiteGuest, blackGuest = blackGuest, whiteGuest
+			whiteAccount, blackAccount = blackAccount, whiteAccount
+			whiteName, blackName = blackName, whiteName
+		}
+		
 		assignment := MatchAssignment{
 			Queue:             queue,
 			ModeID:            modeID,
 			RoomID:            roomID,
-			WhiteGuestID:      opponent.GuestID,
-			BlackGuestID:      guestID,
-			WhiteAccountID:    opponent.AccountID,
-			BlackAccountID:    ticket.AccountID,
-			WhiteName:         normalizeDisplayName(opponent.DisplayName, opponent.GuestID),
-			BlackName:         ticket.DisplayName,
+			WhiteGuestID:      whiteGuest,
+			BlackGuestID:      blackGuest,
+			WhiteAccountID:    whiteAccount,
+			BlackAccountID:    blackAccount,
+			WhiteName:         whiteName,
+			BlackName:         blackName,
 			WhitePlayerSecret: "seat_" + randomToken(12),
 			BlackPlayerSecret: "seat_" + randomToken(12),
 		}
@@ -277,16 +289,26 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 		ticket.Status = StatusMatched
 		ticket.MatchedAt = &matchedAt
 		ticket.MatchedWith = opponent.GuestID
-		ticket.SeatColor = "black"
-		ticket.OpponentName = assignment.WhiteName
+		if assignment.WhiteGuestID == ticket.GuestID {
+			ticket.SeatColor = "white"
+			ticket.OpponentName = assignment.BlackName
+		} else {
+			ticket.SeatColor = "black"
+			ticket.OpponentName = assignment.WhiteName
+		}
 		ticket.AssignedRoom = roomID
 		ticket.UpdatedAt = matchedAt
 
 		opponent.Status = StatusMatched
 		opponent.MatchedAt = &matchedAt
 		opponent.MatchedWith = guestID
-		opponent.SeatColor = "white"
-		opponent.OpponentName = assignment.BlackName
+		if assignment.WhiteGuestID == opponent.GuestID {
+			opponent.SeatColor = "white"
+			opponent.OpponentName = assignment.BlackName
+		} else {
+			opponent.SeatColor = "black"
+			opponent.OpponentName = assignment.WhiteName
+		}
 		opponent.AssignedRoom = roomID
 		opponent.UpdatedAt = matchedAt
 
@@ -454,6 +476,7 @@ func (s *Service) Stats() ServiceStats {
 
 func (s *Service) findMatchCandidateLocked(queue QueueName, modeID contracts.MatchModeID, guestID string, rating int) (Ticket, bool) {
 	candidates := make([]Ticket, 0)
+	now := s.nowUTC()
 	for _, ticket := range s.tickets {
 		if ticket.Queue != queue || normalizeModeID(ticket.ModeID) != modeID || ticket.Status != StatusQueued || ticket.GuestID == guestID {
 			continue
@@ -462,7 +485,9 @@ func (s *Service) findMatchCandidateLocked(queue QueueName, modeID contracts.Mat
 		if diff < 0 {
 			diff = -diff
 		}
-		if diff > defaultMaxRatingDiff {
+		expansion := int(now.Sub(ticket.CreatedAt).Seconds() / 30) * 50
+		maxDiff := defaultMaxRatingDiff + expansion
+		if diff > maxDiff {
 			continue
 		}
 		candidates = append(candidates, ticket)

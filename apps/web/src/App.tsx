@@ -550,6 +550,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     blackSeatBadge,
     showHostedSoloBanner,
     showHostedReconnectWarning,
+    intentInFlight,
     activeDisconnectGraceFor,
     disconnectGraceDeadlineLabel,
     whitePresenceLabel,
@@ -1396,6 +1397,8 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
         colorBlindMode={colorBlindMode}
         toggleColorBlind={toggleColorBlind}
         showHostedReconnectWarning={showHostedReconnectWarning}
+        intentInFlight={intentInFlight}
+        activeDisconnectGraceFor={activeDisconnectGraceFor}
         bootstrapAuthoritativeMatch={bootstrapAuthoritativeMatch}
         showHostedSoloBanner={showHostedSoloBanner}
         isAttackedWithFusion={isAttackedWithFusion}

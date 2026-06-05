@@ -86,7 +86,7 @@ func main() {
 	addr := httputil.ListenAddr("PLATFORM_ADDR", 8083)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), nil)),
+		Handler:           httputil.WithLogging("platform-service", httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), nil))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -191,6 +191,13 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		if pingable, ok := accounts.(interface{ Ping() error }); ok {
+			if err := pingable.Ping(); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte("database unavailable"))
+				return
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})

@@ -150,6 +150,8 @@ interface MatchBoardViewProps {
   colorBlindMode: boolean;
   toggleColorBlind: () => void;
   showHostedReconnectWarning: boolean | null;
+  intentInFlight: boolean;
+  activeDisconnectGraceFor: PieceColor | null;
   bootstrapAuthoritativeMatch: () => void;
   showHostedSoloBanner: boolean | null;
   isAttackedWithFusion: (board: Board, r: number, c: number, byColor: PieceColor) => boolean;
@@ -289,6 +291,8 @@ export function MatchBoardView(props: MatchBoardViewProps) {
     colorBlindMode,
     toggleColorBlind,
     showHostedReconnectWarning,
+    intentInFlight,
+    activeDisconnectGraceFor,
     bootstrapAuthoritativeMatch,
     showHostedSoloBanner,
     isAttackedWithFusion,
@@ -554,9 +558,9 @@ export function MatchBoardView(props: MatchBoardViewProps) {
                 {blockReason && <div style={{ margin:'0 14px 8px', padding:'7px 10px', background:'rgba(200,40,40,0.2)', border:'1px solid rgba(220,60,60,0.5)', borderRadius:'6px', fontSize:'10px', color:'#ff8080', fontWeight:600, textAlign:'center' }}>🔒 {blockReason}</div>}
                 <div style={{ flex:1 }} />
                 <div style={{ padding:'4px 14px 16px' }}>
-                  <button onClick={() => applyCard(selectedCard, ownerColor)} disabled={!canUse}
-                    style={{ width:'100%', padding:'11px', borderRadius:'22px', border:'none', background: canUse ? (selectedCard.mechanic === 'joker' ? 'linear-gradient(135deg, #f59e0b, #b45309)' : 'linear-gradient(135deg, #3b9edd, #1a5fa8)') : 'rgba(40,40,60,0.8)', color: canUse ? '#fff' : 'rgba(255,255,255,0.25)', fontWeight:700, fontSize:'13px', cursor: canUse ? 'pointer' : 'not-allowed', boxShadow: canUse ? (selectedCard.mechanic === 'joker' ? '0 4px 16px rgba(245,158,11,0.55)' : '0 4px 16px rgba(26,111,196,0.55)') : 'none', letterSpacing:'0.3px' }}>
-                    {canUse ? (selectedCard.mechanic === 'joker' ? '🃏 Choose Transformation' : 'use card') : '🔒 blocked'}
+                  <button onClick={() => applyCard(selectedCard, ownerColor)} disabled={!canUse || intentInFlight}
+                    style={{ width:'100%', padding:'11px', borderRadius:'22px', border:'none', background: canUse ? (selectedCard.mechanic === 'joker' ? 'linear-gradient(135deg, #f59e0b, #b45309)' : 'linear-gradient(135deg, #3b9edd, #1a5fa8)') : 'rgba(40,40,60,0.8)', color: canUse ? '#fff' : 'rgba(255,255,255,0.25)', fontWeight:700, fontSize:'13px', cursor: (canUse && !intentInFlight) ? 'pointer' : 'not-allowed', boxShadow: canUse ? (selectedCard.mechanic === 'joker' ? '0 4px 16px rgba(245,158,11,0.55)' : '0 4px 16px rgba(26,111,196,0.55)') : 'none', letterSpacing:'0.3px', opacity: intentInFlight ? 0.6 : 1 }}>
+                    {intentInFlight ? 'Sending...' : canUse ? (selectedCard.mechanic === 'joker' ? '🃏 Choose Transformation' : 'use card') : '🔒 blocked'}
                   </button>
                 </div>
               </div>
@@ -635,6 +639,12 @@ export function MatchBoardView(props: MatchBoardViewProps) {
             Private room is waiting for the second player to open the invite link. This seat is reserved, but the game will only start once both seats are claimed.
           </div>
         ) : null}
+        {activeDisconnectGraceFor && activeDisconnectGraceFor !== viewerSeat && (
+          <div style={{ marginBottom:'8px', padding:'9px 14px', background:'rgba(245,158,11,0.15)', border:'1px solid rgba(245,158,11,0.4)', borderRadius:'8px', color:'#f59e0b', fontSize:'11px', fontWeight:700, textAlign:'center', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px' }}>
+            <span style={{ animation:'pulse 1.5s ease-in-out infinite' }}>⏳</span>
+            Opponent disconnected. Waiting for them to return...
+          </div>
+        )}
         {showHostedSoloBanner && (
           <div style={{ marginBottom:'8px', padding:'8px 14px', background:'rgba(96,165,250,0.10)', border:'1px solid rgba(96,165,250,0.28)', borderRadius:'8px', color:'#93c5fd', fontSize:'11px', fontWeight:700, textAlign:'center' }}>
             Solo board: use the Queue tab to find a real online opponent.

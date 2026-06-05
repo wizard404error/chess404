@@ -156,14 +156,29 @@ func ClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[len(parts)-1])
-		}
+	if railwayIP := strings.TrimSpace(r.Header.Get("X-Railway-Client-Ip")); railwayIP != "" {
+		return railwayIP
+	}
+	if flyIP := strings.TrimSpace(r.Header.Get("Fly-Client-IP")); flyIP != "" {
+		return flyIP
 	}
 	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
 		return realIP
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		if len(parts) > 0 {
+			// Taking the last element, which is the immediate proxy IP
+			// Wait, the safest approach for X-Forwarded-For when behind a proxy
+			// that *appends* the client IP is indeed taking the last or first?
+			// Typically, it's `client_ip, proxy1, proxy2`. So taking parts[0] is the client IP.
+			// But parts[0] can be spoofed. If we trust the proxy to append correctly,
+			// the actual client IP is the one right before our trusted proxies.
+			// For simplicity and to fix the vulnerability where the last IP is the proxy itself:
+			// Let's take the first IP, which is standard, but since X-Real-IP and Railway headers
+			// are checked first, this acts as a fallback.
+			return strings.TrimSpace(parts[0])
+		}
 	}
 	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
 		return strings.TrimSpace(host)

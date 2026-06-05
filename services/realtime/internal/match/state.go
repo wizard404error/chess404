@@ -1062,6 +1062,11 @@ func markMatchFinished(state *contracts.MatchState, winner string, finishReason 
 	state.FortressZones = nil
 	state.BombPieces = nil
 	state.LavaSquares = nil
+	// Clear all remaining transient effect state so archived/replayed snapshots are clean
+	state.BlackHoles = nil
+	state.UndoAgainst = ""
+	state.RadarRevealFor = ""
+	state.CheaterState = nil
 	state.UpdatedAt = now.UTC()
 }
 
@@ -1102,6 +1107,10 @@ func (s *Service) Subscribe(matchID string, playerID string) (<-chan contracts.M
 		playerColor = "white"
 	} else if (state.BlackGuestID != "" && strings.EqualFold(state.BlackGuestID, playerID)) || (state.BlackAccountID != "" && strings.EqualFold(state.BlackAccountID, playerID)) {
 		playerColor = "black"
+	}
+
+	if playerColor == "" {
+		return nil, nil, contracts.MatchSnapshotResponse{}, errors.New("unauthorized: must be a seated player to subscribe")
 	}
 
 	ch := make(chan contracts.MatchSnapshotResponse, 128)
@@ -1580,17 +1589,26 @@ func (s *Service) gcFinishedMatches(now time.Time) {
 	defer s.mu.Unlock()
 
 	const finishedMatchTTL = 5 * time.Minute
+	const waitingMatchTTL = 5 * time.Minute
+
 	for matchID, state := range s.matches {
-		if state.Status != "finished" {
-			continue
+		if state.Status == "finished" {
+			if now.Sub(state.UpdatedAt) >= finishedMatchTTL {
+				delete(s.matches, matchID)
+				delete(s.events, matchID)
+				delete(s.subs, matchID)
+				delete(s.matchSeqNum, matchID)
+				delete(s.presence, matchID)
+			}
+		} else if state.Status == "waiting" {
+			if now.Sub(state.UpdatedAt) >= waitingMatchTTL {
+				delete(s.matches, matchID)
+				delete(s.events, matchID)
+				delete(s.subs, matchID)
+				delete(s.matchSeqNum, matchID)
+				delete(s.presence, matchID)
+			}
 		}
-		if now.Sub(state.UpdatedAt) < finishedMatchTTL {
-			continue
-		}
-		delete(s.matches, matchID)
-		delete(s.events, matchID)
-		delete(s.subs, matchID)
-		delete(s.presence, matchID)
 	}
 }
 
@@ -1979,6 +1997,7 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			return nil, errors.New("teleport destination is not safe")
 		}
 		state.Board = nextBoard
+		invalidateCastlingRightsForSquare(state, *pending.Target)
 		replaceLastHistorySnapshot(state)
 	case "jump":
 		if pending.Target == nil {
@@ -2036,6 +2055,7 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			return nil, errors.New("jump destination is not safe")
 		}
 		state.Board = nextBoard
+		invalidateCastlingRightsForSquare(state, *pending.Target)
 		replaceLastHistorySnapshot(state)
 	case "swapme":
 		if pending.Target == nil {
@@ -2076,6 +2096,8 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			return nil, errors.New("swapme would create check")
 		}
 		state.Board = nextBoard
+		invalidateCastlingRightsForSquare(state, *pending.Target)
+		invalidateCastlingRightsForSquare(state, *intent.Target)
 		replaceLastHistorySnapshot(state)
 	case "swapus":
 		if pending.Target == nil {
@@ -2113,6 +2135,8 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			return nil, errors.New("swapus would create check")
 		}
 		state.Board = nextBoard
+		invalidateCastlingRightsForSquare(state, *pending.Target)
+		invalidateCastlingRightsForSquare(state, *intent.Target)
 		replaceLastHistorySnapshot(state)
 	case "swaphim":
 		if pending.Target == nil {
@@ -2153,6 +2177,8 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			return nil, errors.New("swaphim would create check")
 		}
 		state.Board = nextBoard
+		invalidateCastlingRightsForSquare(state, *pending.Target)
+		invalidateCastlingRightsForSquare(state, *intent.Target)
 		replaceLastHistorySnapshot(state)
 	case "borrow":
 		if intent.Target == nil {
@@ -3574,6 +3600,24 @@ func replaceLastHistorySnapshot(state *contracts.MatchState) {
 		return
 	}
 	state.History[len(state.History)-1] = snapshot
+}
+
+// invalidateCastlingRightsForSquare marks the given square as "moved" so castling
+// rights are revoked if a rook or king was displaced by a card effect (Teleport,
+// Jump, Swap, etc.) rather than a normal move.
+func invalidateCastlingRightsForSquare(state *contracts.MatchState, sq contracts.Square) {
+	key := keyForSquare(sq)
+	for _, existing := range state.Moved {
+		if existing == key {
+			return
+		}
+	}
+	// Only invalidate castling-relevant starting squares:
+	// white king e1, white rooks a1/h1, black king e8, black rooks a8/h8.
+	switch key {
+	case "0-4", "0-0", "0-7", "7-4", "7-0", "7-7":
+		state.Moved = append(state.Moved, key)
+	}
 }
 
 func resolveGamblerCard(state *contracts.MatchState, owner string, now time.Time) map[string]any {

@@ -583,6 +583,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const authoritativeSeatSecretsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
   const authoritativeClaimExpiresAtRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
   const authoritativeClaimTokensRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
+  const [intentInFlight, setIntentInFlight] = React.useState(false);
   const gatewayRecoveredMatchIdRef = React.useRef<string | null>(null);
   const gatewayBootstrapClaimsRef = React.useRef<{
     matchId: string | null;
@@ -1988,10 +1989,13 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
 
     try {
+      setIntentInFlight(true);
       const snapshot = await applyIntent(matchId, intent);
       applyAuthoritativeSnapshot(snapshot);
+      setIntentInFlight(false);
       return true;
     } catch (err) {
+      setIntentInFlight(false);
       const message = err instanceof Error ? err.message : 'Backend request failed';
       setCardMsg(`Backend action failed: ${message}`);
       setTimeout(() => setCardMsg(''), 2500);
@@ -5790,6 +5794,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     blackSeatBadge,
     showHostedSoloBanner,
     showHostedReconnectWarning,
+    intentInFlight,
     activeDisconnectGraceFor,
     disconnectGraceDeadlineLabel,
     whitePresenceLabel,

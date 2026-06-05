@@ -280,7 +280,6 @@ export const insuffMat = (board: Board): boolean => {
   if (nonKings.length === 2) {
     const types = nonKings.map((piece) => piece.type).sort();
     return (
-      (types[0] === 'knight' && types[1] === 'knight') ||
       (types[0] === 'bishop' && types[1] === 'bishop') ||
       (types[0] === 'bishop' && types[1] === 'knight')
     );
