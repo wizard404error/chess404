@@ -717,6 +717,72 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     }
   }, [timeW, timeB, tickingState, clockActive, over, authoritativeLive]);
 
+  const platformContextValue = React.useMemo(() => ({
+    hostedRuntime, setHostedRuntime,
+    whiteProfile, blackProfile,
+    queueLaunchIntent,
+    activeMatchRoomMeta,
+    authoritativeMatchId, setAuthoritativeMatchId,
+    primaryAccountIdentity,
+    boardStatusLabel,
+    viewerSeat,
+    matchDestinationNotice,
+    setActivePage,
+    openLiveMatch,
+    openReplayMatch,
+    openProfileHandle,
+    openGuestHistory,
+    historyFocusMatchId, setHistoryFocusMatchId,
+    historyFocusGuestId, setHistoryFocusGuestId,
+    communityFocusGuestId, setCommunityFocusGuestId,
+    socialLiveToken,
+    setInboxUnreadCount,
+    profileFocusHandle,
+    shellAccountNotice,
+    hasPrimaryAccountSession,
+    accountActionQueryDetected,
+    handlePrimaryShellAuthenticated,
+    handleSeatAuthenticated,
+    syncPrimaryAccountIdentity,
+    writeStoredActiveMatchId,
+    clearRequestedMatchQuery,
+    requestedMatchIdRef,
+    readStoredGuestIdentity,
+    copyLiveMatchLink: (matchId: string) => { void copyLiveMatchLink(matchId); },
+  }), [
+    hostedRuntime, setHostedRuntime,
+    whiteProfile, blackProfile,
+    queueLaunchIntent,
+    activeMatchRoomMeta,
+    authoritativeMatchId, setAuthoritativeMatchId,
+    primaryAccountIdentity,
+    boardStatusLabel,
+    viewerSeat,
+    matchDestinationNotice,
+    setActivePage,
+    openLiveMatch,
+    openReplayMatch,
+    openProfileHandle,
+    openGuestHistory,
+    historyFocusMatchId, setHistoryFocusMatchId,
+    historyFocusGuestId, setHistoryFocusGuestId,
+    communityFocusGuestId, setCommunityFocusGuestId,
+    socialLiveToken,
+    setInboxUnreadCount,
+    profileFocusHandle,
+    shellAccountNotice,
+    hasPrimaryAccountSession,
+    accountActionQueryDetected,
+    handlePrimaryShellAuthenticated,
+    handleSeatAuthenticated,
+    syncPrimaryAccountIdentity,
+    writeStoredActiveMatchId,
+    clearRequestedMatchQuery,
+    requestedMatchIdRef,
+    readStoredGuestIdentity,
+    copyLiveMatchLink,
+  ]);
+
   // â”€â”€ Loading skeleton â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (hostedRuntime === null) {
     return (
@@ -740,7 +806,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
 
   // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
-    <>
+    <PlatformContext.Provider value={platformContextValue}>
     {!online && (
       <div style={{
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
@@ -750,71 +816,6 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
         ðŸ”´ You are offline â€” some features may not work
       </div>
     )}
-    <PlatformContext.Provider value={React.useMemo(() => ({
-      hostedRuntime, setHostedRuntime,
-      whiteProfile, blackProfile,
-      queueLaunchIntent,
-            activeMatchRoomMeta,
-    authoritativeMatchId, setAuthoritativeMatchId,
-    primaryAccountIdentity,
-      boardStatusLabel,
-      viewerSeat,
-      matchDestinationNotice,
-      setActivePage,
-      openLiveMatch,
-      openReplayMatch,
-      openProfileHandle,
-      openGuestHistory,
-      historyFocusMatchId, setHistoryFocusMatchId,
-      historyFocusGuestId, setHistoryFocusGuestId,
-      communityFocusGuestId, setCommunityFocusGuestId,
-      socialLiveToken,
-      setInboxUnreadCount,
-      profileFocusHandle,
-      shellAccountNotice,
-      hasPrimaryAccountSession,
-      accountActionQueryDetected,
-      handlePrimaryShellAuthenticated,
-      handleSeatAuthenticated,
-      syncPrimaryAccountIdentity,
-      writeStoredActiveMatchId,
-      clearRequestedMatchQuery,
-      requestedMatchIdRef,
-      readStoredGuestIdentity,
-      copyLiveMatchLink: (matchId: string) => { void copyLiveMatchLink(matchId); },
-    }), [
-      hostedRuntime, setHostedRuntime,
-      whiteProfile, blackProfile,
-      queueLaunchIntent,
-      activeMatchRoomMeta,
-      authoritativeMatchId, setAuthoritativeMatchId,
-      primaryAccountIdentity,
-      boardStatusLabel,
-      viewerSeat,
-      matchDestinationNotice,
-      setActivePage,
-      openLiveMatch,
-      openReplayMatch,
-      openProfileHandle,
-      openGuestHistory,
-      historyFocusMatchId, setHistoryFocusMatchId,
-      historyFocusGuestId, setHistoryFocusGuestId,
-      communityFocusGuestId, setCommunityFocusGuestId,
-      socialLiveToken,
-      setInboxUnreadCount,
-      profileFocusHandle,
-      shellAccountNotice,
-      hasPrimaryAccountSession,
-      accountActionQueryDetected,
-      handlePrimaryShellAuthenticated,
-      handleSeatAuthenticated,
-      syncPrimaryAccountIdentity,
-      writeStoredActiveMatchId,
-      clearRequestedMatchQuery,
-      requestedMatchIdRef,
-      readStoredGuestIdentity,
-      copyLiveMatchLink,
-    ])}>
 
     <main id="main-content" style={{
       display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
@@ -1421,6 +1422,5 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     </main>
     <ToastContainer messages={toastMessages} onDismiss={dismissToast} />
     </PlatformContext.Provider>
-    </>
   );
 }
