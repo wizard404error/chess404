@@ -63,7 +63,7 @@ func main() {
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		// Basic backend health check: ping the database if supported
-		if pingable, ok := archive.(interface{ Ping() error }); ok {
+		if pingable, ok := any(archive).(interface{ Ping() error }); ok {
 			if err := pingable.Ping(); err != nil {
 				httputil.WriteError(w, http.StatusServiceUnavailable, "database unavailable")
 				return
