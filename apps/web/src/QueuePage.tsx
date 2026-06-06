@@ -189,6 +189,10 @@ export default function QueuePage({
     });
   }, []);
 
+  const applyQueueSnapshot = React.useCallback((snapshot: QueueSnapshot) => {
+    setQueueSnapshot(snapshot);
+  }, []);
+
   React.useEffect(() => {
     if (typeof window === 'undefined') {
       return;
@@ -416,30 +420,31 @@ export default function QueuePage({
       const tasks: Promise<void>[] = [];
       if (whiteTicket?.status === 'queued') {
         tasks.push(
-          fetchTicket(whiteTicket.ticketId).then(({ ticket }) => {
+          fetchTicket(whiteTicket.ticketId).then(({ ticket, snapshot }) => {
             pollingBackoffRef.current = 0;
             setWhiteTicket(ticket);
+            if (snapshot) applyQueueSnapshot(snapshot);
           })
         );
       }
       if (blackTicket?.status === 'queued') {
         tasks.push(
-          fetchTicket(blackTicket.ticketId).then(({ ticket }) => {
+          fetchTicket(blackTicket.ticketId).then(({ ticket, snapshot }) => {
             pollingBackoffRef.current = 0;
             setBlackTicket(ticket);
+            if (snapshot) applyQueueSnapshot(snapshot);
           })
         );
       }
-      tasks.push(refreshQueue(queue, modeId));
       void Promise.all(tasks).catch((err) => {
         if (err instanceof RateLimitError) {
-          pollingBackoffRef.current = Math.min(pollingBackoffRef.current + 1, 4);
+          pollingBackoffRef.current = Math.min(pollingBackoffRef.current + 4);
         }
       });
     }, 2500 * (pollingBackoffRef.current > 0 ? pollingBackoffRef.current : 1));
 
     return () => window.clearInterval(interval);
-  }, [whiteTicket, blackTicket, queue, modeId, refreshQueue, restoringTickets]);
+  }, [whiteTicket, blackTicket, applyQueueSnapshot, restoringTickets]);
 
   const handleJoin = React.useCallback(async (side: 'white' | 'black') => {
     const profile = side === 'white' ? whiteProfile : blackProfile;
