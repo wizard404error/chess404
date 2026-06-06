@@ -39,6 +39,12 @@ type Piece struct {
 	InvisibleTurn  *int   `json:"invisibleTurn,omitempty"`
 	InvisibleOver  bool   `json:"invisibleOver,omitempty"`
 	FusedWith      string `json:"fusedWith,omitempty"`
+	// Fake marks a piece placed by the fakepiece card. Fakes look like pawns
+	// to the opponent (to bait captures) but cannot promote, are not counted
+	// in the 8-pawn promotion budget, and disappear if an enemy piece lands
+	// on them (they are removed without giving the opponent a normal
+	// pawn-capture event).
+	Fake bool `json:"fake,omitempty"`
 }
 
 type GameCard struct {
@@ -150,6 +156,15 @@ type PositionState struct {
 	HalfMoveClock  int                  `json:"halfMoveClock"`
 	FullMoveNum    int                  `json:"fullMoveNumber"`
 	MoveHistory    []string             `json:"moveHistory"`
+	// Hands, pending card, double move, undo, and draw offer are snapshotted
+	// alongside the board so the Reverse card can restore the full match
+	// state to a previous turn (not just the chess position).
+	WhiteHand    []GameCard        `json:"whiteHand,omitempty"`
+	BlackHand    []GameCard        `json:"blackHand,omitempty"`
+	PendingCard  *PendingCardState `json:"pendingCard,omitempty"`
+	DoubleMove   *DoubleMoveState  `json:"doubleMove,omitempty"`
+	UndoAgainst  string            `json:"undoAgainst,omitempty"`
+	DrawOfferedBy string           `json:"drawOfferedBy,omitempty"`
 }
 
 type ReplayFrame struct {

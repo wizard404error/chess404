@@ -672,3 +672,62 @@
 .flex-1 { flex: 1; }
 .h-full { height: 100%; }
 .text-center { text-align: center; }
+
+
+/* UI Polish Additions */
+.interactive-tile {
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+  cursor: pointer;
+}
+.interactive-tile:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 190, 90, 0.4) !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4), 0 0 15px rgba(200, 134, 10, 0.15) !important;
+}
+.interactive-tile:active {
+  transform: translateY(0);
+}
+
+.stat-card {
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(20, 26, 42, 0.96) 0%, rgba(14, 18, 30, 0.98) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.table-row {
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+.table-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+  transform: translateX(4px);
+}
+
+.glass-panel {
+  background: rgba(14, 18, 30, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+}
+
+.input-glow:focus {
+  border-color: var(--accent-hover) !important;
+  box-shadow: 0 0 0 3px rgba(255, 190, 90, 0.2) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

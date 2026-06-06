@@ -63,13 +63,7 @@ export default function PlayHubPage({
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 28px 32px', color: '#f4e8c8' }}>
       <div style={{ maxWidth: '1380px', margin: '0 auto', display: 'grid', gap: '18px' }}>
-        <div style={{
-          padding: '22px 24px',
-          borderRadius: '18px',
-          background: 'linear-gradient(180deg, rgba(14,18,30,0.98) 0%, rgba(10,14,24,0.96) 100%)',
-          border: '1px solid rgba(255,165,40,0.16)',
-          boxShadow: '0 18px 50px rgba(0,0,0,0.28)',
-        }}>
+        <div className="stat-card">
           <div style={{ color: '#ffcf72', fontSize: '12px', fontWeight: 800, letterSpacing: '1.4px', textTransform: 'uppercase', marginBottom: '8px' }}>
             Play
           </div>
@@ -153,13 +147,7 @@ export default function PlayHubPage({
         )}
 
         <div style={{ display: 'grid', gap: '18px' }}>
-          <div style={{
-            padding: '18px',
-            borderRadius: '18px',
-            background: 'linear-gradient(180deg, rgba(12,18,28,0.94) 0%, rgba(9,12,20,0.98) 100%)',
-            border: '1px solid rgba(255,165,40,0.14)',
-            boxShadow: '0 14px 38px rgba(0,0,0,0.22)',
-          }}>
+          <div className="stat-card">
             <div style={{ marginBottom: '14px' }}>
               <div style={{ color: '#ffcf72', fontSize: '12px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
                 Quick Pair
@@ -184,13 +172,7 @@ export default function PlayHubPage({
             />
           </div>
 
-          <div style={{
-            padding: '18px',
-            borderRadius: '18px',
-            background: 'linear-gradient(180deg, rgba(12,18,28,0.94) 0%, rgba(9,12,20,0.98) 100%)',
-            border: '1px solid rgba(110,170,255,0.14)',
-            boxShadow: '0 14px 38px rgba(0,0,0,0.22)',
-          }}>
+          <div className="stat-card" style={{ borderColor: 'rgba(110,170,255,0.14)' }}>
             <div style={{ marginBottom: '14px' }}>
               <div style={{ color: '#9ed0ff', fontSize: '12px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
                 Play A Friend
@@ -234,23 +216,41 @@ function MetaTile(props: { label: string; value: string }): React.ReactElement {
   );
 }
 
-function LaunchTile(props: { eyebrow: string; title: string; detail: string }): React.ReactElement {
+function LaunchTile({
+  eyebrow,
+  title,
+  detail,
+  onClick,
+  disabled,
+}: {
+  eyebrow: string;
+  title: string;
+  detail: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
   return (
-    <div style={{
-      padding: '18px',
-      borderRadius: '18px',
-      background: 'linear-gradient(180deg, rgba(12,18,28,0.94) 0%, rgba(9,12,20,0.98) 100%)',
-      border: '1px solid rgba(255,165,40,0.14)',
-      boxShadow: '0 14px 38px rgba(0,0,0,0.22)',
-    }}>
-      <div style={{ color: '#ffcf72', fontSize: '11px', fontWeight: 800, letterSpacing: '1.1px', textTransform: 'uppercase' }}>
-        {props.eyebrow}
+    <div
+      onClick={disabled ? undefined : onClick}
+      className={`interactive-tile ${disabled ? '' : ''}`}
+      style={{
+        padding: '20px',
+        borderRadius: '16px',
+        background: 'linear-gradient(180deg, rgba(20,26,42,0.96) 0%, rgba(14,18,30,0.98) 100%)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+        opacity: disabled ? 0.6 : 1,
+        pointerEvents: disabled ? 'none' : 'auto',
+      }}
+    >
+      <div style={{ color: '#ffbe5a', fontSize: '11px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
+        {eyebrow}
       </div>
-      <div style={{ color: '#fff4d6', fontSize: '18px', fontWeight: 800, marginTop: '8px' }}>
-        {props.title}
+      <div style={{ color: '#f4f7ff', fontSize: '20px', fontWeight: 800, marginTop: '8px' }}>
+        {title}
       </div>
-      <div style={{ color: 'rgba(244,232,200,0.68)', fontSize: '13px', lineHeight: 1.6, marginTop: '8px' }}>
-        {props.detail}
+      <div style={{ color: 'rgba(220,230,255,0.64)', fontSize: '13px', lineHeight: 1.6, marginTop: '10px' }}>
+        {detail}
       </div>
     </div>
   );

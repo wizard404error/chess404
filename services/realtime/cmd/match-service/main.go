@@ -37,8 +37,9 @@ func main() {
 	rl := rate_limit.New()
 	allowed := httputil.ParseAllowedOrigins()
 	upgrader := websocket.Upgrader{
-		ReadBufferSize:  4096,
-		WriteBufferSize: 4096,
+		ReadBufferSize:    4096,
+		WriteBufferSize:   4096,
+		EnableCompression: false,
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
@@ -47,6 +48,12 @@ func main() {
 			return httputil.IsOriginAllowed(origin, allowed)
 		},
 	}
+
+	// Hard cap on per-message size to prevent a single client from amplifying
+	// memory pressure (gigantic payloads, slow-loris, or accidental floods).
+	// 64 KiB is more than enough for any intent we accept (typical intents are
+	// well under 1 KiB). Excess closes the connection.
+	const wsReadLimit int64 = 64 * 1024
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -186,7 +193,7 @@ func main() {
 		}
 
 		if len(parts) == 2 && parts[1] == "ws" && r.Method == http.MethodGet {
-			handleMatchSocket(w, r, service, &upgrader, matchID)
+			handleMatchSocket(w, r, service, &upgrader, matchID, wsReadLimit)
 			return
 		}
 
@@ -368,7 +375,7 @@ func writeMatchError(w http.ResponseWriter, err error) {
 	}
 }
 
-func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Service, upgrader *websocket.Upgrader, matchID string) {
+func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Service, upgrader *websocket.Upgrader, matchID string, wsReadLimit int64) {
 	playerClaimToken := strings.TrimSpace(r.URL.Query().Get("t"))
 	var playerID, playerSecret string
 	if playerClaimToken != "" {
@@ -401,6 +408,7 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		unsubscribe()
 		return
 	}
+	conn.SetReadLimit(wsReadLimit)
 	done := make(chan struct{})
 
 	// Read pump - required by gorilla/websocket to process close/ping/pong control frames.

@@ -1719,13 +1719,17 @@ func applyPlayCard(state *contracts.MatchState, intent contracts.PlayerIntent, n
 		if oppKing := findKing(restored.Board, opposite(owner)); oppKing != nil && isAttackedWithFusion(restored.Board, *oppKing, owner) {
 			return nil, errors.New("cannot reverse because enemy king would be in check")
 		}
-		removeCardFromHand(state, owner, card.ID)
+		// Restore first so we consume the card from the restored hand (which
+		// is the pre-reverse state) — not the live hand. If the reverse card
+		// is not in the restored hand (e.g. it was drawn after the move
+		// being reversed) the call is a no-op and the card remains
+		// unconsumed, which is the correct semantic: the card was added
+		// after the action it claims to undo.
 		restorePositionState(state, restored)
+		removeCardFromHand(state, owner, card.ID)
 		if len(state.History) > 0 {
 			state.History = append([]contracts.PositionState{}, state.History[:len(state.History)-1]...)
 		}
-		state.DoubleMove = nil
-		state.DrawOfferedBy = ""
 		state.UpdatedAt = now.UTC()
 		return []contracts.ResolvedEvent{
 			makeEvent(state.MatchID, "card_played", now, intent.PlayerID, map[string]any{
@@ -1895,6 +1899,18 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if err := ensureRemovalDoesNotCreateCheck(state.Board, *intent.Target, pending.OwnerColor); err != nil {
 			return nil, err
 		}
+		if targetPiece.Shielded {
+			targetPiece.Shielded = false
+			targetPiece.ShieldTurn = nil
+			state.DrawOfferedBy = ""
+			state.UpdatedAt = now.UTC()
+			return []contracts.ResolvedEvent{
+				makeEvent(state.MatchID, "target_selected", now, intent.PlayerID, map[string]any{
+					"effect": "shield_blocked_capture",
+					"target": intent.Target,
+				}),
+			}, nil
+		}
 		state.Board[intent.Target.Row][intent.Target.Col] = nil
 		replaceLastHistorySnapshot(state)
 	case "badsniper":
@@ -1911,6 +1927,18 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if err := ensureRemovalDoesNotCreateCheck(state.Board, *intent.Target, pending.OwnerColor); err != nil {
 			return nil, err
 		}
+		if targetPiece.Shielded {
+			targetPiece.Shielded = false
+			targetPiece.ShieldTurn = nil
+			state.DrawOfferedBy = ""
+			state.UpdatedAt = now.UTC()
+			return []contracts.ResolvedEvent{
+				makeEvent(state.MatchID, "target_selected", now, intent.PlayerID, map[string]any{
+					"effect": "shield_blocked_capture",
+					"target": intent.Target,
+				}),
+			}, nil
+		}
 		state.Board[intent.Target.Row][intent.Target.Col] = nil
 		replaceLastHistorySnapshot(state)
 	case "promote", "demote", "promotehim", "demotehim":
@@ -1924,6 +1952,11 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			}
 			if err := validateTransformTarget(targetPiece, pending.OwnerColor, pending.Mechanic); err != nil {
 				return nil, err
+			}
+			if targetPiece.Frozen && (pending.Mechanic == "demote" || pending.Mechanic == "demotehim" ||
+				(pending.Mechanic == "promote" && targetPiece.Color == pending.OwnerColor) ||
+				(pending.Mechanic == "promotehim" && targetPiece.Color != pending.OwnerColor)) {
+				return nil, errors.New("transform cannot target a frozen piece")
 			}
 			options := safeTransformOptions(state.Board, *intent.Target, pending.Mechanic)
 			if len(options) == 0 {
@@ -1963,6 +1996,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			if targetPiece == nil || targetPiece.Color != pending.OwnerColor || targetPiece.Type == "king" {
 				return nil, errors.New("teleport requires your own non-king target")
 			}
+			if targetPiece.Frozen {
+				return nil, errors.New("teleport cannot target a frozen piece")
+			}
 			pending.Target = intent.Target
 			state.UpdatedAt = now.UTC()
 			return []contracts.ResolvedEvent{
@@ -1989,6 +2025,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if movingPiece == nil {
 			return nil, errors.New("teleport source piece no longer exists")
 		}
+		if movingPiece.Frozen {
+			return nil, errors.New("teleport cannot move a frozen piece")
+		}
 		nextBoard := cloneBoard(state.Board)
 		nextMovingPiece := nextBoard[pending.Target.Row][pending.Target.Col]
 		nextBoard[intent.Target.Row][intent.Target.Col] = nextMovingPiece
@@ -2007,6 +2046,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			targetPiece := pieceAt(state.Board, *intent.Target)
 			if targetPiece == nil || targetPiece.Color != pending.OwnerColor || targetPiece.Type == "king" || targetPiece.Type == "knight" {
 				return nil, errors.New("jump requires your own non-king, non-knight target")
+			}
+			if targetPiece.Frozen {
+				return nil, errors.New("jump cannot target a frozen piece")
 			}
 			pending.Target = intent.Target
 			state.UpdatedAt = now.UTC()
@@ -2030,6 +2072,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		fromPiece := pieceAt(state.Board, *pending.Target)
 		if fromPiece == nil {
 			return nil, errors.New("jump source piece no longer exists")
+		}
+		if fromPiece.Frozen {
+			return nil, errors.New("jump cannot move a frozen piece")
 		}
 		destinationPiece := pieceAt(state.Board, *intent.Target)
 		if destinationPiece != nil && destinationPiece.Color == pending.OwnerColor {
@@ -2066,6 +2111,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			if targetPiece == nil || targetPiece.Color != pending.OwnerColor || targetPiece.Type == "king" {
 				return nil, errors.New("swapme requires your own non-king target")
 			}
+			if targetPiece.Frozen {
+				return nil, errors.New("swapme cannot target a frozen piece")
+			}
 			pending.Target = intent.Target
 			state.UpdatedAt = now.UTC()
 			return []contracts.ResolvedEvent{
@@ -2083,6 +2131,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		secondPiece := pieceAt(state.Board, *intent.Target)
 		if firstPiece == nil {
 			return nil, errors.New("swapme first piece no longer exists")
+		}
+		if secondPiece.Frozen {
+			return nil, errors.New("swapme cannot target a frozen piece")
 		}
 		if secondPiece == nil || secondPiece.Color != pending.OwnerColor || secondPiece.Type == "king" {
 			return nil, errors.New("swapme requires your own non-king second piece")
@@ -2108,6 +2159,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			if targetPiece == nil || targetPiece.Color != pending.OwnerColor || targetPiece.Type == "king" {
 				return nil, errors.New("swapus requires your own non-king target")
 			}
+			if targetPiece.Frozen {
+				return nil, errors.New("swapus cannot target a frozen piece")
+			}
 			pending.Target = intent.Target
 			state.UpdatedAt = now.UTC()
 			return []contracts.ResolvedEvent{
@@ -2126,8 +2180,14 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if firstPiece == nil {
 			return nil, errors.New("swapus first piece no longer exists")
 		}
+		if firstPiece.Frozen {
+			return nil, errors.New("swapus cannot move a frozen piece")
+		}
 		if secondPiece == nil || secondPiece.Color == pending.OwnerColor || secondPiece.Type == "king" {
 			return nil, errors.New("swapus requires an enemy non-king second piece")
+		}
+		if secondPiece.Frozen {
+			return nil, errors.New("swapus cannot target a frozen piece")
 		}
 		nextBoard := cloneBoard(state.Board)
 		nextBoard[pending.Target.Row][pending.Target.Col], nextBoard[intent.Target.Row][intent.Target.Col] = nextBoard[intent.Target.Row][intent.Target.Col], nextBoard[pending.Target.Row][pending.Target.Col]
@@ -2146,6 +2206,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			targetPiece := pieceAt(state.Board, *intent.Target)
 			if targetPiece == nil || targetPiece.Color == pending.OwnerColor || targetPiece.Type == "king" {
 				return nil, errors.New("swaphim requires an enemy non-king target")
+			}
+			if targetPiece.Frozen {
+				return nil, errors.New("swaphim cannot target a frozen piece")
 			}
 			pending.Target = intent.Target
 			state.UpdatedAt = now.UTC()
@@ -2168,6 +2231,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if secondPiece == nil || secondPiece.Color == pending.OwnerColor || secondPiece.Type == "king" {
 			return nil, errors.New("swaphim requires an enemy non-king second piece")
 		}
+		if secondPiece.Frozen {
+			return nil, errors.New("swaphim cannot target a frozen piece")
+		}
 		if pending.Target.Row == intent.Target.Row && pending.Target.Col == intent.Target.Col {
 			return nil, errors.New("swaphim requires two different enemy pieces")
 		}
@@ -2188,6 +2254,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if targetPiece == nil || targetPiece.Color == pending.OwnerColor || targetPiece.Type == "king" {
 			return nil, errors.New("borrow requires an enemy non-king target")
 		}
+		if targetPiece.Frozen {
+			return nil, errors.New("borrow cannot target a frozen piece")
+		}
 		nextBoard := cloneBoard(state.Board)
 		nextTarget := nextBoard[intent.Target.Row][intent.Target.Col]
 		nextTarget.Color = pending.OwnerColor
@@ -2204,6 +2273,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		targetPiece := pieceAt(state.Board, *intent.Target)
 		if targetPiece == nil || targetPiece.Color == pending.OwnerColor || targetPiece.Type == "king" {
 			return nil, errors.New("mindcontrol requires an enemy non-king target")
+		}
+		if targetPiece.Frozen {
+			return nil, errors.New("mindcontrol cannot target a frozen piece")
 		}
 		nextBoard := cloneBoard(state.Board)
 		nextTarget := nextBoard[intent.Target.Row][intent.Target.Col]
@@ -2269,6 +2341,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			if targetPiece == nil || targetPiece.Color != pending.OwnerColor || targetPiece.Type == "king" {
 				return nil, errors.New("clone requires your own non-king target")
 			}
+			if targetPiece.Frozen {
+				return nil, errors.New("clone cannot target a frozen piece")
+			}
 			pending.Target = intent.Target
 			state.UpdatedAt = now.UTC()
 			return []contracts.ResolvedEvent{
@@ -2288,6 +2363,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		sourcePiece := pieceAt(state.Board, *pending.Target)
 		if sourcePiece == nil {
 			return nil, errors.New("clone source piece no longer exists")
+		}
+		if sourcePiece.Frozen {
+			return nil, errors.New("clone cannot copy a frozen piece")
 		}
 		if pieceAt(state.Board, *intent.Target) != nil {
 			return nil, errors.New("clone destination must be empty")
@@ -2335,6 +2413,7 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		nextBoard[intent.Target.Row][intent.Target.Col] = &contracts.Piece{
 			Type:  "pawn",
 			Color: pending.OwnerColor,
+			Fake:  true,
 		}
 		king := findKing(nextBoard, pending.OwnerColor)
 		if king != nil && isAttackedWithFusion(nextBoard, *king, opposite(pending.OwnerColor)) {
@@ -2813,7 +2892,7 @@ func applyMove(state *contracts.MatchState, intent contracts.PlayerIntent, now t
 	}
 	updateParasiteLinksForMove(nextBoard, *intent.From, *intent.To)
 	promotion := ""
-	if nextPiece != nil && nextPiece.Type == "pawn" && (intent.To.Row == 0 || intent.To.Row == 7) {
+	if nextPiece != nil && nextPiece.Type == "pawn" && !nextPiece.Fake && (intent.To.Row == 0 || intent.To.Row == 7) {
 		promoteTo := "queen"
 		if intent.Promotion != "" {
 			switch intent.Promotion {
@@ -3484,6 +3563,10 @@ func capturePositionState(state *contracts.MatchState) contracts.PositionState {
 		HalfMoveClock:  state.HalfMoveClock,
 		FullMoveNum:    state.FullMoveNum,
 		MoveHistory:    append([]string{}, state.MoveHistory...),
+		WhiteHand:      append([]contracts.GameCard{}, state.WhiteHand...),
+		BlackHand:      append([]contracts.GameCard{}, state.BlackHand...),
+		UndoAgainst:    state.UndoAgainst,
+		DrawOfferedBy:  state.DrawOfferedBy,
 	}
 	if state.InvisiblePiece != nil {
 		invisible := *state.InvisiblePiece
@@ -3496,6 +3579,22 @@ func capturePositionState(state *contracts.MatchState) contracts.PositionState {
 	if state.LastMove != nil {
 		last := *state.LastMove
 		position.LastMove = &last
+	}
+	if state.PendingCard != nil {
+		pending := *state.PendingCard
+		if pending.Target != nil {
+			t := *pending.Target
+			pending.Target = &t
+		}
+		position.PendingCard = &pending
+	}
+	if state.DoubleMove != nil {
+		dm := *state.DoubleMove
+		if state.DoubleMove.TrackedSq != nil {
+			tracked := *state.DoubleMove.TrackedSq
+			dm.TrackedSq = &tracked
+		}
+		position.DoubleMove = &dm
 	}
 	return position
 }
@@ -3513,6 +3612,10 @@ func restorePositionState(state *contracts.MatchState, position contracts.Positi
 	state.HalfMoveClock = position.HalfMoveClock
 	state.FullMoveNum = position.FullMoveNum
 	state.MoveHistory = append([]string{}, position.MoveHistory...)
+	state.WhiteHand = append([]contracts.GameCard{}, position.WhiteHand...)
+	state.BlackHand = append([]contracts.GameCard{}, position.BlackHand...)
+	state.UndoAgainst = position.UndoAgainst
+	state.DrawOfferedBy = position.DrawOfferedBy
 	if position.InvisiblePiece != nil {
 		invisible := *position.InvisiblePiece
 		state.InvisiblePiece = &invisible
@@ -3530,6 +3633,26 @@ func restorePositionState(state *contracts.MatchState, position contracts.Positi
 		state.LastMove = &last
 	} else {
 		state.LastMove = nil
+	}
+	if position.PendingCard != nil {
+		pending := *position.PendingCard
+		if pending.Target != nil {
+			t := *pending.Target
+			pending.Target = &t
+		}
+		state.PendingCard = &pending
+	} else {
+		state.PendingCard = nil
+	}
+	if position.DoubleMove != nil {
+		dm := *position.DoubleMove
+		if position.DoubleMove.TrackedSq != nil {
+			tracked := *position.DoubleMove.TrackedSq
+			dm.TrackedSq = &tracked
+		}
+		state.DoubleMove = &dm
+	} else {
+		state.DoubleMove = nil
 	}
 }
 
@@ -3565,6 +3688,12 @@ func applyMirrorCard(state *contracts.MatchState, owner string) (bool, *contract
 
 			capturedSquare := to
 			captured := pieceAt(state.Board, to)
+			if captured != nil && captured.Shielded {
+				captured.Shielded = false
+				captured.ShieldTurn = nil
+				state.DrawOfferedBy = ""
+				return true, &from, &to, nil
+			}
 			nextBoard := cloneBoard(state.Board)
 			nextPiece := pieceAt(nextBoard, from)
 			if nextPiece == nil {
@@ -3900,8 +4029,13 @@ func resolveLavaEffects(state *contracts.MatchState, landing contracts.Square) (
 			triggered = true
 			piece := pieceAt(state.Board, landing)
 			if piece != nil && piece.Type != "king" {
-				capturedPieceType = piece.Type
-				state.Board[landing.Row][landing.Col] = nil
+				if piece.Shielded {
+					piece.Shielded = false
+					piece.ShieldTurn = nil
+				} else {
+					capturedPieceType = piece.Type
+					state.Board[landing.Row][landing.Col] = nil
+				}
 			}
 			continue
 		}
@@ -3958,6 +4092,11 @@ func resolveBombEffects(state *contracts.MatchState) []contracts.Square {
 					}
 					target := state.Board[r][c]
 					if target != nil && target.Type != "king" {
+						if target.Shielded {
+							target.Shielded = false
+							target.ShieldTurn = nil
+							continue
+						}
 						state.Board[r][c] = nil
 						exploded = append(exploded, contracts.Square{Row: r, Col: c})
 					}
@@ -4038,6 +4177,11 @@ func resolveBlackHoleEffects(state *contracts.MatchState, justMovedColor string)
 				}
 				target := state.Board[r][c]
 				if target != nil && target.Type != "king" {
+					if target.Shielded {
+						target.Shielded = false
+						target.ShieldTurn = nil
+						continue
+					}
 					state.Board[r][c] = nil
 					key := keyForCoords(r, c)
 					if _, ok := seen[key]; !ok {
@@ -4074,10 +4218,15 @@ func resolveParasiteEffects(board [][]*contracts.Piece, from, to, capturedSquare
 		if hostSq, ok := parseParasiteSquare(capturedPiece.ParasiteTarget); ok {
 			hostPiece := pieceAt(board, hostSq)
 			if hostPiece != nil && hostPiece.Type != "king" {
-				if err := ensurePieceRemovalKeepsOwnKingSafe(board, hostSq); err != nil {
-					return errors.New("parasite capture would leave a king in check")
+				if hostPiece.Shielded {
+					hostPiece.Shielded = false
+					hostPiece.ShieldTurn = nil
+				} else {
+					if err := ensurePieceRemovalKeepsOwnKingSafe(board, hostSq); err != nil {
+						return errors.New("parasite capture would leave a king in check")
+					}
+					board[hostSq.Row][hostSq.Col] = nil
 				}
-				board[hostSq.Row][hostSq.Col] = nil
 			}
 		}
 	}
@@ -4093,6 +4242,11 @@ func resolveParasiteEffects(board [][]*contracts.Piece, from, to, capturedSquare
 				continue
 			}
 			if piece.Type != "king" {
+				if piece.Shielded {
+					piece.Shielded = false
+					piece.ShieldTurn = nil
+					continue
+				}
 				if err := ensurePieceRemovalKeepsOwnKingSafe(board, contracts.Square{Row: r, Col: c}); err != nil {
 					return errors.New("parasite capture would leave a king in check")
 				}

@@ -1998,6 +1998,20 @@ interface Particle {
   type: 'spark' | 'smoke' | 'ember' | 'lava' | 'swap';
 }
 
+// Hard cap on simultaneously-alive particles. When exceeded, oldest particles
+// are evicted (FIFO) so the simulation never grows unbounded and a sustained
+// effect burst cannot stall the render loop. 512 is plenty for every card
+// animation we ship; the per-frame cost stays in single-digit milliseconds.
+const MAX_PARTICLES = 512;
+
+function pushParticle(pool: Particle[], p: Particle): void {
+  if (pool.length >= MAX_PARTICLES) {
+    // Evict oldest entries (FIFO). splice is O(n) but n is small (≤ cap).
+    pool.splice(0, pool.length - MAX_PARTICLES + 1);
+  }
+  pool.push(p);
+}
+
 export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasProps) {
   const {
     board, turn, sel, hints, lm, check, kingPos,
@@ -2105,7 +2119,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
         for (let i = 0; i < 20; i++) {
           const a = Math.random() * Math.PI * 2;
           const spd = 1.5 + Math.random() * 3;
-          particles.current.push({
+          pushParticle(particles.current, {
             x: cx, y: cy,
             vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
             life: 1, maxLife: 1,
@@ -2133,7 +2147,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
       for (let i = 0; i < 40; i++) {
         const a = Math.random() * Math.PI * 2;
         const spd = 2 + Math.random() * 6;
-        particles.current.push({
+        pushParticle(particles.current, {
           x: cx, y: cy, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 2,
           life: 1, maxLife: 1, r: 3 + Math.random() * 5,
           color: i < 20 ? '#ff6600' : i < 32 ? '#ffdd00' : '#ffffff',
@@ -2143,7 +2157,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
       for (let i = 0; i < 12; i++) {
         const a = Math.random() * Math.PI * 2;
         const spd = 0.5 + Math.random() * 2;
-        particles.current.push({
+        pushParticle(particles.current, {
           x: cx + (Math.random()-0.5)*20, y: cy + (Math.random()-0.5)*20,
           vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 1.5,
           life: 1, maxLife: 1, r: 8 + Math.random() * 12,
@@ -2159,7 +2173,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
       for (let i = 0; i < 18; i++) {
         const a = Math.random() * Math.PI * 2;
         const spd = 1.5 + Math.random() * 4;
-        particles.current.push({
+        pushParticle(particles.current, {
           x: cx, y: cy, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd - 3,
           life: 1, maxLife: 1, r: 3 + Math.random() * 5,
           color: i < 9 ? '#ff4500' : '#ffcc00',
@@ -2179,7 +2193,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
         const a = Math.random() * Math.PI * 2;
         const spd = 1.5 + Math.random() * 5;
         const biasVy = isUp ? -Math.random() * 3 : Math.random() * 3;
-        particles.current.push({
+        pushParticle(particles.current, {
           x: cx + (Math.random() - 0.5) * SQ * 0.5,
           y: cy + (Math.random() - 0.5) * SQ * 0.5,
           vx: Math.cos(a) * spd,

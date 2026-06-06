@@ -1134,16 +1134,13 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
 
   return (
     <div
+      className="stat-card"
       style={{
         display: 'flex',
         flexDirection: 'column',
         gap: '14px',
         minWidth: 0,
-        background: 'linear-gradient(180deg, rgba(14,18,30,0.98) 0%, rgba(9,12,20,0.96) 100%)',
         border: `1px solid ${accent}`,
-        borderRadius: '18px',
-        padding: '20px',
-        boxShadow: '0 16px 42px rgba(0,0,0,0.32)',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -1213,14 +1210,7 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
       ) : (
         <>
           {activeAccount && (
-            <div style={{
-              borderRadius: '14px',
-              border: '1px solid rgba(255,180,60,0.18)',
-              background: 'rgba(255,255,255,0.03)',
-              padding: '16px',
-              display: 'grid',
-              gap: '8px',
-            }}>
+            <div className="stat-card" style={{ display: 'grid', gap: '8px' }}>
               <div style={{ color: '#fff2c8', fontSize: '18px', fontWeight: 800 }}>@{activeAccount.handle}</div>
               <div style={{ color: 'rgba(244,232,200,0.72)', fontSize: '13px' }}>
                 Account ID: <span style={{ color: '#ffe9b1', fontFamily: 'monospace' }}>{activeAccount.accountId}</span>
@@ -1273,14 +1263,7 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
           )}
 
           {activeAccount && (
-            <div style={{
-              borderRadius: '14px',
-              border: '1px solid rgba(255,180,60,0.18)',
-              background: 'rgba(255,255,255,0.03)',
-              padding: '16px',
-              display: 'grid',
-              gap: '12px',
-            }}>
+            <div className="stat-card" style={{ display: 'grid', gap: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <div>
                   <div style={{ color: '#fff2c8', fontSize: '16px', fontWeight: 800 }}>Active sessions</div>
@@ -1349,14 +1332,7 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
           )}
 
           {activeAccount && (
-            <div style={{
-              borderRadius: '14px',
-              border: '1px solid rgba(255,180,60,0.18)',
-              background: 'rgba(255,255,255,0.03)',
-              padding: '16px',
-              display: 'grid',
-              gap: '10px',
-            }}>
+            <div className="stat-card" style={{ display: 'grid', gap: '10px' }}>
               <div style={{ color: '#fff2c8', fontSize: '16px', fontWeight: 800 }}>Season view</div>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <select
@@ -1444,14 +1420,7 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
           )}
 
           {activeAccount && (
-            <div style={{
-              borderRadius: '14px',
-              border: '1px solid rgba(255,180,60,0.18)',
-              background: 'rgba(255,255,255,0.03)',
-              padding: '16px',
-              display: 'grid',
-              gap: '10px',
-            }}>
+            <div className="stat-card" style={{ display: 'grid', gap: '10px' }}>
               <div style={{ color: '#fff2c8', fontSize: '16px', fontWeight: 800 }}>Rating history</div>
               {displayedRatingHistory.length === 0 ? (
                 <div style={{ color: 'rgba(244,232,200,0.68)', fontSize: '13px' }}>
@@ -1468,14 +1437,7 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
           )}
 
           {activeAccount && (
-            <div style={{
-              borderRadius: '14px',
-              border: '1px solid rgba(255,180,60,0.18)',
-              background: 'rgba(255,255,255,0.03)',
-              padding: '16px',
-              display: 'grid',
-              gap: '10px',
-            }}>
+            <div className="stat-card" style={{ display: 'grid', gap: '10px' }}>
               <div style={{ color: '#fff2c8', fontSize: '16px', fontWeight: 800 }}>
                 {selectedSeasonId || selectedModeId ? 'Filtered account matches' : 'Recent account matches'}
               </div>
@@ -1528,19 +1490,10 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
                 {activeAccount ? 'Renew using handle' : 'Claim handle'}
               </span>
               <input
+                className="input input-glow"
                 value={handle}
                 onChange={(event) => setHandle(event.target.value)}
                 placeholder="aurora_fox"
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  borderRadius: '10px',
-                  border: '1px solid rgba(255,180,60,0.28)',
-                  background: 'rgba(8,10,18,0.92)',
-                  color: '#fff6df',
-                  fontSize: '14px',
-                  outline: 'none',
-                }}
               />
             </label>
             <div style={{ color: 'rgba(244,232,200,0.62)', fontSize: '12px' }}>
@@ -1548,20 +1501,10 @@ function AccountSeatPanel({ side, label, accent, guestProfile = null, externalNo
             </div>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
               <button
+                className="btn-primary"
                 onClick={() => void submitClaim()}
                 disabled={busy || !handle.trim()}
-                style={{
-                  padding: '11px 16px',
-                  borderRadius: '10px',
-                  border: '1px solid rgba(255,190,70,0.48)',
-                  background: busy || !handle.trim()
-                    ? 'rgba(120,90,35,0.38)'
-                    : 'linear-gradient(180deg, rgba(200,134,10,0.92) 0%, rgba(122,79,8,0.95) 100%)',
-                  color: '#fff7e3',
-                  fontSize: '13px',
-                  fontWeight: 800,
-                  cursor: busy || !handle.trim() ? 'not-allowed' : 'pointer',
-                }}
+                style={{ padding: '11px 16px' }}
               >
                 {busy ? 'Working...' : activeAccount ? 'Renew Account Session' : 'Claim Account'}
               </button>

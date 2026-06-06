@@ -84,7 +84,7 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
   return (
     <div style={{ maxWidth: embedded ? 'none' : '980px', margin: '0 auto', display: 'grid', gap: '18px' }}>
       {!embedded ? (
-        <div style={{ padding: '22px', borderRadius: '18px', background: 'linear-gradient(180deg, rgba(14,20,38,0.92) 0%, rgba(7,11,22,0.98) 100%)', border: '1px solid rgba(120,150,255,0.18)', boxShadow: '0 18px 48px rgba(0,0,0,0.28)' }}>
+        <div className="stat-card" style={{ padding: '22px' }}>
           <div style={{ color: '#f3f6ff', fontSize: '28px', fontWeight: 900 }}>Private Lobbies</div>
           <div style={{ marginTop: '8px', color: 'rgba(214,224,255,0.76)', fontSize: '14px', lineHeight: 1.65 }}>
             Create a private invite room, share the link, and let the second device auto-join the empty seat like a real quick-pair platform should.
@@ -93,7 +93,7 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
       ) : null}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' }}>
-        <div style={{ padding: '20px', borderRadius: '18px', background: 'rgba(10,14,28,0.92)', border: '1px solid rgba(120,150,255,0.14)' }}>
+        <div className="stat-card" style={{ borderColor: 'rgba(120,150,255,0.14)' }}>
           <div style={{ color: '#ffffff', fontSize: '16px', fontWeight: 800 }}>Create Invite Match</div>
           <div style={{ marginTop: '6px', color: 'rgba(214,224,255,0.7)', fontSize: '12px' }}>
             Current player: {displayName ?? identity?.guestId ?? 'Loading...'}
@@ -102,7 +102,7 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
           <div style={{ marginTop: '18px', display: 'grid', gap: '14px' }}>
             <label style={{ display: 'grid', gap: '8px' }}>
               <span style={{ color: '#dbe8ff', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Mode</span>
-              <select value={modeId} onChange={event => setModeId(event.target.value as MatchModeId)} style={selectStyle}>
+              <select className="input input-glow" value={modeId} onChange={event => setModeId(event.target.value as MatchModeId)} style={selectStyle}>
                 {OFFICIAL_MATCH_MODES.map(mode => (
                   <option key={mode.id} value={mode.id}>{mode.label}</option>
                 ))}
@@ -183,27 +183,20 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
           )}
 
           <button
+            className="btn-primary"
             onClick={() => { void handleCreate(); }}
             disabled={creating || !identity?.guestId}
             style={{
               marginTop: '18px',
               width: '100%',
               padding: '13px 16px',
-              borderRadius: '12px',
-              border: '1px solid rgba(122,166,255,0.34)',
-              background: creating ? 'rgba(100,100,120,0.2)' : 'linear-gradient(135deg, rgba(52,110,255,0.92), rgba(68,160,255,0.92))',
-              color: '#f7fbff',
-              fontSize: '13px',
-              fontWeight: 900,
-              cursor: creating || !identity?.guestId ? 'not-allowed' : 'pointer',
-              boxShadow: creating ? 'none' : '0 16px 36px rgba(30,100,255,0.24)',
             }}
           >
             {creating ? 'Creating lobby...' : 'Create Private Invite Match'}
           </button>
         </div>
 
-        <div style={{ padding: '20px', borderRadius: '18px', background: 'rgba(10,14,28,0.92)', border: '1px solid rgba(120,150,255,0.14)' }}>
+        <div className="stat-card" style={{ borderColor: 'rgba(120,150,255,0.14)' }}>
           <div style={{ color: '#ffffff', fontSize: '16px', fontWeight: 800 }}>Invite Flow</div>
           <div style={{ marginTop: '8px', color: 'rgba(214,224,255,0.7)', fontSize: '13px', lineHeight: 1.6 }}>
             Share the room link with a friend. The first browser already owns one seat. The second device opens the canonical match route and claims the empty seat.
@@ -241,8 +234,8 @@ export default function LobbiesPage({ identity, displayName, hostedRuntime, embe
                 <div style={{ marginTop: '8px', color: '#eef4ff', fontSize: '12px', lineHeight: 1.5, wordBreak: 'break-all' }}>{created.inviteUrl}</div>
               </div>
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <button onClick={() => { void copyInviteLink(); }} style={secondaryButtonStyle}>Copy Invite Link</button>
-                <button onClick={openRoom} style={primaryButtonStyle}>Open Match Route</button>
+                <button className="btn-secondary" onClick={() => { void copyInviteLink(); }} style={{ padding: '11px 14px' }}>Copy Invite Link</button>
+                <button className="btn-primary" onClick={openRoom} style={{ padding: '11px 14px' }}>Open Match Route</button>
               </div>
               <div style={{ color: created.waitingForOpponent ? '#9de4b0' : '#ffd487', fontSize: '12px', lineHeight: 1.6 }}>
                 {created.waitingForOpponent

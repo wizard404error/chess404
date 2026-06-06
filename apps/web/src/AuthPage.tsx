@@ -384,16 +384,7 @@ export default function AuthPage({
       <div style={{
         width:'min(480px, 100%)',
       }}>
-        <div style={{
-          borderRadius:'26px',
-          padding:'28px 26px',
-          background:'linear-gradient(180deg, rgba(12,14,26,0.98) 0%, rgba(6,8,16,0.98) 100%)',
-          border:'1px solid rgba(255,180,60,0.2)',
-          boxShadow:'0 24px 60px rgba(0,0,0,0.4)',
-          display:'grid',
-          gap:'18px',
-          alignContent:'start',
-        }}>
+        <div className="stat-card">
           {loading ? (
             <div style={{ color:'rgba(255,232,184,0.76)', fontSize:'14px', lineHeight:1.7 }}>
               Restoring the last account session for this device...
@@ -444,33 +435,16 @@ export default function AuthPage({
 
               <div style={{ display:'grid', gap:'10px' }}>
                 <button
+                  className="btn-primary"
                   onClick={onContinue}
-                  style={{
-                    padding:'12px 16px',
-                    borderRadius:'12px',
-                    border:'1px solid rgba(255,180,60,0.42)',
-                    background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)',
-                    color:'#fff7df',
-                    fontSize:'13px',
-                    fontWeight:900,
-                    cursor:'pointer',
-                    boxShadow:'0 8px 20px rgba(200,134,10,0.28)',
-                  }}
+                  style={{ padding: '12px 16px', boxShadow:'0 8px 20px rgba(200,134,10,0.28)' }}
                 >
                   {hostedRuntime ? 'Go To Play' : 'Open Board'}
                 </button>
                 <button
+                  className="btn-ghost"
                   onClick={() => onOpenAccount?.()}
-                  style={{
-                    padding:'12px 16px',
-                    borderRadius:'12px',
-                    border:'1px solid rgba(255,255,255,0.11)',
-                    background:'rgba(255,255,255,0.04)',
-                    color:'rgba(255,247,229,0.90)',
-                    fontSize:'12px',
-                    fontWeight:800,
-                    cursor:'pointer',
-                  }}
+                  style={{ padding: '12px 16px' }}
                 >
                   Open Account And Security
                 </button>
@@ -542,67 +516,37 @@ export default function AuthPage({
                   <label style={{ display:'grid', gap:'6px' }}>
                     <span style={{ color:'rgba(255,232,184,0.74)', fontSize:'12px', fontWeight:700 }}>Handle</span>
                     <input
+                      className="input input-glow"
                       value={handle}
                       onChange={(event) => setHandle(event.target.value)}
                       placeholder="wizard404error"
-                      style={{
-                        padding:'12px 13px',
-                        borderRadius:'12px',
-                        border:'1px solid rgba(255,255,255,0.10)',
-                        background:'rgba(255,255,255,0.04)',
-                        color:'#fff6df',
-                        outline:'none',
-                      }}
                     />
                   </label>
                   <label style={{ display:'grid', gap:'6px' }}>
                     <span style={{ color:'rgba(255,232,184,0.74)', fontSize:'12px', fontWeight:700 }}>Email</span>
                     <input
+                      className="input input-glow"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
                       placeholder="you@example.com"
                       type="email"
-                      style={{
-                        padding:'12px 13px',
-                        borderRadius:'12px',
-                        border:'1px solid rgba(255,255,255,0.10)',
-                        background:'rgba(255,255,255,0.04)',
-                        color:'#fff6df',
-                        outline:'none',
-                      }}
                     />
                   </label>
                   <label style={{ display:'grid', gap:'6px' }}>
                     <span style={{ color:'rgba(255,232,184,0.74)', fontSize:'12px', fontWeight:700 }}>Password</span>
                     <input
+                      className="input input-glow"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       placeholder="Choose a strong password"
                       type="password"
-                      style={{
-                        padding:'12px 13px',
-                        borderRadius:'12px',
-                        border:'1px solid rgba(255,255,255,0.10)',
-                        background:'rgba(255,255,255,0.04)',
-                        color:'#fff6df',
-                        outline:'none',
-                      }}
                     />
                   </label>
                   <button
+                    className="btn-primary"
                     onClick={() => { void submitRegistration(); }}
                     disabled={busy}
-                    style={{
-                      padding:'13px 16px',
-                      borderRadius:'12px',
-                      border:'1px solid rgba(255,180,60,0.42)',
-                      background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)',
-                      color:'#fff7df',
-                      fontSize:'13px',
-                      fontWeight:900,
-                      cursor: busy ? 'default' : 'pointer',
-                      opacity: busy ? 0.75 : 1,
-                    }}
+                    style={{ padding: '13px 16px' }}
                   >
                     {busy ? 'Creating account...' : 'Create Account'}
                   </button>
@@ -612,50 +556,27 @@ export default function AuthPage({
                   <label style={{ display:'grid', gap:'6px' }}>
                     <span style={{ color:'rgba(255,232,184,0.74)', fontSize:'12px', fontWeight:700 }}>Handle or email</span>
                     <input
+                      className="input input-glow"
                       value={loginIdentifier}
                       onChange={(event) => setLoginIdentifier(event.target.value)}
                       placeholder="wizard404error or you@example.com"
-                      style={{
-                        padding:'12px 13px',
-                        borderRadius:'12px',
-                        border:'1px solid rgba(255,255,255,0.10)',
-                        background:'rgba(255,255,255,0.04)',
-                        color:'#fff6df',
-                        outline:'none',
-                      }}
                     />
                   </label>
                   <label style={{ display:'grid', gap:'6px' }}>
                     <span style={{ color:'rgba(255,232,184,0.74)', fontSize:'12px', fontWeight:700 }}>Password</span>
                     <input
+                      className="input input-glow"
                       value={loginPassword}
                       onChange={(event) => setLoginPassword(event.target.value)}
                       placeholder="Your account password"
                       type="password"
-                      style={{
-                        padding:'12px 13px',
-                        borderRadius:'12px',
-                        border:'1px solid rgba(255,255,255,0.10)',
-                        background:'rgba(255,255,255,0.04)',
-                        color:'#fff6df',
-                        outline:'none',
-                      }}
                     />
                   </label>
                   <button
+                    className="btn-primary"
                     onClick={() => { void submitLogin(); }}
                     disabled={busy}
-                    style={{
-                      padding:'13px 16px',
-                      borderRadius:'12px',
-                      border:'1px solid rgba(255,180,60,0.42)',
-                      background:'linear-gradient(180deg, #c8860a 0%, #7a5008 100%)',
-                      color:'#fff7df',
-                      fontSize:'13px',
-                      fontWeight:900,
-                      cursor: busy ? 'default' : 'pointer',
-                      opacity: busy ? 0.75 : 1,
-                    }}
+                    style={{ padding: '13px 16px' }}
                   >
                     {busy ? 'Signing in...' : 'Sign In'}
                   </button>
@@ -665,33 +586,17 @@ export default function AuthPage({
                   <label style={{ display:'grid', gap:'6px' }}>
                     <span style={{ color:'rgba(255,232,184,0.74)', fontSize:'12px', fontWeight:700 }}>Handle or email</span>
                     <input
+                      className="input input-glow"
                       value={resetIdentifier}
                       onChange={(event) => setResetIdentifier(event.target.value)}
                       placeholder="wizard404error or you@example.com"
-                      style={{
-                        padding:'12px 13px',
-                        borderRadius:'12px',
-                        border:'1px solid rgba(255,255,255,0.10)',
-                        background:'rgba(255,255,255,0.04)',
-                        color:'#fff6df',
-                        outline:'none',
-                      }}
                     />
                   </label>
                   <button
+                    className="btn-ghost"
                     onClick={() => { void submitPasswordReset(); }}
                     disabled={busy}
-                    style={{
-                      padding:'13px 16px',
-                      borderRadius:'12px',
-                      border:'1px solid rgba(255,180,60,0.24)',
-                      background:'rgba(255,255,255,0.04)',
-                      color:'#fff5d2',
-                      fontSize:'13px',
-                      fontWeight:900,
-                      cursor: busy ? 'default' : 'pointer',
-                      opacity: busy ? 0.75 : 1,
-                    }}
+                    style={{ padding: '13px 16px' }}
                   >
                     {busy ? 'Requesting reset...' : 'Send Password Reset'}
                   </button>

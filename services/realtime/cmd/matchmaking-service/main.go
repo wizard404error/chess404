@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -136,6 +138,17 @@ func main() {
 				return
 			}
 
+			if restricted, kind := checkAccountRestriction(r.Context(), matchmakingPlatformServiceURL(), matchmakingInternalServiceToken(), payload.AccountID); restricted {
+				log.Printf("[matchmaking] BLOCKED enqueue for account=%s restriction=%s", payload.AccountID, kind)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error":           "account is " + kind + " and cannot enter the queue",
+					"restrictionKind": kind,
+				})
+				return
+			}
+
 			log.Printf("[matchmaking] Enqueue request: guest=%s, queue=%s, mode=%s, rating=%d",
 				payload.GuestID, queue, modeID, payload.Rating)
 
@@ -258,6 +271,65 @@ func matchmakingMatchServiceURL() string {
 		httputil.EnvOrDefault("MATCH_SERVICE_INTERNAL_URL", ""),
 		"http://match-service:8080",
 	)
+}
+
+func matchmakingPlatformServiceURL() string {
+	return resolveInternalServiceURL(
+		httputil.EnvOrDefault("PLATFORM_SERVICE_INTERNAL_URL", ""),
+		"http://platform-service:8080",
+	)
+}
+
+func matchmakingInternalServiceToken() string {
+	for _, name := range []string{"PLATFORM_INTERNAL_SERVICE_TOKEN", "CHESS404_INTERNAL_SERVICE_TOKEN", "INTERNAL_SERVICE_TOKEN"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// checkAccountRestriction consults the platform-service moderation store to
+// determine whether the supplied account is currently banned or suspended.
+// Returns (true, kind) when the account is restricted, (false, "") when it is
+// clear, and (false, "") on transport error (fail-open is acceptable for
+// matchmaking; the match-service will still enforce the restriction at the
+// intent boundary).
+func checkAccountRestriction(ctx context.Context, baseURL, token, accountID string) (bool, string) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" || strings.TrimSpace(baseURL) == "" || token == "" {
+		return false, ""
+	}
+	target := strings.TrimRight(baseURL, "/") + "/api/platform/internal/account-restriction?accountId=" + url.QueryEscape(accountID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		log.Printf("[matchmaking] WARN: failed to build restriction check request: %v", err)
+		return false, ""
+	}
+	req.Header.Set("X-Chess404-Service-Token", token)
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[matchmaking] WARN: restriction check transport error for %s: %v", accountID, err)
+		return false, ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[matchmaking] WARN: restriction check returned %d for %s", resp.StatusCode, accountID)
+		return false, ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, ""
+	}
+	var payload struct {
+		Restricted      bool   `json:"restricted"`
+		RestrictionKind string `json:"restrictionKind"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false, ""
+	}
+	return payload.Restricted, payload.RestrictionKind
 }
 
 func resolveInternalServiceURL(explicit, fallback string) string {

@@ -130,7 +130,7 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 		}
 		if len(allowedOrigins) > 0 {
 			for _, allowed := range allowedOrigins {
-				if strings.HasPrefix(check, allowed) {
+				if equalFoldOrigin(check, allowed) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -141,7 +141,7 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 				scheme = "http://"
 			}
 			selfOrigin := scheme + r.Host
-			if strings.HasPrefix(check, selfOrigin) {
+			if equalFoldOrigin(check, selfOrigin) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -184,4 +184,22 @@ func ClientIP(r *http.Request) string {
 		return strings.TrimSpace(host)
 	}
 	return strings.TrimSpace(r.RemoteAddr)
+}
+
+// equalFoldOrigin reports whether two origin URLs are equivalent for CSRF
+// checking. Origins are case-insensitive and must match exactly (scheme +
+// host [+ port]). Prefix matching is unsafe: an attacker controlling
+// "evil.com" can prefix-match against an allow-listed "evil.com.attacker.tld"
+// when only HasPrefix is used. This helper performs strict, normalized
+// equality.
+func equalFoldOrigin(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	return strings.EqualFold(a, b)
 }

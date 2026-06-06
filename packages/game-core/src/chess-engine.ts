@@ -278,10 +278,14 @@ export const insuffMat = (board: Board): boolean => {
   if (nonKings.length === 0) return true;
   if (nonKings.length === 1) return nonKings[0].type === 'bishop' || nonKings[0].type === 'knight';
   if (nonKings.length === 2) {
+    // KBN vs K is a known forced mate — must NOT be declared a draw.
+    // Two knights vs lone king is also not a forced draw. The only true
+    // insufficient-material positions are: K vs K, KB vs K, KN vs K,
+    // KBB vs K (same-color bishops). We keep the safe B+B and N+N cases only.
     const types = nonKings.map((piece) => piece.type).sort();
     return (
       (types[0] === 'bishop' && types[1] === 'bishop') ||
-      (types[0] === 'bishop' && types[1] === 'knight')
+      (types[0] === 'knight' && types[1] === 'knight')
     );
   }
   return false;

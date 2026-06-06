@@ -412,15 +412,13 @@ export default function ProfilesPage({
   return (
     <div className={profile ? 'profile-shell' : 'profile-shell profile-shell--stacked'}>
       <div
+        className="stat-card"
         style={{
           minWidth: 0,
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
-          background: 'linear-gradient(180deg, rgba(14,18,30,0.98) 0%, rgba(9,12,20,0.96) 100%)',
-          border: '1px solid rgba(255,165,40,0.16)',
-          borderRadius: '14px',
-          boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+          padding: 0,
           overflow: 'hidden',
         }}
       >
@@ -455,17 +453,9 @@ export default function ProfilesPage({
                 }}
               />
               <button
+                className="btn-primary"
                 onClick={submitDirectorySearch}
-                style={{
-                  padding: '10px 12px',
-                  borderRadius: '10px',
-                  border: '1px solid rgba(255,180,60,0.3)',
-                  background: 'linear-gradient(180deg, rgba(200,134,10,0.28) 0%, rgba(122,79,8,0.38) 100%)',
-                  color: '#fff2c8',
-                  fontSize: '12px',
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                }}
+                style={{ padding: '10px 12px' }}
               >
                 Search
               </button>
@@ -564,6 +554,7 @@ export default function ProfilesPage({
                 return (
                   <button
                     key={account.accountId}
+                    className={`table-row ${focused ? 'stat-card' : ''}`}
                     onClick={() => openHandle(account.handle)}
                     style={{
                       textAlign: 'left',
@@ -572,8 +563,7 @@ export default function ProfilesPage({
                       border: focused ? '1px solid rgba(255,190,90,0.34)' : '1px solid rgba(255,165,40,0.12)',
                       background: focused
                         ? 'linear-gradient(180deg, rgba(200,134,10,0.2) 0%, rgba(70,42,8,0.22) 100%)'
-                        : 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)',
-                      boxShadow: '0 10px 28px rgba(0,0,0,0.24)',
+                        : 'rgba(255,255,255,0.03)',
                       padding: '14px 15px 13px',
                       display: 'grid',
                       gap: '8px',
@@ -608,16 +598,14 @@ export default function ProfilesPage({
       </div>
 
       <div
+        className="stat-card"
         style={{
           flex: 1,
           minWidth: 0,
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
-          background: 'linear-gradient(180deg, rgba(14,18,30,0.98) 0%, rgba(9,12,20,0.96) 100%)',
-          border: '1px solid rgba(255,165,40,0.16)',
-          borderRadius: '14px',
-          boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+          padding: 0,
           overflow: 'hidden',
         }}
       >
@@ -691,17 +679,9 @@ export default function ProfilesPage({
                 {onOpenAccount ? (
                   <div style={{ display: 'flex', justifyContent: 'center', marginTop: '18px' }}>
                     <button
+                      className="btn-primary"
                       onClick={onOpenAccount}
-                      style={{
-                        padding: '11px 16px',
-                        borderRadius: '12px',
-                        border: '1px solid rgba(255,190,90,0.34)',
-                        background: 'linear-gradient(180deg, rgba(200,134,10,0.3) 0%, rgba(112,71,8,0.42) 100%)',
-                        color: '#fff6de',
-                        fontSize: '12px',
-                        fontWeight: 800,
-                        cursor: 'pointer',
-                      }}
+                      style={{ padding: '11px 16px' }}
                     >
                       Open Account
                     </button>

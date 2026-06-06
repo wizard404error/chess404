@@ -624,17 +624,12 @@ export default function QueuePage({
         <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
         {!ticket || ticket.status === 'cancelled' ? (
           <button
+            className="btn-primary"
             onClick={() => void handleJoin(side)}
             disabled={loading || restoringTickets || !profile || ratedBlocked}
             style={{
               flex: 1,
               padding: '10px 12px',
-              borderRadius: '9px',
-              border: '1px solid rgba(255,180,60,0.25)',
-              background: 'linear-gradient(180deg, rgba(200,134,10,0.32) 0%, rgba(122,79,8,0.42) 100%)',
-              color: '#fff2c8',
-              fontWeight: 800,
-              cursor: loading || restoringTickets || !profile || ratedBlocked ? 'not-allowed' : 'pointer',
               opacity: ratedBlocked ? 0.72 : 1,
             }}
           >
@@ -676,17 +671,12 @@ export default function QueuePage({
           </div>
         ) : (
           <button
+            className="btn-primary"
             onClick={() => void handleOpenMatch(ticket)}
             disabled={loading || restoringTickets || !ticket.assignedRoom}
             style={{
               flex: 1,
               padding: '10px 12px',
-              borderRadius: '9px',
-              border: '1px solid rgba(255,180,60,0.25)',
-              background: 'linear-gradient(180deg, rgba(200,134,10,0.32) 0%, rgba(122,79,8,0.42) 100%)',
-              color: '#fff2c8',
-              fontWeight: 800,
-              cursor: loading || restoringTickets || !ticket.assignedRoom ? 'not-allowed' : 'pointer',
             }}
           >
             Open match
@@ -718,16 +708,7 @@ export default function QueuePage({
       gap: '18px',
       alignItems: 'start',
     }}>
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0,
-        background: 'linear-gradient(180deg, rgba(14,18,30,0.98) 0%, rgba(9,12,20,0.96) 100%)',
-        border: '1px solid rgba(255,165,40,0.16)',
-        borderRadius: '14px',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
-        overflow: 'hidden',
-      }}>
+      <div className="stat-card" style={{ padding: 0 }}>
         <div style={{ padding: '18px 18px 14px', borderBottom: '1px solid rgba(255,165,40,0.12)' }}>
           <div style={{ color: '#ffcf72', fontSize: '13px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>Queue Control</div>
           <div style={{ color: 'rgba(255,232,180,0.72)', fontSize: '12px', marginTop: '4px' }}>

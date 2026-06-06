@@ -88,16 +88,14 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, padding: '22px 28px 26px', gap: '18px' }}>
       <div
+        className="stat-card"
         style={{
           flex: 1,
           minWidth: 0,
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
-          background: 'linear-gradient(180deg, rgba(14,18,30,0.98) 0%, rgba(9,12,20,0.96) 100%)',
-          border: '1px solid rgba(255,165,40,0.16)',
-          borderRadius: '14px',
-          boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+          padding: 0, // Reset padding for full bleed
           overflow: 'hidden',
         }}
       >
@@ -153,17 +151,9 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
                 ))}
               </select>
               <button
+                className="btn-primary"
                 onClick={() => void loadRankings(selectedSeasonId || undefined, selectedModeId || undefined)}
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,180,60,0.35)',
-                  background: 'linear-gradient(180deg, rgba(200,134,10,0.32) 0%, rgba(122,79,8,0.4) 100%)',
-                  color: '#fff2c8',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
+                style={{ padding: '8px 12px' }}
               >
                 Refresh
               </button>
@@ -269,6 +259,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
                 return (
                   <div
                     key={account.accountId}
+                    className="table-row"
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '72px minmax(0, 1fr) 120px 220px 110px',
@@ -309,6 +300,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                       <button
+                        className="btn-secondary"
                         onClick={() => {
                           if (onViewAccount) {
                             onViewAccount(account.handle);
@@ -316,16 +308,7 @@ export default function RankingsPage({ onViewGuest, onViewAccount }: RankingsPag
                           }
                           onViewGuest?.(account.primaryGuestId);
                         }}
-                        style={{
-                          padding: '7px 10px',
-                          borderRadius: '8px',
-                          border: '1px solid rgba(255,180,60,0.22)',
-                          background: 'rgba(255,180,60,0.08)',
-                          color: '#ffe7a9',
-                          fontSize: '11px',
-                          fontWeight: 800,
-                          cursor: 'pointer',
-                        }}
+                        style={{ padding: '7px 10px', fontSize: '11px' }}
                       >
                         Profile
                       </button>

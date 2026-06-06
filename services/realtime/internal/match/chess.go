@@ -208,7 +208,7 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 		}
 		if _, movedKing := moved[keyForSquare(from)]; !movedKing && !isAttackedWithFusion(board, from, opposite(piece.Color)) {
 			if _, rookMoved := moved[keyForCoords(from.Row, 7)]; !rookMoved &&
-				pieceAt(board, contracts.Square{Row: from.Row, Col: 7}) != nil &&
+				isRookPiece(pieceAt(board, contracts.Square{Row: from.Row, Col: 7}), piece.Color) &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 5}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 6}) == nil &&
 				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 5}, opposite(piece.Color)) &&
@@ -216,7 +216,7 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 				moves = append(moves, contracts.Square{Row: from.Row, Col: 6})
 			}
 			if _, rookMoved := moved[keyForCoords(from.Row, 0)]; !rookMoved &&
-				pieceAt(board, contracts.Square{Row: from.Row, Col: 0}) != nil &&
+				isRookPiece(pieceAt(board, contracts.Square{Row: from.Row, Col: 0}), piece.Color) &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 1}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 2}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 3}) == nil &&
@@ -336,10 +336,15 @@ func insufficientMaterial(board [][]*contracts.Piece) bool {
 	case 1:
 		return hasEffectiveType(nonKings[0], "bishop") || hasEffectiveType(nonKings[0], "knight")
 	case 2:
-		// Two knights vs lone king is NOT a forced draw by FIDE rules — removed knight+knight case.
+		// KBN vs K is a known forced mate; never draw. Two knights vs lone king is also
+		// not a forced draw. The only true insufficient-material positions are:
+		//   K vs K, KB vs K, KN vs K, KBB vs K (same-color bishops).
+		// KBN vs K is decidable mate, so we must NOT declare it a draw.
+		// We treat any bishop+knight combination on a single side as still winnable.
+		// (Same-color bishops on KBB vs K are also decided; we do not need to enumerate
+		//  every position, we just need to avoid false positives.)
 		return (hasEffectiveType(nonKings[0], "bishop") && hasEffectiveType(nonKings[1], "bishop")) ||
-			(hasEffectiveType(nonKings[0], "bishop") && hasEffectiveType(nonKings[1], "knight")) ||
-			(hasEffectiveType(nonKings[0], "knight") && hasEffectiveType(nonKings[1], "bishop"))
+			(hasEffectiveType(nonKings[0], "knight") && hasEffectiveType(nonKings[1], "knight"))
 	default:
 		return false
 	}
@@ -484,6 +489,13 @@ func pieceAt(board [][]*contracts.Piece, square contracts.Square) *contracts.Pie
 		return nil
 	}
 	return board[square.Row][square.Col]
+}
+
+func isRookPiece(piece *contracts.Piece, expectedColor string) bool {
+	if piece == nil || piece.Type != "rook" || piece.Color != expectedColor {
+		return false
+	}
+	return true
 }
 
 

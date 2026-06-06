@@ -86,7 +86,7 @@ func main() {
 	addr := httputil.ListenAddr("PLATFORM_ADDR", 8083)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httputil.WithLogging("platform-service", httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), nil))),
+		Handler:           httputil.WithLogging("platform-service", httputil.LimitBody(rate_limit.CSRFMiddleware(withCORS(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux)), httputil.ParseAllowedOrigins()))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -106,6 +106,31 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(ctx)
 	rl.Close()
+}
+
+func withCORS(next http.Handler) http.Handler {
+	allowed := httputil.ParseAllowedOrigins()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" || httputil.IsOriginAllowed(origin, allowed) {
+			if origin == "" && len(allowed) > 0 {
+				origin = allowed[0]
+			}
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+			w.Header().Set("Vary", "Origin")
+		} else {
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE, PUT")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type jsonContentTypeWriter struct {
@@ -2374,6 +2399,30 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 		respondJSON(w, http.StatusOK, response)
+	})
+
+	mux.HandleFunc("/api/platform/internal/account-restriction", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireInternalServiceRequest(w, r) {
+			return
+		}
+		accountID := strings.TrimSpace(r.URL.Query().Get("accountId"))
+		if accountID == "" {
+			respondError(w, http.StatusBadRequest, "accountId is required")
+			return
+		}
+		restriction, restricted := moderation.GetAccountRestriction(accountID)
+		respondJSON(w, http.StatusOK, map[string]any{
+			"restricted":       restricted,
+			"restriction":      restriction,
+			"restrictionKind":  restriction.Kind,
+			"restrictionId":    restriction.RestrictionID,
+			"restrictionNote":  restriction.Reason,
+			"checkedAt":        httputil.NowUTC(),
+		})
 	})
 
 	mux.HandleFunc("/api/platform/rankings", func(w http.ResponseWriter, r *http.Request) {
