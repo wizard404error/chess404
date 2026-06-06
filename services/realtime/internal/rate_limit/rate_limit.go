@@ -136,12 +136,8 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 				}
 			}
 		} else {
-			scheme := "https://"
-			if r.TLS == nil {
-				scheme = "http://"
-			}
-			selfOrigin := scheme + r.Host
-			if equalFoldOrigin(check, selfOrigin) {
+			selfOrigin := trustedSelfOrigin(r)
+			if selfOrigin != "" && equalFoldOrigin(check, selfOrigin) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -150,6 +146,52 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"error":"CSRF check failed: origin not allowed"}`))
 	})
+}
+
+// trustedSelfOrigin reconstructs the expected Origin for the current request,
+// taking forwarded scheme/host headers into account when the request was
+// received in plain HTTP — the universal signal that a TLS-terminating
+// reverse proxy (Railway, Fly, nginx, Caddy, ALB) is in front of the
+// service. In that case r.Host reflects the proxy's internal name and
+// r.TLS is nil, so the public-facing scheme/host come from the
+// X-Forwarded-Proto and X-Forwarded-Host headers.
+//
+// When the request reaches the service over direct TLS (r.TLS != nil),
+// forwarded headers are ignored — the TLS connection itself proves the
+// request was not forwarded by a proxy in a way the client could
+// influence, so the standard scheme+r.Host reconstruction is correct.
+func trustedSelfOrigin(r *http.Request) string {
+	host := r.Host
+	scheme := "https://"
+
+	if r.TLS == nil {
+		scheme = "http://"
+		if forwardedProto := firstForwardedValue(r.Header, "X-Forwarded-Proto"); forwardedProto != "" {
+			scheme = forwardedProto + "://"
+		}
+		if forwardedHost := firstForwardedValue(r.Header, "X-Forwarded-Host"); forwardedHost != "" {
+			host = forwardedHost
+		}
+	}
+
+	if host == "" {
+		return ""
+	}
+	return scheme + host
+}
+
+func firstForwardedValue(h http.Header, name string) string {
+	raw := h.Get(name)
+	if raw == "" {
+		return ""
+	}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			return part
+		}
+	}
+	return ""
 }
 
 func ClientIP(r *http.Request) string {
