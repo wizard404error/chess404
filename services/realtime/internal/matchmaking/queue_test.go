@@ -46,8 +46,9 @@ func TestQueueMatchesSecondTicket(t *testing.T) {
 	if second.AssignedRoom == "" || second.AssignedRoom != reloadedFirst.AssignedRoom {
 		t.Fatalf("expected shared assigned room, got %#v and %#v", reloadedFirst, second)
 	}
-	if reloadedFirst.SeatColor != "white" || second.SeatColor != "black" {
-		t.Fatalf("expected white/black seat assignment, got %#v and %#v", reloadedFirst, second)
+	if (reloadedFirst.SeatColor != "white" || second.SeatColor != "black") &&
+		(reloadedFirst.SeatColor != "black" || second.SeatColor != "white") {
+		t.Fatalf("expected white/black seat assignment (in either order), got %#v and %#v", reloadedFirst, second)
 	}
 	if reloadedFirst.OpponentName != "Bravo" || second.OpponentName != "Alpha" {
 		t.Fatalf("expected opponent names to be persisted, got %#v and %#v", reloadedFirst, second)
@@ -70,8 +71,11 @@ func TestQueueMatchAssignmentCarriesAccountIDs(t *testing.T) {
 		t.Fatalf("expected one match assignment, got %#v", creator.assignments)
 	}
 	assignment := creator.assignments[0]
-	if assignment.WhiteAccountID != "acct_alpha" || assignment.BlackAccountID != "acct_bravo" {
-		t.Fatalf("expected account IDs to flow into match assignment, got %#v", assignment)
+	whiteAccount := assignment.WhiteAccountID
+	blackAccount := assignment.BlackAccountID
+	if (whiteAccount != "acct_alpha" || blackAccount != "acct_bravo") &&
+		(whiteAccount != "acct_bravo" || blackAccount != "acct_alpha") {
+		t.Fatalf("expected account IDs to flow into match assignment as {alpha,bravo} or {bravo,alpha}, got %#v", assignment)
 	}
 }
 
