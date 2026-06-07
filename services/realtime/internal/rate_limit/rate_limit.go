@@ -128,6 +128,16 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 		if check == "" {
 			check = referer
 		}
+		// Same-origin: always allowed (the standard same-origin policy guard).
+		selfOrigin := trustedSelfOrigin(r)
+		if selfOrigin != "" && equalFoldOrigin(check, selfOrigin) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Cross-origin: allowed only if (a) the origin is in the explicit allow
+		// list, or (b) the allow list is empty (CORS is permissive, so CSRF
+		// shouldn't be stricter than CORS — it would just turn a CORS-allowed
+		// request into a confusing 403 for legitimate first-party clients).
 		if len(allowedOrigins) > 0 {
 			for _, allowed := range allowedOrigins {
 				if equalFoldOrigin(check, allowed) {
@@ -136,11 +146,8 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 				}
 			}
 		} else {
-			selfOrigin := trustedSelfOrigin(r)
-			if selfOrigin != "" && equalFoldOrigin(check, selfOrigin) {
-				next.ServeHTTP(w, r)
-				return
-			}
+			next.ServeHTTP(w, r)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)

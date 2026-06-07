@@ -86,7 +86,11 @@ func main() {
 	addr := httputil.ListenAddr("PLATFORM_ADDR", 8083)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httputil.WithLogging("platform-service", httputil.LimitBody(rate_limit.CSRFMiddleware(withCORS(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux)), httputil.ParseAllowedOrigins()))),
+		// CORS middleware wraps CSRF so that even CSRF-rejected responses
+		// carry the proper Access-Control-Allow-* headers. Otherwise the
+		// browser reports "blocked by CORS policy" on legitimate cross-origin
+		// POSTs whose Origin happens to mismatch the same-origin self check.
+		Handler:           httputil.WithLogging("platform-service", httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins())))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

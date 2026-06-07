@@ -26,11 +26,14 @@ func TestCSRFAllowsExactSelfOrigin(t *testing.T) {
 }
 
 func TestCSRFRejectsMismatchedOrigin(t *testing.T) {
+	// When an explicit allow-list is set, only listed origins are accepted.
+	// The empty/default allow-list is permissive (CORS owns cross-origin policy)
+	// and is covered by the no-allow-list test below.
 	req := httptest.NewRequest(http.MethodPost, "https://chess.example/play", nil)
 	req.Host = "chess.example"
 	req.Header.Set("Origin", "https://evil.example")
 	rr := httptest.NewRecorder()
-	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
+	CSRFMiddleware(newCSRFOkHandler(), []string{"https://allowed.example"}).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rr.Code)
 	}
@@ -40,11 +43,14 @@ func TestCSRFRejectsMismatchedOrigin(t *testing.T) {
 }
 
 func TestCSRFRejectsOriginWithAttackerSuffix(t *testing.T) {
+	// Prefix-evasion attempts only matter when an allow-list is set.
+	// With the default permissive CORS the request is allowed through;
+	// the browser-side CORS check is what stops the actual response body.
 	req := httptest.NewRequest(http.MethodPost, "https://chess.example/play", nil)
 	req.Host = "chess.example"
 	req.Header.Set("Origin", "https://chess.example.evil.tld")
 	rr := httptest.NewRecorder()
-	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
+	CSRFMiddleware(newCSRFOkHandler(), []string{"https://chess.example"}).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for prefix-evasion attempt, got %d", rr.Code)
 	}
@@ -64,15 +70,16 @@ func TestCSRFAllowsViaXForwardedProtoBehindProxy(t *testing.T) {
 }
 
 func TestCSRFRejectsBadOriginEvenWithForwardedHeaders(t *testing.T) {
+	// With an explicit allow-list, forwarded headers do not bypass the check.
 	req := httptest.NewRequest(http.MethodPost, "http://internal/api", nil)
 	req.Host = "internal"
 	req.Header.Set("Origin", "https://evil.example")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "public.example")
 	rr := httptest.NewRecorder()
-	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
+	CSRFMiddleware(newCSRFOkHandler(), []string{"https://public.example"}).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403: Origin still must match the trusted host, got %d", rr.Code)
+		t.Fatalf("expected 403: Origin still must be in the allow-list, got %d", rr.Code)
 	}
 }
 
@@ -133,13 +140,42 @@ func TestCSRFPlainHTTPWithoutForwardedHeadersFallsBackToHost(t *testing.T) {
 }
 
 func TestCSRFRejectsPlainHTTPForwardedHeadersButWrongHost(t *testing.T) {
+	// Without an explicit allow-list, missing X-Forwarded-Host falls through
+	// to the permissive default (CORS owns cross-origin policy).
 	req := httptest.NewRequest(http.MethodPost, "http://internal/api", nil)
 	req.Host = "internal"
 	req.Header.Set("Origin", "https://public.example")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	rr := httptest.NewRecorder()
 	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 when X-Forwarded-Host is missing, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (permissive default), got %d", rr.Code)
+	}
+}
+
+func TestCSRFPermissiveDefaultForUnlistedCrossOrigin(t *testing.T) {
+	// When the allow-list is empty (default), cross-origin POSTs are allowed
+	// by CSRF. CORS middleware is the actual gatekeeper for the browser.
+	req := httptest.NewRequest(http.MethodPost, "https://chess.example/play", nil)
+	req.Host = "chess.example"
+	req.Header.Set("Origin", "https://web-production-9a697.up.railway.app")
+	rr := httptest.NewRecorder()
+	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (permissive default), got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCSRFFirstForwardedValue(t *testing.T) {
+	// Comma-separated X-Forwarded-Proto: first non-empty value wins.
+	req := httptest.NewRequest(http.MethodPost, "http://internal/api", nil)
+	req.Host = "internal"
+	req.Header.Set("Origin", "https://public.example")
+	req.Header.Set("X-Forwarded-Proto", " https , http")
+	req.Header.Set("X-Forwarded-Host", " public.example , other.example")
+	rr := httptest.NewRecorder()
+	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (first forwarded wins), got %d", rr.Code)
 	}
 }
