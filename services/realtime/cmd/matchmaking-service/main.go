@@ -364,7 +364,7 @@ func openMatchmakingService() (*matchmaking.Service, error) {
 		service, err = matchmaking.NewSQLitePersistentService(matchmakingTicketStoreSQLitePath())
 	case "redis":
 		redisURL := matchmakingTicketStoreRedisURL()
-		log.Printf("[matchmaking] Connecting to Redis at: %s", redisURL)
+		log.Printf("[matchmaking] Connecting to Redis at: %s", httputil.RedactURLCredentials(redisURL))
 		service, err = matchmaking.NewRedisPersistentService(redisURL, matchmakingTicketStoreRedisKey())
 	default:
 		service, err = matchmaking.NewPersistentService(httputil.EnvOrDefault("MATCHMAKING_TICKET_STORE_PATH", "data/matchmaking-tickets.json"))

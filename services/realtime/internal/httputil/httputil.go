@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -97,4 +98,24 @@ func IsOriginAllowed(origin string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// RedactURLCredentials returns urlString with any embedded user-info password
+// replaced by "REDACTED". URLs without user-info are returned unchanged.
+// Malformed URLs return "<unparseable-url>" so we never log a raw secret.
+func RedactURLCredentials(urlString string) string {
+	if urlString == "" {
+		return ""
+	}
+	u, err := url.Parse(urlString)
+	if err != nil {
+		return "<unparseable-url>"
+	}
+	if u.User == nil {
+		return urlString
+	}
+	if _, hasPass := u.User.Password(); hasPass {
+		u.User = url.UserPassword(u.User.Username(), "REDACTED")
+	}
+	return u.String()
 }
