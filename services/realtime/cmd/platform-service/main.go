@@ -124,7 +124,12 @@ func withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE, PUT")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		// Allow the custom identity headers used by the web client (x-chess404-{white|black}-{guest-id|session-token|session-secret}).
+		// Safe to use explicit list because no `credentials: include` is set on the client side, and explicit list is the
+		// conservative default for any future credentials-bearing requests.
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Chess404-White-Guest-Id, X-Chess404-White-Session-Token, X-Chess404-White-Session-Secret, X-Chess404-Black-Guest-Id, X-Chess404-Black-Session-Token, X-Chess404-Black-Session-Secret")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Type, X-Request-Id")
+		w.Header().Set("Access-Control-Max-Age", "600")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
