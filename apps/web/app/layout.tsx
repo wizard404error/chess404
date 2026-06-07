@@ -22,6 +22,12 @@ export const metadata: Metadata = {
   description: 'Chess404 is competitive online chess with curated card powers.'
 };
 
+// Render every request dynamically so runtime config (match-service URLs, etc.)
+// is read from env vars at request time, not baked into a 1-year CDN cache at
+// build time. See apps/web/middleware.ts for the matching Cache-Control header.
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 function resolveMatchServiceHttpBase(): string {
   return (process.env.NEXT_PUBLIC_MATCH_SERVICE_HTTP_BASE ?? process.env.NEXT_PUBLIC_MATCH_SERVICE_URL ?? '/api/realtime').replace(/\/$/, '');
 }

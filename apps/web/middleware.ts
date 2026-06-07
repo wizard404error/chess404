@@ -57,6 +57,13 @@ export function middleware(request: NextRequest): NextResponse {
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // Defeat the 1-year CDN cache (s-maxage=31536000) on HTML pages so env-var
+  // changes in Railway are visible immediately on the next request. The
+  // matcher excludes /_next/static/ so static chunks keep their natural
+  // long-lived caching.
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  response.headers.set('Pragma', 'no-cache');
+  response.headers.set('Expires', '0');
 
   return response;
 }
