@@ -5,7 +5,7 @@ import type { GuestProfile } from '../lib/platform-service';
 import type { QueueTicket } from '../lib/matchmaking-service';
 import type { StoredRoomMeta } from '../lib/match-service';
 
-export type AppPage = 'Play' | 'Watch' | 'Rankings' | 'History' | 'Cards' | 'Friends' | 'Inbox' | 'Community' | 'Account' | 'Status';
+export type AppPage = 'Play' | 'Watch' | 'Rankings' | 'History' | 'Cards' | 'Friends' | 'Inbox' | 'Community' | 'Account' | 'Status' | 'Admin' | 'Match' | 'Profiles';
 
 export interface PlatformContextShape {
   hostedRuntime: boolean | null;
@@ -16,7 +16,7 @@ export interface PlatformContextShape {
   activeMatchRoomMeta: StoredRoomMeta | null;
   authoritativeMatchId: string | null;
   setAuthoritativeMatchId: (id: string | null) => void;
-  primaryAccountIdentity: { accountId: string; sessionToken: string; handle: string } | null;
+  primaryAccountIdentity: { accountId?: string; sessionToken?: string; handle?: string; expiresAt?: string } | null;
   boardStatusLabel: string;
   viewerSeat: 'white' | 'black' | null;
   matchDestinationNotice: string | null;
@@ -31,19 +31,19 @@ export interface PlatformContextShape {
   setHistoryFocusGuestId: (id: string | null) => void;
   communityFocusGuestId: string | null;
   setCommunityFocusGuestId: (id: string | null) => void;
-  socialLiveToken: string | null;
+  socialLiveToken: number | null;
   setInboxUnreadCount: (count: number) => void;
   profileFocusHandle: string | null;
   shellAccountNotice: string | null;
   hasPrimaryAccountSession: boolean;
   accountActionQueryDetected: boolean;
-  handlePrimaryShellAuthenticated: (handle: string, token: string) => void;
-  handleSeatAuthenticated: (seat: 'white' | 'black', token: string) => void;
+  handlePrimaryShellAuthenticated: (...args: any[]) => void;
+  handleSeatAuthenticated: (...args: any[]) => void;
   syncPrimaryAccountIdentity: () => void;
   writeStoredActiveMatchId: (id: string) => void;
   clearRequestedMatchQuery: () => void;
   requestedMatchIdRef: { current: string | null };
-  readStoredGuestIdentity: (color: 'white' | 'black') => { guestId: string; sessionSecret: string } | null;
+  readStoredGuestIdentity: (color: 'white' | 'black') => { guestId?: string; sessionSecret?: string; sessionToken?: string; sessionExpiresAt?: string } | null;
   copyLiveMatchLink: (matchId: string) => void;
 }
 
