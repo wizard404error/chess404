@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
+	"github.com/chess404/realtime/internal/engine"
 	"github.com/chess404/realtime/internal/logging"
 )
 
@@ -51,6 +52,7 @@ type Service struct {
 	authTokens  map[string]authTokenEntry
 	Log         *logging.Logger
 	broadcastWG sync.WaitGroup
+	computers   map[string]*engine.ComputerOpponent
 }
 
 type authTokenEntry struct {
@@ -114,6 +116,7 @@ func NewServiceWithStoreAndBroadcaster(archive MatchArchiver, store MatchStore, 
 		stopCh:      make(chan struct{}),
 		authTokens:  make(map[string]authTokenEntry),
 		Log:         logging.New("match-service"),
+		computers:   make(map[string]*engine.ComputerOpponent),
 	}
 	if loader, ok := archive.(MatchArchiveBootstrapper); ok {
 		service.mu.Lock()
@@ -637,6 +640,10 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 	s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]string)
 	s.presence[matchID] = newMatchPresenceState(state, now)
 
+	if string(req.ModeID) == "computer" {
+		s.computers[matchID] = engine.NewComputerOpponent(engine.DifficultyMedium, "black")
+	}
+
 	snapshot := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), s.events[matchID], now)
 	s.persistSnapshot(snapshot)
 	s.saveToRedis(snapshot, s.presence[matchID])
@@ -939,7 +946,53 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 	s.saveToRedis(persistSnap, presence)
 	s.broadcastLocked(intent.MatchID, snapshot)
 
+	s.autoPlayComputer(intent.MatchID, state, presence, now)
+
 	return snapshot, nil
+}
+
+func (s *Service) autoPlayComputer(matchID string, state *contracts.MatchState, presence *matchPresenceState, now time.Time) {
+	computer, ok := s.computers[matchID]
+	if !ok || state.Status != "active" || state.Turn != "black" {
+		return
+	}
+
+	computerIntent := computer.MakeMove(state)
+	if computerIntent == nil {
+		return
+	}
+
+	savedClock := state.Clock
+	savedStatus := state.Status
+	savedWinner := state.Winner
+	savedFinishReason := state.FinishReason
+
+	events, err := applyIntent(state, *computerIntent, now)
+	if err != nil {
+		state.Clock = savedClock
+		state.Status = savedStatus
+		state.Winner = savedWinner
+		state.FinishReason = savedFinishReason
+		return
+	}
+
+	if shouldEvaluateAutomaticMatchFinish(state, *computerIntent) {
+		events = finalizeAutomaticMatchFinish(state, events, now, "computer")
+	}
+
+	timeoutEvents := syncClockForMutation(state, now)
+	events = append(events, timeoutEvents...)
+
+	s.events[matchID] = append(s.events[matchID], events...)
+	snapshot := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), events, now)
+	persistSnap := buildSnapshot(state, len(s.events[matchID]), s.events[matchID], now)
+	s.persistSnapshot(persistSnap)
+	s.saveToRedis(persistSnap, presence)
+	s.broadcastLocked(matchID, snapshot)
+
+	if state.Turn == "black" && state.Status == "active" {
+		s.autoPlayComputer(matchID, state, presence, now)
+	}
 }
 
 func rateLimitIntent(presence *matchPresenceState, actorColor string, now time.Time) error {
