@@ -10,12 +10,15 @@ type MatchModeID string
 const (
 	MatchModeOpenCards   MatchModeID = "open_cards"
 	MatchModeHiddenCards MatchModeID = "hidden_cards"
+	MatchModeComputer    MatchModeID = "computer"
 )
 
 func NormalizeMatchModeID(value string) MatchModeID {
 	switch MatchModeID(strings.TrimSpace(value)) {
 	case MatchModeHiddenCards:
 		return MatchModeHiddenCards
+	case MatchModeComputer:
+		return MatchModeComputer
 	default:
 		return MatchModeOpenCards
 	}

@@ -3,6 +3,7 @@ package match
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -1377,7 +1378,8 @@ func (s *Service) CreateAuthToken(playerID, playerSecret string, now time.Time) 
 	defer s.mu.Unlock()
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
-		token := fmt.Sprintf("at_%d_%s", now.UnixNano(), playerID)
+		h := sha256.Sum256([]byte(fmt.Sprintf("%s_%s_%d", playerID, playerSecret, now.UnixNano())))
+		token := "at_" + hex.EncodeToString(h[:16])
 		s.authTokens[token] = authTokenEntry{
 			PlayerID:     playerID,
 			PlayerSecret: playerSecret,

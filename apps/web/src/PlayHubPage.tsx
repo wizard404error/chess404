@@ -8,6 +8,7 @@ import type { PrivateMatchIdentity } from './lib/private-match-service';
 import { modeLabel, queueLabel } from './lib/match-labels';
 import QueuePage from './QueuePage';
 import LobbiesPage from './LobbiesPage';
+import ComputerPage from './ComputerPage';
 
 interface PlayHubPageProps {
   hostedRuntime: boolean | null;
@@ -143,6 +144,11 @@ export default function PlayHubPage({
               title="Create one room and one clean invite"
               detail="Open a private waiting room, share the link, and let the second device claim the empty seat without extra setup."
             />
+            <LaunchTile
+              eyebrow="Play vs Computer"
+              title="Challenge the built-in engine"
+              detail="Play against a chess engine with full card effects. Choose difficulty and start immediately — no opponent needed."
+            />
           </div>
         )}
 
@@ -189,6 +195,25 @@ export default function PlayHubPage({
               embedded
               hostedRuntime={hostedRuntime}
               displayName={displayName}
+              identity={identity}
+            />
+          </div>
+
+          <div className="stat-card" style={{ borderColor: 'rgba(180,130,255,0.14)' }}>
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{ color: '#d4a0ff', fontSize: '12px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
+                Play vs Computer
+              </div>
+              <div style={{ color: '#f4f0ff', fontSize: '18px', fontWeight: 800, marginTop: '6px' }}>
+                Challenge the built-in chess engine
+              </div>
+              <div style={{ color: 'rgba(220,210,255,0.7)', fontSize: '13px', lineHeight: 1.6, marginTop: '6px' }}>
+                Pick a difficulty level, choose your color, and play a full match against the engine. Card effects are fully supported.
+              </div>
+            </div>
+
+            <ComputerPage
+              embedded
               identity={identity}
             />
           </div>

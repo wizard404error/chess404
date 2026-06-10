@@ -1,7 +1,7 @@
 export type PieceType = 'king' | 'queen' | 'rook' | 'bishop' | 'knight' | 'pawn';
 export type PieceColor = 'white' | 'black';
 export type Rarity = 'trash' | 'common' | 'rare' | 'epic' | 'legendary';
-export type MatchModeId = 'open_cards' | 'hidden_cards';
+export type MatchModeId = 'open_cards' | 'hidden_cards' | 'computer';
 
 export interface MatchModeDefinition {
   id: MatchModeId;
@@ -24,6 +24,12 @@ export const OFFICIAL_MATCH_MODES: readonly MatchModeDefinition[] = [
     label: 'Hidden Cards',
     shortLabel: 'Hidden',
     rulesSummary: 'Card plans stay concealed to create a bluff-heavy competitive mode.',
+  },
+  {
+    id: 'computer',
+    label: 'Play vs Computer',
+    shortLabel: 'Computer',
+    rulesSummary: 'Play against the built-in chess engine with card effects.',
   },
 ] as const;
 
