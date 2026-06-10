@@ -19,6 +19,7 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/matchmaking"
+	"github.com/chess404/realtime/internal/metrics"
 	"github.com/chess404/realtime/internal/rate_limit"
 )
 
@@ -44,6 +45,18 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.Handle("/metrics", metrics.Handler())
 
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -232,7 +245,7 @@ func main() {
 	addr := httputil.ListenAddr("MATCHMAKING_ADDR", 8084)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultQueueWindow, rate_limit.DefaultQueueLimit)(mux), nil)),
+		Handler:           httputil.WithRecovery(httputil.WithLogging("matchmaking-service", httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultQueueWindow, rate_limit.DefaultQueueLimit)(mux), nil)))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

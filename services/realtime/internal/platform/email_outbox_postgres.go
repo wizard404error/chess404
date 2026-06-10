@@ -26,6 +26,7 @@ func NewPostgresAccountEmailOutboxStore(rawURL string) (*PostgresAccountEmailOut
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(3 * time.Minute)
 	store := &PostgresAccountEmailOutboxStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

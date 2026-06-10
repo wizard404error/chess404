@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -43,6 +44,8 @@ type Service struct {
 	presence    map[string]*matchPresenceState
 	matchMu     map[string]*sync.Mutex
 	archive     MatchArchiver
+	store       MatchStore
+	broadcaster Broadcaster
 	stopCh      chan struct{}
 	matchSeqNum map[string]int64
 	authTokens  map[string]authTokenEntry
@@ -94,6 +97,10 @@ func NewService() *Service {
 }
 
 func NewServiceWithArchive(archive MatchArchiver) *Service {
+	return NewServiceWithStoreAndBroadcaster(archive, NewMemoryMatchStore(), NoopBroadcaster{})
+}
+
+func NewServiceWithStoreAndBroadcaster(archive MatchArchiver, store MatchStore, broadcaster Broadcaster) *Service {
 	service := &Service{
 		matches:     make(map[string]*contracts.MatchState),
 		events:      make(map[string][]contracts.ResolvedEvent),
@@ -102,6 +109,8 @@ func NewServiceWithArchive(archive MatchArchiver) *Service {
 		matchMu:     make(map[string]*sync.Mutex),
 		matchSeqNum: make(map[string]int64),
 		archive:     archive,
+		store:       store,
+		broadcaster: broadcaster,
 		stopCh:      make(chan struct{}),
 		authTokens:  make(map[string]authTokenEntry),
 		Log:         logging.New("match-service"),
@@ -630,6 +639,7 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 
 	snapshot := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), s.events[matchID], now)
 	s.persistSnapshot(snapshot)
+	s.saveToRedis(snapshot, s.presence[matchID])
 	return snapshot
 }
 
@@ -748,7 +758,9 @@ func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatReque
 		s.events[matchID] = append(s.events[matchID], events...)
 		presence := s.ensurePresenceStateLocked(matchID, state, now)
 		snapshot := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), events, now)
-		s.persistSnapshot(buildSnapshotWithPresence(state, presence, len(s.events[matchID]), s.events[matchID], now))
+		persistSnap := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), s.events[matchID], now)
+		s.persistSnapshot(persistSnap)
+		s.saveToRedis(persistSnap, presence)
 		s.broadcastLocked(matchID, snapshot)
 		return contracts.JoinMatchSeatResponse{
 			Match:              snapshot,
@@ -761,6 +773,7 @@ func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatReque
 	fullSnapshot := buildSnapshotWithPresence(state, s.ensurePresenceStateLocked(matchID, state, now), len(s.events[matchID]), nil, now)
 	if updated {
 		s.persistSnapshot(fullSnapshot)
+		s.saveToRedis(fullSnapshot, s.presence[matchID])
 	}
 	return contracts.JoinMatchSeatResponse{
 		Match:              fullSnapshot,
@@ -874,13 +887,17 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 			events = append(events, timeoutEvents...)
 			s.events[intent.MatchID] = append(s.events[intent.MatchID], events...)
 			snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), events, now)
-			s.persistSnapshot(buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now))
+			persistSnap := buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now)
+			s.persistSnapshot(persistSnap)
+			s.saveToRedis(persistSnap, presence)
 			s.broadcastLocked(intent.MatchID, snapshot)
 			return snapshot, nil
 		}
 		s.events[intent.MatchID] = append(s.events[intent.MatchID], timeoutEvents...)
 		snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), timeoutEvents, now)
-		s.persistSnapshot(buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now))
+		persistSnap := buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now)
+		s.persistSnapshot(persistSnap)
+		s.saveToRedis(persistSnap, presence)
 		s.broadcastLocked(intent.MatchID, snapshot)
 		return snapshot, nil
 	}
@@ -917,7 +934,9 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 
 	s.events[intent.MatchID] = append(s.events[intent.MatchID], events...)
 	snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), events, now)
-	s.persistSnapshot(buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now))
+	persistSnap := buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now)
+	s.persistSnapshot(persistSnap)
+	s.saveToRedis(persistSnap, presence)
 	s.broadcastLocked(intent.MatchID, snapshot)
 
 	return snapshot, nil
@@ -1081,6 +1100,52 @@ func (s *Service) persistSnapshot(snapshot contracts.MatchSnapshotResponse) {
 	persisted.Match.DisconnectGraceDeadline = nil
 	if err := s.archive.Upsert(persisted); err != nil {
 		s.Log.Error("failed to persist snapshot", "matchId", snapshot.Match.MatchID, "error", err)
+	}
+}
+
+func (s *Service) saveToRedis(snapshot contracts.MatchSnapshotResponse, presence *matchPresenceState) {
+	if s.store == nil {
+		return
+	}
+	matchID := snapshot.Match.MatchID
+
+	if err := s.store.SaveState(matchID, snapshot); err != nil {
+		s.Log.Error("failed to save state to redis", "matchId", matchID, "error", err)
+	}
+
+	if err := s.store.SaveSecrets(matchID, snapshot.Match.WhitePlayerSecret, snapshot.Match.BlackPlayerSecret); err != nil {
+		s.Log.Error("failed to save secrets to redis", "matchId", matchID, "error", err)
+	}
+
+	historyData, err := json.Marshal(snapshot.Match.History)
+	if err == nil {
+		_ = s.store.SaveHistory(matchID, historyData)
+	}
+
+	eventsData, err := json.Marshal(snapshot.Events)
+	if err == nil {
+		_ = s.store.SaveEvents(matchID, eventsData)
+	}
+
+	if presence != nil {
+		presenceData, err := json.Marshal(presence)
+		if err == nil {
+			_ = s.store.SavePresence(matchID, presenceData)
+		}
+	}
+}
+
+func (s *Service) publishToRedis(matchID string, snapshot contracts.MatchSnapshotResponse) {
+	if s.broadcaster == nil {
+		return
+	}
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		s.Log.Error("failed to marshal snapshot for broadcast", "matchId", matchID, "error", err)
+		return
+	}
+	if err := s.broadcaster.Publish(matchID, data); err != nil {
+		s.Log.Error("failed to publish to redis", "matchId", matchID, "error", err)
 	}
 }
 
@@ -1488,12 +1553,15 @@ func presenceDisconnectDeadline(presence *matchPresenceState, disconnectedColor 
 
 func (s *Service) broadcastLocked(matchID string, snapshot contracts.MatchSnapshotResponse) {
 	subscribers := s.subs[matchID]
-	if len(subscribers) == 0 {
-		return
-	}
 
 	s.matchSeqNum[matchID]++
 	snapshot.SeqNum = s.matchSeqNum[matchID]
+
+	s.publishToRedis(matchID, snapshot)
+
+	if len(subscribers) == 0 {
+		return
+	}
 
 	cachedWhite := snapshot
 	cachedWhite.Match = filterStateForColor(snapshot.Match, "white")

@@ -19,6 +19,7 @@ func NewPostgresFriendshipStore(dsn string) (*FriendshipStore, error) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(3 * time.Minute)
 	store, err := newPostgresFriendshipPersistenceWithDB(db)
 	if err != nil {
 		_ = db.Close()

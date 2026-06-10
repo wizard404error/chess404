@@ -25,6 +25,7 @@ func NewPostgresAccountSecurityAuditStore(rawURL string) (*PostgresAccountSecuri
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(3 * time.Minute)
 	store := &PostgresAccountSecurityAuditStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

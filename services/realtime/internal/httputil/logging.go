@@ -4,12 +4,33 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
-	"os"
 	"time"
+
+	"github.com/chess404/realtime/internal/metrics"
 )
+
+type contextKey string
+
+const requestIDKey contextKey = "request_id"
+
+func RequestIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(requestIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey, id)
+}
+
+func generateRequestID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 type responseRecorder struct {
 	http.ResponseWriter
@@ -31,25 +52,6 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func generateRequestID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-type RequestLog struct {
-	Time       string `json:"time"`
-	Level      string `json:"level"`
-	Service    string `json:"service,omitempty"`
-	RequestID  string `json:"request_id"`
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Status     int    `json:"status"`
-	DurationMs int64  `json:"duration_ms"`
-	UserAgent  string `json:"user_agent"`
-	IP         string `json:"ip"`
-}
-
 func WithLogging(serviceName string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -57,16 +59,13 @@ func WithLogging(serviceName string, next http.Handler) http.Handler {
 		if reqID == "" {
 			reqID = generateRequestID()
 		}
-		
+
 		w.Header().Set("X-Request-Id", reqID)
-		
-		ctx := context.WithValue(r.Context(), "request_id", reqID)
+		ctx := WithRequestID(r.Context(), reqID)
 		r = r.WithContext(ctx)
 
 		recorder := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
 
-		// ClientIP would normally come from rate_limit package, but to avoid circular imports, 
-		// we just grab the straightforward ones here or leave it to standard remoteAddr.
 		ip := r.Header.Get("X-Forwarded-For")
 		if ip == "" {
 			ip = r.RemoteAddr
@@ -76,26 +75,23 @@ func WithLogging(serviceName string, next http.Handler) http.Handler {
 
 		duration := time.Since(start).Milliseconds()
 
-		logEntry := RequestLog{
-			Time:       time.Now().UTC().Format(time.RFC3339Nano),
-			Level:      "INFO",
-			Service:    serviceName,
-			RequestID:  reqID,
-			Method:     r.Method,
-			Path:       r.URL.Path,
-			Status:     recorder.status,
-			DurationMs: duration,
-			UserAgent:  r.UserAgent(),
-			IP:         ip,
+		attrs := []any{
+			"requestId", reqID,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.status,
+			"duration_ms", duration,
+			"ip", ip,
 		}
+
+		metrics.RecordRequest(r.Method, r.URL.Path, recorder.status, duration)
 
 		if recorder.status >= 500 {
-			logEntry.Level = "ERROR"
+			slog.Error("http request", attrs...)
 		} else if recorder.status >= 400 {
-			logEntry.Level = "WARN"
+			slog.Warn("http request", attrs...)
+		} else {
+			slog.Info("http request", attrs...)
 		}
-
-		logBytes, _ := json.Marshal(logEntry)
-		fmt.Fprintln(os.Stdout, string(logBytes))
 	})
 }

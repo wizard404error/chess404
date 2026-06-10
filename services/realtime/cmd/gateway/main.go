@@ -20,6 +20,7 @@ import (
 	"github.com/chess404/realtime/internal/envutil"
 	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/matchmaking"
+	"github.com/chess404/realtime/internal/metrics"
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/chess404/realtime/internal/rate_limit"
 )
@@ -200,14 +201,14 @@ func isValidPathParam(param string) bool {
 func main() {
 	envutil.Require("MATCH_SERVICE_INTERNAL_URL", "PLATFORM_SERVICE_INTERNAL_URL", "MATCHMAKING_SERVICE_INTERNAL_URL")
 	config := gatewayConfigFromEnv()
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := httputil.NewHTTPClient(3 * time.Second)
 	mux := buildGatewayMux(config, client)
 	rl := rate_limit.New()
 
 	addr := httputil.ListenAddr("GATEWAY_ADDR", 8080)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins()),
+		Handler:           httputil.WithRecovery(httputil.WithLogging("gateway", rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins()))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -264,6 +265,14 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		})
 	})
 
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
+
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
+
 	mux.HandleFunc("/api/system/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -271,6 +280,8 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		}
 		httputil.WriteJSON(w, http.StatusOK, collectGatewayStatus(config, client))
 	})
+
+	mux.Handle("/metrics", metrics.Handler())
 
 	mux.HandleFunc("/api/session/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -1451,6 +1462,10 @@ func fetchGatewayJSON(client *http.Client, url string) GatewayServiceHealth {
 }
 
 func fetchGatewayJSONRequest(client *http.Client, method, url string, payload any) GatewayServiceHealth {
+	return fetchGatewayJSONRequestWithContext(context.Background(), client, method, url, payload)
+}
+
+func fetchGatewayJSONRequestWithContext(ctx context.Context, client *http.Client, method, url string, payload any) GatewayServiceHealth {
 	var body *bytes.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -1462,7 +1477,7 @@ func fetchGatewayJSONRequest(client *http.Client, method, url string, payload an
 		body = bytes.NewReader(nil)
 	}
 
-	request, err := http.NewRequest(method, url, body)
+	request, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return GatewayServiceHealth{URL: url, Error: err.Error()}
 	}

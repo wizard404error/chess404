@@ -25,6 +25,7 @@ func NewPostgresAccountStore(dsn string) (*PostgresAccountStore, error) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(3 * time.Minute)
 	return newPostgresAccountStoreWithDB(db)
 }
 

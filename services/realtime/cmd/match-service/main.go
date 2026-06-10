@@ -20,6 +20,7 @@ import (
 	"github.com/chess404/realtime/internal/envutil"
 	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/match"
+	"github.com/chess404/realtime/internal/metrics"
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/chess404/realtime/internal/rate_limit"
 	"github.com/gorilla/websocket"
@@ -33,7 +34,9 @@ func main() {
 		log.Fatalf("failed to initialize archive store: %v", err)
 	}
 	defer func() { _ = archive.Close() }()
-	service := match.NewServiceWithArchive(newFinalizingArchiveStore(archive))
+
+	store, broadcaster := openMatchStore()
+	service := match.NewServiceWithStoreAndBroadcaster(newFinalizingArchiveStore(archive), store, broadcaster)
 	rl := rate_limit.New()
 	allowed := httputil.ParseAllowedOrigins()
 	upgrader := websocket.Upgrader{
@@ -83,6 +86,22 @@ func main() {
 			"checkedAt":    httputil.NowUTC(),
 		})
 	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if pingable, ok := any(archive).(interface{ Ping() error }); ok {
+			if err := pingable.Ping(); err != nil {
+				httputil.WriteError(w, http.StatusServiceUnavailable, "database unavailable")
+				return
+			}
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
+
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
+
+	mux.Handle("/metrics", metrics.Handler())
 
 	mux.HandleFunc("/api/system/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -207,7 +226,7 @@ func main() {
 		// carry the proper Access-Control-Allow-* headers. Otherwise the
 		// browser reports "blocked by CORS policy" on legitimate cross-origin
 		// POSTs whose Origin happens to mismatch the same-origin self check.
-		Handler:           httputil.WithLogging("match-service", httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins())))),
+		Handler:           httputil.WithRecovery(httputil.WithLogging("match-service", httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins()))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -364,6 +383,30 @@ func openArchiveStore() (*platform.MatchArchiveStore, error) {
 	default:
 		return platform.NewMatchArchiveStore(archivePath())
 	}
+}
+
+func openMatchStore() (match.MatchStore, match.Broadcaster) {
+	backend := strings.ToLower(httputil.EnvOrDefault("MATCH_STATE_BACKEND", "memory"))
+	redisURL := httputil.EnvOrDefault("MATCH_REDIS_URL", "")
+	keyPrefix := httputil.EnvOrDefault("MATCH_REDIS_KEY_PREFIX", "chess404:match")
+
+	if backend == "redis" && redisURL != "" {
+		store, err := match.NewRedisMatchStore(redisURL, keyPrefix)
+		if err != nil {
+			log.Printf("WARNING: failed to connect to redis for match store, falling back to memory: %v", err)
+			return match.NewMemoryMatchStore(), match.NoopBroadcaster{}
+		}
+		broadcaster, err := match.NewRedisBroadcaster(redisURL, keyPrefix)
+		if err != nil {
+			log.Printf("WARNING: failed to connect to redis for broadcaster, falling back to noop: %v", err)
+			return store, match.NoopBroadcaster{}
+		}
+		log.Printf("match store: redis backend (prefix=%s)", keyPrefix)
+		return store, broadcaster
+	}
+
+	log.Printf("match store: memory backend")
+	return match.NewMemoryMatchStore(), match.NoopBroadcaster{}
 }
 
 func writeMatchError(w http.ResponseWriter, err error) {

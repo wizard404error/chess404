@@ -20,6 +20,7 @@ func NewPostgresAccountNotificationStore(dsn string) (*AccountNotificationStore,
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(3 * time.Minute)
 	store, err := newPostgresAccountNotificationPersistenceWithDB(db)
 	if err != nil {
 		_ = db.Close()

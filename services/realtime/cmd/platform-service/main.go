@@ -18,6 +18,7 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/envutil"
 	"github.com/chess404/realtime/internal/httputil"
+	"github.com/chess404/realtime/internal/metrics"
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/chess404/realtime/internal/rate_limit"
 )
@@ -90,7 +91,7 @@ func main() {
 		// carry the proper Access-Control-Allow-* headers. Otherwise the
 		// browser reports "blocked by CORS policy" on legitimate cross-origin
 		// POSTs whose Origin happens to mismatch the same-origin self check.
-		Handler:           httputil.WithLogging("platform-service", httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins())))),
+		Handler:           httputil.WithRecovery(httputil.WithLogging("platform-service", httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins()))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -235,6 +236,25 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if pingable, ok := accounts.(interface{ Ping() error }); ok {
+			if err := pingable.Ping(); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte("database unavailable"))
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.Handle("/metrics", metrics.Handler())
 
 	mux.HandleFunc("/api/platform/capabilities", func(w http.ResponseWriter, _ *http.Request) {
 		trustedResultFinalization := configuredInternalServiceToken() != ""
