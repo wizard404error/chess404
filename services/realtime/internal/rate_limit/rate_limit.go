@@ -93,6 +93,7 @@ func (l *Limiter) Middleware(window time.Duration, limit int) func(http.Handler)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
 			ip := ClientIP(r)
 			key := "rl:" + ip
 			allowed, retryAfter := l.Allow(key, window, limit)
@@ -152,6 +153,27 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"error":"CSRF check failed: origin not allowed"}`))
+	})
+}
+
+func ContentTypeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+			ct := r.Header.Get("Content-Type")
+			if ct == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				_, _ = w.Write([]byte(`{"error":"Content-Type header required"}`))
+				return
+			}
+			if !strings.Contains(ct, "application/json") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				_, _ = w.Write([]byte(`{"error":"Content-Type must be application/json"}`))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

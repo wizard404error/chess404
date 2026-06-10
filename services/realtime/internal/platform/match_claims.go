@@ -2,6 +2,7 @@ package platform
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"sync"
 	"time"
@@ -126,7 +127,7 @@ func (s *MatchClaimStore) GetByToken(matchID, claimToken string) (MatchSeatClaim
 	now := time.Now().UTC()
 	s.pruneExpiredLocked(now)
 	for key, claim := range s.claims {
-		if claim.MatchID == matchID && claim.ClaimToken == claimToken {
+		if claim.MatchID == matchID && subtle.ConstantTimeCompare([]byte(claim.ClaimToken), []byte(claimToken)) == 1 {
 			delete(s.claims, key)
 			_ = s.persistLocked()
 			return claim, true

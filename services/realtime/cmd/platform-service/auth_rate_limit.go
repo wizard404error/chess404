@@ -176,6 +176,21 @@ func requestClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
+	if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+		if idx := strings.IndexByte(forwardedFor, ','); idx > 0 {
+			return strings.TrimSpace(forwardedFor[:idx])
+		}
+		return strings.TrimSpace(forwardedFor)
+	}
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		return strings.TrimSpace(realIP)
+	}
+	if flyIP := r.Header.Get("Fly-Client-IP"); flyIP != "" {
+		return strings.TrimSpace(flyIP)
+	}
+	if railwayIP := r.Header.Get("X-Railway-Client-Ip"); railwayIP != "" {
+		return strings.TrimSpace(railwayIP)
+	}
 	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
 		return strings.TrimSpace(host)
 	}

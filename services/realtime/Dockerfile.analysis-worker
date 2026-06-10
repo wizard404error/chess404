@@ -1,0 +1,17 @@
+FROM golang:1.23-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /analysis-worker ./cmd/analysis-worker
+
+FROM alpine:3.19
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+WORKDIR /home/appuser
+COPY --from=builder /analysis-worker .
+ENV GIN_MODE=release
+EXPOSE 8080
+ENTRYPOINT ["./analysis-worker"]

@@ -1,0 +1,92 @@
+groups:
+  - name: chess404_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "HTTP 5xx error rate is {{ $value }}% (threshold: 5%)"
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_ms_bucket[5m])) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency"
+          description: "p95 latency is {{ $value }}ms (threshold: 1000ms)"
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 512
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}MB (threshold: 512MB)"
+
+      - alert: GoroutineLeak
+        expr: go_goroutines > 10000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Possible goroutine leak"
+          description: "Goroutine count is {{ $value }} (threshold: 10000)"
+
+      - alert: WebSocketConnectionSpike
+        expr: rate(ws_connections_active[5m]) > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebSocket connection spike"
+          description: "WS connections increasing by {{ $value }}/s"
+
+      - alert: MatchServiceDown
+        expr: up{job="match-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Match service is down"
+          description: "Match service has been unreachable for 1 minute"
+
+      - alert: PlatformServiceDown
+        expr: up{job="platform-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Platform service is down"
+          description: "Platform service has been unreachable for 1 minute"
+
+      - alert: HighQueueDepth
+        expr: queue_depth > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High queue depth"
+          description: "Queue depth is {{ $value }} (threshold: 100)"
+
+      - alert: MatchCreationRateDrop
+        expr: rate(matches_created_total[10m]) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Match creation rate dropped"
+          description: "No matches created in the last 10 minutes"
+
+      - alert: FileDescriptorExhaustion
+        expr: process_open_fds / process_max_fds > 0.8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "File descriptor exhaustion"
+          description: "FD usage is {{ $value }}% (threshold: 80%)"
