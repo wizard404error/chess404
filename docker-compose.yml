@@ -25,6 +25,20 @@ services:
       timeout: 5s
       retries: 5
 
+  nats:
+    image: nats:2.10-alpine
+    command: ["--jetstream", "--store_dir", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "nats-server", "--signal", "ldm=nats-server"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   platform-service:
     build:
       context: .
@@ -63,6 +77,8 @@ services:
       PLATFORM_INTERNAL_SERVICE_TOKEN: dev-token-platform
       MATCH_STATE_BACKEND: redis
       MATCH_REDIS_URL: redis://redis:6379
+      MESSAGE_BUS_BACKEND: redis
+      MESSAGE_BUS_REDIS_URL: redis://redis:6379
       ALLOWED_ORIGINS: http://localhost:3000
     ports:
       - "8082:8080"
@@ -139,3 +155,4 @@ services:
 
 volumes:
   pgdata:
+  nats-data:
