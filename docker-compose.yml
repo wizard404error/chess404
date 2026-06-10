@@ -1,0 +1,141 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: chess404
+      POSTGRES_USER: chess404
+      POSTGRES_PASSWORD: chess404_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chess404"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  platform-service:
+    build:
+      context: .
+      dockerfile: deploy/railway/platform-service.Dockerfile
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: info
+      MATCH_ARCHIVE_BACKEND: postgres
+      MATCH_ARCHIVE_POSTGRES_URL: postgres://chess404:chess404_dev@postgres:5432/chess404?sslmode=disable
+      GUEST_STORE_BACKEND: postgres
+      GUEST_STORE_POSTGRES_URL: postgres://chess404:chess404_dev@postgres:5432/chess404?sslmode=disable
+      ACCOUNT_STORE_BACKEND: postgres
+      ACCOUNT_STORE_POSTGRES_URL: postgres://chess404:chess404_dev@postgres:5432/chess404?sslmode=disable
+      MATCH_CLAIM_STORE_BACKEND: redis
+      MATCH_CLAIM_STORE_REDIS_URL: redis://redis:6379
+      MATCH_CLAIM_STORE_TTL_SECONDS: "43200"
+      PLATFORM_INTERNAL_SERVICE_TOKEN: dev-token-platform
+      ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  match-service:
+    build:
+      context: .
+      dockerfile: deploy/railway/match-service.Dockerfile
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: info
+      MATCH_ARCHIVE_BACKEND: postgres
+      MATCH_ARCHIVE_POSTGRES_URL: postgres://chess404:chess404_dev@postgres:5432/chess404?sslmode=disable
+      PLATFORM_INTERNAL_SERVICE_TOKEN: dev-token-platform
+      MATCH_STATE_BACKEND: redis
+      MATCH_REDIS_URL: redis://redis:6379
+      ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  matchmaking-service:
+    build:
+      context: .
+      dockerfile: deploy/railway/matchmaking-service.Dockerfile
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: info
+      MATCHMAKING_TICKET_STORE_BACKEND: redis
+      MATCHMAKING_TICKET_STORE_REDIS_URL: redis://redis:6379
+      MATCH_SERVICE_INTERNAL_URL: http://match-service:8080
+      PLATFORM_INTERNAL_SERVICE_TOKEN: dev-token-platform
+      ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "8083:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/railway/gateway.Dockerfile
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: info
+      MATCH_SERVICE_INTERNAL_URL: http://match-service:8080
+      PLATFORM_SERVICE_INTERNAL_URL: http://platform-service:8080
+      MATCHMAKING_SERVICE_INTERNAL_URL: http://matchmaking-service:8080
+      PLATFORM_INTERNAL_SERVICE_TOKEN: dev-token-platform
+      ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - match-service
+      - platform-service
+      - matchmaking-service
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/railway/web.Dockerfile
+    environment:
+      PORT: "3000"
+      NODE_ENV: development
+      NEXT_PUBLIC_GATEWAY_URL: http://localhost:8080/api/gateway
+      NEXT_PUBLIC_PLATFORM_SERVICE_URL: http://localhost:8081/api/platform
+      NEXT_PUBLIC_MATCHMAKING_SERVICE_URL: http://localhost:8083/api/matchmaking
+      NEXT_PUBLIC_MATCH_SERVICE_HTTP_BASE: http://localhost:8082/api
+      NEXT_PUBLIC_MATCH_SERVICE_WS_URL: ws://localhost:8082
+    ports:
+      - "3000:3000"
+    depends_on:
+      - gateway
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/railway/Dockerfile.replay-worker
+    entrypoint: ["./replay-worker"]
+    environment:
+      DATABASE_URL: postgres://chess404:chess404_dev@postgres:5432/chess404?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

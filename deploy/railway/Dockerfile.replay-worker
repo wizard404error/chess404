@@ -1,10 +1,17 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /build
 COPY services/realtime/ .
-RUN go build -o /build/replay-worker ./cmd/replay-worker/
+RUN go vet ./cmd/replay-worker/... && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /build/replay-worker ./cmd/replay-worker/
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata curl
 WORKDIR /app
 COPY --from=builder /build/replay-worker .
+RUN adduser -D -g '' -u 1001 chess404
+USER chess404
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/readyz || exit 1
+
 CMD ["./replay-worker"]

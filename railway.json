@@ -1,0 +1,75 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "services": {
+    "gateway": {
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "deploy/railway/gateway.Dockerfile"
+      },
+      "deploy": {
+        "healthcheckPath": "/readyz",
+        "healthcheckTimeout": 10,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      }
+    },
+    "match-service": {
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "deploy/railway/match-service.Dockerfile"
+      },
+      "deploy": {
+        "healthcheckPath": "/readyz",
+        "healthcheckTimeout": 10,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      }
+    },
+    "platform-service": {
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "deploy/railway/platform-service.Dockerfile"
+      },
+      "deploy": {
+        "healthcheckPath": "/readyz",
+        "healthcheckTimeout": 10,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      }
+    },
+    "matchmaking-service": {
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "deploy/railway/matchmaking-service.Dockerfile"
+      },
+      "deploy": {
+        "healthcheckPath": "/readyz",
+        "healthcheckTimeout": 10,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      }
+    },
+    "replay-worker": {
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "deploy/railway/Dockerfile.replay-worker"
+      },
+      "deploy": {
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      }
+    },
+    "web": {
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "deploy/railway/web.Dockerfile"
+      },
+      "deploy": {
+        "healthcheckPath": "/",
+        "healthcheckTimeout": 10,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 3
+      }
+    }
+  }
+}

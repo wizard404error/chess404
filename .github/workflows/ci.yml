@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  go-build:
+  go-lint:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,7 +18,7 @@ jobs:
         with:
           go-version: '1.25'
           cache-dependency-path: services/realtime/go.sum
-      - run: go build ./...
+      - run: go vet ./...
 
   go-test:
     runs-on: ubuntu-latest
@@ -32,6 +32,62 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: services/realtime/go.sum
       - run: go test ./internal/... ./cmd/... -v -count=1 -timeout 120s
+
+  go-vuln:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/realtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: services/realtime/go.sum
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run vulnerability scan
+        run: govulncheck ./...
+
+  go-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/realtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: services/realtime/go.sum
+      - run: go build ./...
+
+  docker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - gateway
+          - match-service
+          - platform-service
+          - matchmaking-service
+          - replay-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ matrix.service }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ matrix.service }}-
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/railway/${{ matrix.service == 'replay-worker' && 'Dockerfile.replay-worker' || format('{0}.Dockerfile', matrix.service) }}
+          push: false
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
   web-lint:
     runs-on: ubuntu-latest
