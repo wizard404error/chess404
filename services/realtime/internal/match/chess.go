@@ -507,6 +507,7 @@ func clonePieceAsType(piece *contracts.Piece, pieceType string) *contracts.Piece
 	return &contracts.Piece{
 		Type:           pieceType,
 		Color:          piece.Color,
+		Fake:           piece.Fake,
 		Shielded:       piece.Shielded,
 		ShieldTurn:     piece.ShieldTurn,
 		Frozen:         piece.Frozen,

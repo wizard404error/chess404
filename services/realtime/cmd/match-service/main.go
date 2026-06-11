@@ -427,7 +427,25 @@ func writeMatchError(w http.ResponseWriter, err error) {
 }
 
 func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Service, upgrader *websocket.Upgrader, matchID string, wsReadLimit int64) {
-	playerClaimToken := strings.TrimSpace(r.URL.Query().Get("t"))
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	conn.SetReadLimit(wsReadLimit)
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
+	var authMsg struct {
+		ClaimToken   string `json:"claimToken,omitempty"`
+		PlayerID     string `json:"playerId,omitempty"`
+		PlayerSecret string `json:"playerSecret,omitempty"`
+	}
+	if err := conn.ReadJSON(&authMsg); err != nil {
+		_ = conn.Close()
+		return
+	}
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
+	playerClaimToken := strings.TrimSpace(authMsg.ClaimToken)
 	var playerID, playerSecret string
 	if playerClaimToken != "" {
 		if pid, psec, ok := service.ResolveAuthToken(playerClaimToken); ok {
@@ -436,37 +454,40 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		} else {
 			claim, err := resolveSocketClaim(matchID, playerClaimToken)
 			if err != nil {
-				httputil.WriteError(w, http.StatusUnauthorized, "unauthorized room claim")
+				_ = conn.WriteJSON(map[string]string{"type": "auth.error", "message": "unauthorized"})
+				_ = conn.Close()
 				return
 			}
 			playerID = strings.TrimSpace(claim.PlayerID)
 			playerSecret = strings.TrimSpace(claim.PlayerSecret)
 		}
+	} else if authMsg.PlayerID != "" && authMsg.PlayerSecret != "" {
+		playerID = strings.TrimSpace(authMsg.PlayerID)
+		playerSecret = strings.TrimSpace(authMsg.PlayerSecret)
 	}
 	if playerID == "" || playerSecret == "" {
-		httputil.WriteError(w, http.StatusUnauthorized, "valid auth token required")
+		_ = conn.WriteJSON(map[string]string{"type": "auth.error", "message": "unauthorized"})
+		_ = conn.Close()
 		return
 	}
 
 	stream, unsubscribe, initial, err := service.Subscribe(matchID, playerID)
 	if err != nil {
-		writeMatchError(w, err)
+		_ = conn.WriteJSON(map[string]string{"type": "auth.error", "message": err.Error()})
+		_ = conn.Close()
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
+	if err := writeEnvelope(conn, "auth.success", nil); err != nil {
 		unsubscribe()
+		_ = conn.Close()
 		return
 	}
-	conn.SetReadLimit(wsReadLimit)
+
 	done := make(chan struct{})
 
-	// Read pump - required by gorilla/websocket to process close/ping/pong control frames.
-	// Without this loop the connection leaks and SetCloseHandler / SetPongHandler are never invoked.
 	go func() {
 		defer close(done)
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		conn.SetPongHandler(func(string) error {
 			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			return nil
@@ -480,9 +501,7 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 
 	defer func() {
 		unsubscribe()
-		if playerID != "" && playerSecret != "" {
-			_ = service.MarkDisconnected(matchID, playerID, playerSecret, httputil.NowUTC())
-		}
+		_ = service.MarkDisconnected(matchID, playerID, playerSecret, httputil.NowUTC())
 		_ = conn.Close()
 	}()
 

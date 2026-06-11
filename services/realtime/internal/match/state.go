@@ -874,6 +874,9 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 		return contracts.MatchSnapshotResponse{}, ErrMatchNotFound
 	}
 
+	unlockMatch := s.lockMatch(intent.MatchID)
+	defer unlockMatch()
+
 	if intent.ClientMoveID != "" {
 		for _, id := range state.SeenClientMoveIDs {
 			if id == intent.ClientMoveID {

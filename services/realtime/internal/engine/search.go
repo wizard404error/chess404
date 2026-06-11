@@ -165,6 +165,27 @@ func generateAllMoves(state *contracts.MatchState, forWhite bool) []Move {
 		color = "white"
 	}
 
+	if state.DoubleMove != nil && state.DoubleMove.MovesLeft > 0 && state.DoubleMove.TrackedSq != nil && state.DoubleMove.Type == "same" {
+		tracked := state.DoubleMove.TrackedSq
+		piece := state.Board[tracked.Row][tracked.Col]
+		if piece != nil && piece.Color == color && !piece.Frozen {
+			candidates := legalMovesWithFusion(state.Board, *tracked, state.LastMove, sliceToSet(state.Moved))
+			var moves []Move
+			for _, to := range candidates {
+				moves = append(moves, Move{From: *tracked, To: to})
+			}
+			if state.InvisiblePiece != nil && state.InvisiblePiece.OwnerColor == color && state.InvisiblePiece.RoundsLeft > 0 && !state.InvisiblePiece.Piece.Frozen {
+				from := contracts.Square{Row: state.InvisiblePiece.Row, Col: state.InvisiblePiece.Col}
+				ghostCandidates := legalMovesWithFusion(state.Board, from, state.LastMove, sliceToSet(state.Moved))
+				for _, to := range ghostCandidates {
+					moves = append(moves, Move{From: from, To: to})
+				}
+			}
+			return moves
+		}
+		return nil
+	}
+
 	var moves []Move
 	for r := 0; r < 8; r++ {
 		for c := 0; c < 8; c++ {
@@ -175,8 +196,16 @@ func generateAllMoves(state *contracts.MatchState, forWhite bool) []Move {
 			if piece.Frozen {
 				continue
 			}
-
 			from := contracts.Square{Row: r, Col: c}
+
+			// Double-move "diff": skip the tracked square (only other pieces may move).
+			if state.DoubleMove != nil && state.DoubleMove.MovesLeft > 0 &&
+				state.DoubleMove.TrackedSq != nil && state.DoubleMove.Type == "diff" {
+				if from.Row == state.DoubleMove.TrackedSq.Row && from.Col == state.DoubleMove.TrackedSq.Col {
+					continue
+				}
+			}
+
 			candidates := legalMovesWithFusion(state.Board, from, state.LastMove, sliceToSet(state.Moved))
 
 			for _, to := range candidates {
@@ -184,6 +213,19 @@ func generateAllMoves(state *contracts.MatchState, forWhite bool) []Move {
 			}
 		}
 	}
+
+	// Generate moves for the invisible piece if it belongs to the current player.
+	if state.InvisiblePiece != nil && state.InvisiblePiece.OwnerColor == color && state.InvisiblePiece.RoundsLeft > 0 {
+		from := contracts.Square{Row: state.InvisiblePiece.Row, Col: state.InvisiblePiece.Col}
+		invisiblePiece := state.InvisiblePiece.Piece
+		if !invisiblePiece.Frozen {
+			candidates := legalMovesWithFusion(state.Board, from, state.LastMove, sliceToSet(state.Moved))
+			for _, to := range candidates {
+				moves = append(moves, Move{From: from, To: to})
+			}
+		}
+	}
+
 	return moves
 }
 
@@ -240,8 +282,59 @@ func applyMoveCopy(state *contracts.MatchState, move *Move) *contracts.MatchStat
 		}
 	}
 
+	justMovedColor := newState.Turn
 	newState.Turn = oppositeColor(piece.Color)
 	newState.Moved = append(newState.Moved, keyForSquare(move.From))
+	newState.LastMove = &contracts.LastMove{From: move.From, To: move.To}
+
+	if newState.DoubleMove != nil {
+		newMovesLeft := newState.DoubleMove.MovesLeft - 1
+		if newMovesLeft > 0 {
+			tracked := contracts.Square{Row: move.To.Row, Col: move.To.Col}
+			newState.DoubleMove = &contracts.DoubleMoveState{
+				Type:      newState.DoubleMove.Type,
+				MovesLeft: newMovesLeft,
+				TrackedSq: &tracked,
+			}
+		} else {
+			newState.DoubleMove = nil
+		}
+	}
+
+	if newState.InvisiblePiece != nil && newState.InvisiblePiece.OwnerColor == justMovedColor {
+		from := contracts.Square{Row: newState.InvisiblePiece.Row, Col: newState.InvisiblePiece.Col}
+		if from.Row == move.From.Row && from.Col == move.From.Col {
+			ghostBoard := cloneBoard(newState.Board)
+			ghostBoard[move.To.Row][move.To.Col] = &contracts.Piece{
+				Type:  newState.InvisiblePiece.Piece.Type,
+				Color: newState.InvisiblePiece.Piece.Color,
+			}
+			oppKing := findKingPos(ghostBoard, newState.Turn)
+			givesCheck := oppKing != nil && isAttacked(ghostBoard, *oppKing, justMovedColor)
+			isMove2 := newState.InvisiblePiece.RoundsLeft <= 0
+			if givesCheck || isMove2 {
+				newState.InvisiblePiece = nil
+			} else {
+				newState.InvisiblePiece.Row = move.To.Row
+				newState.InvisiblePiece.Col = move.To.Col
+				newState.InvisiblePiece.RoundsLeft--
+			}
+		} else {
+			if newState.InvisiblePiece.RoundsLeft > 0 {
+				newState.InvisiblePiece.RoundsLeft--
+			}
+			if newState.InvisiblePiece.RoundsLeft <= 0 {
+				newState.InvisiblePiece = nil
+			}
+		}
+	} else if newState.InvisiblePiece != nil && newState.InvisiblePiece.OwnerColor != justMovedColor {
+		if newState.InvisiblePiece.RoundsLeft > 0 {
+			newState.InvisiblePiece.RoundsLeft--
+		}
+		if newState.InvisiblePiece.RoundsLeft <= 0 {
+			newState.InvisiblePiece = nil
+		}
+	}
 
 	return newState
 }
@@ -267,6 +360,18 @@ func cloneMatchState(state *contracts.MatchState) *contracts.MatchState {
 		LastMove:    state.LastMove,
 	}
 	newState.Board = cloneBoard(state.Board)
+	if state.DoubleMove != nil {
+		dm := *state.DoubleMove
+		if state.DoubleMove.TrackedSq != nil {
+			tracked := *state.DoubleMove.TrackedSq
+			dm.TrackedSq = &tracked
+		}
+		newState.DoubleMove = &dm
+	}
+	if state.InvisiblePiece != nil {
+		ip := *state.InvisiblePiece
+		newState.InvisiblePiece = &ip
+	}
 	return newState
 }
 
