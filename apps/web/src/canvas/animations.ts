@@ -163,7 +163,7 @@ export function drawBoardArrow(
 
 
 // ─── Teleport Animation ───────────────────────────────────────────────────────
-const TELEPORT_DURATION = 1400;
+export const TELEPORT_DURATION = 1400;
 
 export function paintTeleportAnim(
   ctx: CanvasRenderingContext2D,
@@ -307,7 +307,7 @@ export function paintTeleportAnim(
 }
 
 // ─── Jump Card Animation ──────────────────────────────────────────────────────
-const JUMP_DURATION = 1100;
+export const JUMP_DURATION = 1100;
 
 export function paintJumpAnim(
   ctx: CanvasRenderingContext2D,
@@ -523,7 +523,7 @@ export function paintJumpAnim(
 
 
 // ─── Mind Control Animation ───────────────────────────────────────────────────
-const MINDCONTROL_DURATION = 2000;
+export const MINDCONTROL_DURATION = 2000;
 
 export function paintMindControlAnim(
   ctx: CanvasRenderingContext2D,
@@ -769,7 +769,7 @@ export function paintMindControlAnim(
 
 
 // ─── Fuse Animation ───────────────────────────────────────────────────────────
-const FUSE_DURATION = 1800;
+export const FUSE_DURATION = 1800;
 
 export function paintFuseAnim(
   ctx: CanvasRenderingContext2D,
@@ -995,7 +995,7 @@ export function paintFuseAnim(
 
 
 // ─── Sacrifice Animation ──────────────────────────────────────────────────────
-const SACRIFICE_DURATION = 1600;
+export const SACRIFICE_DURATION = 1600;
 
 export function paintSacrificeAnim(
   ctx: CanvasRenderingContext2D,
@@ -1220,7 +1220,7 @@ export function paintSacrificeAnim(
   }
 }
 
-const REVERSE_DURATION = 1200;
+export const REVERSE_DURATION = 1200;
 
 export function paintReverseAnim(
   ctx: CanvasRenderingContext2D,
@@ -1396,9 +1396,9 @@ export function paintReverseAnim(
 }
 
 // ─── Transform Animation ──────────────────────────────────────────────────────
-const TRANSFORM_DURATION = 1400;
+export const TRANSFORM_DURATION = 1400;
 
-const SNIPER_DURATION = 1000;
+export const SNIPER_DURATION = 1000;
 
 export function paintSniperAnim(
   ctx: CanvasRenderingContext2D,

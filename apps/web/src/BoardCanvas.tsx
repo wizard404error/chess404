@@ -7,13 +7,15 @@ import { SQ, setSQ } from './canvas/animations';
 import {
   drawBoardArrow, parseColor, hexToRgb,
   easeOut, easeIn, easeInOut, clamp, lerp,
-  ANALYSIS_ARROW_COLOR, PIECE_IMAGES,
+  ANALYSIS_ARROW_COLOR, TRANSFORM_DURATION, SNIPER_DURATION,
+  TELEPORT_DURATION, JUMP_DURATION, REVERSE_DURATION, SACRIFICE_DURATION, MINDCONTROL_DURATION, FUSE_DURATION,
   paintTeleportAnim, paintJumpAnim, paintMindControlAnim,
   paintFuseAnim, paintSacrificeAnim, paintReverseAnim,
   paintSniperAnim, paintTransformAnim, pushParticle,
 } from './canvas/animations';
-import { isUsableImage, getFusedImage } from './canvas/images';
-export type { TransformAnim, SniperAnim, TeleportAnim, JumpAnim, SacrificeAnim, MindControlAnim, FuseAnim, ReverseAnim, BoardArrow } from './canvas/animations';
+import { isUsableImage, getFusedImage, PIECE_IMAGES } from './canvas/images';
+import type { Particle, TransformAnim, SniperAnim, TeleportAnim, JumpAnim, SacrificeAnim, MindControlAnim, FuseAnim, ReverseAnim, BoardArrow } from './canvas/animations';
+export type { TransformAnim, SniperAnim, TeleportAnim, JumpAnim, SacrificeAnim, MindControlAnim, FuseAnim, ReverseAnim, BoardArrow };
 
 // ─── BoardCanvas ─────────────────────────────────────────────────────────────
 export interface BoardCanvasProps {
