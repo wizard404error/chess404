@@ -10,6 +10,7 @@ import {
   type AccountNotificationView,
 } from './lib/platform-service';
 import { modeLabel } from './lib/match-labels';
+import { formatDateTime } from './lib/display';
 
 interface InboxPageProps {
   accountId?: string | null;
@@ -18,17 +19,6 @@ interface InboxPageProps {
   onOpenProfile?: (handle: string) => void;
   onOpenFriends?: () => void;
   onUnreadCountChange?: (count: number) => void;
-}
-
-function formatDateTime(value?: string): string {
-  if (!value) {
-    return 'Unknown';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
 }
 
 

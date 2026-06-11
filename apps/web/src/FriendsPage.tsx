@@ -22,6 +22,7 @@ import {
 } from './lib/platform-service';
 import { writeStoredRoomMeta } from './lib/match-service';
 import type { PrivateMatchIdentity } from './lib/private-match-service';
+import { formatDateTime } from './lib/display';
 
 interface FriendsPageProps {
   identity?: PrivateMatchIdentity | null;
@@ -30,14 +31,6 @@ interface FriendsPageProps {
   liveRefreshToken?: number;
   onOpenProfile?: (handle: string) => void;
   onOpenAccount?: () => void;
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
 }
 
 

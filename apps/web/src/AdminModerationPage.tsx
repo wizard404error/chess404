@@ -6,6 +6,7 @@ import {
   resolveModerationReport,
   type ModerationAdminOverview,
 } from './lib/platform-service';
+import { formatDateTime } from './lib/display';
 
 interface AdminModerationPageProps {
   accountId?: string | null;
@@ -20,17 +21,6 @@ const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'resolved_actioned', label: 'Resolved: actioned' },
   { value: 'resolved_dismissed', label: 'Resolved: dismissed' },
 ];
-
-function formatDateTime(value?: string | null): string {
-  if (!value) {
-    return 'Unknown time';
-  }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-  return new Date(timestamp).toLocaleString();
-}
 
 export default function AdminModerationPage({
   accountId,

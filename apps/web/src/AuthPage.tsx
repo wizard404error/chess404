@@ -15,6 +15,7 @@ import {
   type GuestProfile,
   type GuestSession,
 } from './lib/platform-service';
+import { formatDateTime } from './lib/display';
 
 const WHITE_GUEST_ID_STORAGE_KEY = 'chess404.guest.white';
 const WHITE_GUEST_SECRET_STORAGE_KEY = 'chess404.guest.white.secret';
@@ -103,17 +104,6 @@ function suggestHandle(seed: string): string {
     return normalized;
   }
   return 'chess404_player';
-}
-
-function formatDateTime(value?: string): string {
-  if (!value) {
-    return 'Unknown';
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
 }
 
 interface AuthPageProps {

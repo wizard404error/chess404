@@ -1,6 +1,7 @@
 import { WebSocket } from 'k6/websockets';
 import { check, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
+import http from 'k6/http';
 
 const wsConnected = new Rate('ws_connected');
 const wsMessages = new Counter('ws_messages');

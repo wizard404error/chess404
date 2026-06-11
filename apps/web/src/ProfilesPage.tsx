@@ -20,6 +20,7 @@ import {
   type PlayerReportView,
   type SeasonOption,
 } from './lib/platform-service';
+import { formatDateTime, formatRatingDelta } from './lib/display';
 
 interface ProfilesPageProps {
   focusHandle?: string | null;
@@ -29,18 +30,6 @@ interface ProfilesPageProps {
   onSelectHandle?: (handle: string) => void;
   onOpenReplay?: (matchId: string) => void;
   onOpenAccount?: () => void;
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function formatRatingDelta(delta: number): string {
-  return delta > 0 ? `+${delta}` : `${delta}`;
 }
 
 function parseModeFilterValue(value: string): MatchModeId | '' {

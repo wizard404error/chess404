@@ -36,6 +36,7 @@ export const OFFICIAL_MATCH_MODES: readonly MatchModeDefinition[] = [
 export interface Piece {
   type: PieceType;
   color: PieceColor;
+  fake?: boolean;
   shielded?: boolean;
   shieldTurn?: number;
   frozen?: boolean;

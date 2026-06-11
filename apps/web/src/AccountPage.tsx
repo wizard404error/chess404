@@ -54,21 +54,7 @@ import {
   WHITE_ACCOUNT_EXPIRY_STORAGE_KEY,
   BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
 } from './lib/session-storage';
-
-function formatDateTime(value?: string): string {
-  if (!value) {
-    return 'Unknown';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function formatRatingDelta(delta: number): string {
-  return delta > 0 ? `+${delta}` : `${delta}`;
-}
+import { formatDateTime, formatRatingDelta } from './lib/display';
 
 function describeSessionTokenFingerprint(sessionToken: string): string {
   const normalized = sessionToken.trim();

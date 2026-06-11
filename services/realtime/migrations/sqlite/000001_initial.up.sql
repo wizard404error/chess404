@@ -83,6 +83,11 @@ create table if not exists finalized_matches (
 
 create table if not exists archives (
     match_id text primary key,
+    status text not null,
+    queue text,
+    white_guest_id text,
+    black_guest_id text,
+    updated_at text not null,
     entry_json text not null,
     private_json text
 );
@@ -231,6 +236,13 @@ create index if not exists account_sessions_account_idx on account_sessions (acc
 create index if not exists account_sessions_expires_idx on account_sessions (expires_at);
 create index if not exists account_email_verifications_account_idx on account_email_verifications (account_id, created_at desc);
 create index if not exists account_password_resets_account_idx on account_password_resets (account_id, created_at desc);
+create index if not exists guests_rating_order_idx on guests (rating desc, created_at asc, guest_id asc);
+create index if not exists guests_last_seen_order_idx on guests (last_seen_at desc, guest_id asc);
+create index if not exists archives_updated_at_idx on archives (updated_at desc);
+create index if not exists archives_queue_idx on archives (queue);
+create index if not exists archives_status_idx on archives (status);
+create index if not exists archives_white_guest_idx on archives (white_guest_id);
+create index if not exists archives_black_guest_idx on archives (black_guest_id);
 create index if not exists direct_challenges_challenger_idx on direct_challenges (challenger_account_id);
 create index if not exists direct_challenges_target_idx on direct_challenges (target_account_id);
 create index if not exists direct_challenges_status_idx on direct_challenges (status);

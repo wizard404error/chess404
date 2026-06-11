@@ -7,6 +7,8 @@ import type { GuestProfile } from './lib/platform-service';
 import type { QueueName, QueueSnapshot, QueueTicket } from './lib/matchmaking-service';
 import { cancelTicket, enqueueGuest, fetchQueueSnapshots, fetchQueueTickets, fetchTicket, RateLimitError } from './lib/matchmaking-service';
 import { ensureMatch, readStoredRoomMeta, resolveSeatSecret, writeStoredRoomMeta, type StoredRoomMeta } from './lib/match-service';
+import { formatDateTime, normalizeModeId } from './lib/display';
+import { modeLabel } from './lib/match-labels';
 
 interface QueuePageProps {
   whiteProfile: GuestProfile | null;
@@ -53,10 +55,6 @@ function readStoredQueueSelection(): QueueName {
   }
   const value = window.localStorage.getItem(QUEUE_SELECTION_STORAGE_KEY);
   return value === 'rated' ? 'rated' : DEFAULT_QUEUE;
-}
-
-function normalizeModeId(value?: string | null): MatchModeId {
-  return value === 'hidden_cards' ? 'hidden_cards' : DEFAULT_MATCH_MODE_ID;
 }
 
 function readStoredModeSelection(): MatchModeId {
@@ -133,18 +131,6 @@ function readStoredAccountSession(side: QueueSide): { accountId: string | null; 
     accountId: window.localStorage.getItem(accountIdStorageKey(side)),
     sessionToken: window.localStorage.getItem(accountTokenStorageKey(side)),
   };
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function modeLabel(modeId?: MatchModeId): string {
-  return OFFICIAL_MATCH_MODES.find(mode => mode.id === normalizeModeId(modeId))?.label ?? 'Open Cards';
 }
 
 export default function QueuePage({

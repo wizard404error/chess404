@@ -74,6 +74,8 @@ func (w *Worker) pollAndProcess(ctx context.Context) {
 func (w *Worker) ProcessJob(ctx context.Context, job *Job) (*Result, error) {
 	record := &anticheat.GameRecord{
 		MatchID: job.MatchID,
+		WhiteID: job.WhiteID,
+		BlackID: job.BlackID,
 		Moves:   []anticheat.MoveRecord{},
 	}
 
@@ -81,7 +83,7 @@ func (w *Worker) ProcessJob(ctx context.Context, job *Job) (*Result, error) {
 		return nil, fmt.Errorf("unmarshal moves: %w", err)
 	}
 
-	result := anticheat.AnalyzeGame(record)
+	result := anticheat.AnalyzeGame(record, job.WhiteID)
 
 	return &Result{
 		MatchID:  job.MatchID,

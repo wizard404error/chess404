@@ -152,3 +152,7 @@ export function formatMatchSummary(options: {
 export function formatLastSeenLabel(value?: string | null): string {
   return `Seen ${formatDateTime(value)}`;
 }
+
+export function formatRatingDelta(delta: number): string {
+  return delta > 0 ? `+${delta}` : `${delta}`;
+}

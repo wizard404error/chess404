@@ -4,16 +4,12 @@ import React from 'react';
 import { OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import type { MatchModeId } from '@chess404/contracts';
 import type { AccountLeaderboardSummary, AccountLeaderboardSpotlight, AccountProfile, AccountSeasonSummary, SeasonOption } from './lib/platform-service';
-import { formatLastSeenLabel } from './lib/display';
+import { formatLastSeenLabel, formatRatingDelta } from './lib/display';
 import { fetchAccountLeaderboard } from './lib/platform-service';
 
 interface RankingsPageProps {
   onViewGuest?: (guestId: string) => void;
   onViewAccount?: (handle: string) => void;
-}
-
-function formatRatingDelta(delta: number): string {
-  return delta > 0 ? `+${delta}` : `${delta}`;
 }
 
 function resolveDisplayedSeason(account: AccountProfile): AccountSeasonSummary | undefined {

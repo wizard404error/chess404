@@ -7,9 +7,16 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 )
 
-func AnalyzeGame(record *GameRecord) *AnalysisResult {
+func AnalyzeGame(record *GameRecord, playerID string) *AnalysisResult {
+	playerColor := "white"
+	if playerID == record.BlackID {
+		playerColor = "black"
+	}
+
 	result := &AnalysisResult{
 		MatchID:   record.MatchID,
+		PlayerID:  playerID,
+		Color:     playerColor,
 		MoveCount: len(record.Moves),
 		AnalyzedAt: time.Now().UTC(),
 	}
@@ -19,12 +26,13 @@ func AnalyzeGame(record *GameRecord) *AnalysisResult {
 
 	board := makeBoard()
 	turn := "white"
+	movedPieces := []string{}
 
 	for _, move := range record.Moves {
 		engineState := &contracts.MatchState{
 			Board: board,
 			Turn:  turn,
-			Moved: []string{},
+			Moved: movedPieces,
 		}
 
 		bestResult := engine.Search(engineState, 4, nil)
@@ -42,6 +50,7 @@ func AnalyzeGame(record *GameRecord) *AnalysisResult {
 		}
 
 		applyMoveToBoard(board, move)
+		movedPieces = append(movedPieces, move.From+"-"+move.To)
 		if turn == "white" {
 			turn = "black"
 		} else {
@@ -50,7 +59,7 @@ func AnalyzeGame(record *GameRecord) *AnalysisResult {
 	}
 
 	result.CPL = whiteCPL
-	if record.BlackID == result.PlayerID {
+	if playerColor == "black" {
 		result.CPL = blackCPL
 	}
 

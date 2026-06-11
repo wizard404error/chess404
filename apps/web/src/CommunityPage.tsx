@@ -3,14 +3,7 @@
 import React from 'react';
 import type { AccountProfile, GuestProfile, MatchArchiveEntry } from './lib/platform-service';
 import { fetchAccounts, fetchGuest, fetchGuestArchivedMatches, fetchGuests } from './lib/platform-service';
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
+import { formatDateTime } from './lib/display';
 
 function statLabel(player: GuestProfile): string {
   return `${player.wins}W ${player.losses}L ${player.draws}D`;

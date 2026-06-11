@@ -1,7 +1,6 @@
 package match
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -18,7 +17,6 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 	"github.com/chess404/realtime/internal/engine"
 	"github.com/chess404/realtime/internal/logging"
-	"github.com/chess404/realtime/internal/messaging"
 )
 
 const (
@@ -56,7 +54,6 @@ type Service struct {
 	Log         *logging.Logger
 	broadcastWG sync.WaitGroup
 	computers   map[string]*engine.ComputerOpponent
-	bus         messaging.MessageBus
 }
 
 type authTokenEntry struct {
@@ -132,28 +129,6 @@ func NewServiceWithStoreAndBroadcaster(archive MatchArchiver, store MatchStore, 
 	go service.cleanupAuthTokensLoop()
 
 	return service
-}
-
-func (s *Service) SetMessageBus(bus messaging.MessageBus) {
-	s.bus = bus
-}
-
-func (s *Service) publishEvent(topic string, eventType messaging.EventType, source string, payload any) {
-	if s.bus == nil {
-		return
-	}
-	data, err := messaging.EncodePayload(payload)
-	if err != nil {
-		return
-	}
-	event := messaging.Event{
-		ID:        fmt.Sprintf("evt_%d", time.Now().UnixNano()),
-		Type:      eventType,
-		Source:    source,
-		Timestamp: time.Now().UTC(),
-		Payload:   data,
-	}
-	s.bus.Publish(context.Background(), topic, event)
 }
 
 var starterCards = []contracts.GameCard{
@@ -675,12 +650,6 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 	s.persistSnapshot(snapshot)
 	s.saveToRedis(snapshot, s.presence[matchID])
 
-	s.publishEvent("match.events", messaging.EventMatchCreated, "match-service", map[string]any{
-		"match_id": matchID,
-		"mode":     string(req.ModeID),
-		"turn":     "white",
-	})
-
 	return snapshot
 }
 
@@ -979,27 +948,6 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 	s.persistSnapshot(persistSnap)
 	s.saveToRedis(persistSnap, presence)
 	s.broadcastLocked(intent.MatchID, snapshot)
-
-	switch intent.Type {
-	case "make_move":
-		s.publishEvent("match.events", messaging.EventMatchMove, "match-service", map[string]any{
-			"match_id": intent.MatchID,
-			"turn":     state.Turn,
-			"status":   state.Status,
-		})
-	case "play_card":
-		s.publishEvent("match.events", messaging.EventMatchCardPlayed, "match-service", map[string]any{
-			"match_id": intent.MatchID,
-			"card_id":  intent.CardID,
-			"turn":     state.Turn,
-		})
-	case "resign", "offer_draw", "respond_draw", "abort":
-		s.publishEvent("match.events", messaging.EventMatchFinished, "match-service", map[string]any{
-			"match_id":      intent.MatchID,
-			"winner":        state.Winner,
-			"finish_reason": state.FinishReason,
-		})
-	}
 
 	s.autoPlayComputer(intent.MatchID, state, presence, now)
 
