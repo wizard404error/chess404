@@ -242,6 +242,27 @@ func (s *MatchArchiveStore) ListUnfinishedMatchIDs(limit int) []string {
 	return ids
 }
 
+func (s *MatchArchiveStore) ListFinishedMatchIDs(limit int) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ids := make([]string, 0, len(s.entries))
+	for _, entry := range s.entries {
+		if !strings.EqualFold(strings.TrimSpace(entry.Status), "finished") {
+			continue
+		}
+		ids = append(ids, entry.MatchID)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := s.entries[ids[i]], s.entries[ids[j]]
+		return a.UpdatedAt.After(b.UpdatedAt)
+	})
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
+	}
+	return ids
+}
+
 func (s *MatchArchiveStore) ListByGuest(guestID string, limit int) []MatchArchiveEntry {
 	s.mu.Lock()
 	defer s.mu.Unlock()

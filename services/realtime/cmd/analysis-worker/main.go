@@ -5,19 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/chess404/realtime/internal/anticheat"
+	"github.com/chess404/realtime/internal/contracts"
 )
 
 type Job struct {
-	MatchID   string `json:"matchId"`
-	WhiteID   string `json:"whiteId"`
-	BlackID   string `json:"blackId"`
-	GameJSON  string `json:"gameJson"`
+	MatchID  string `json:"matchId"`
+	WhiteID  string `json:"whiteId"`
+	BlackID  string `json:"blackId"`
+	GameJSON string `json:"gameJson"`
 }
 
 type Result struct {
@@ -30,6 +34,13 @@ func main() {
 	log.SetPrefix("[analysis-worker] ")
 	log.Println("Starting analysis worker...")
 
+	matchServiceURL := os.Getenv("MATCH_SERVICE_INTERNAL_URL")
+	if matchServiceURL == "" {
+		log.Println("WARN: MATCH_SERVICE_INTERNAL_URL not set, analysis disabled")
+		return
+	}
+	serviceToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -41,12 +52,21 @@ func main() {
 		cancel()
 	}()
 
-	worker := &Worker{}
+	worker := &Worker{
+		matchServiceURL: matchServiceURL,
+		serviceToken:    serviceToken,
+		httpClient:      &http.Client{Timeout: 10 * time.Second},
+	}
 	log.Println("Worker ready, polling for jobs...")
 	worker.Run(ctx)
 }
 
-type Worker struct{}
+type Worker struct {
+	matchServiceURL string
+	serviceToken    string
+	httpClient      *http.Client
+	analyzed        map[string]struct{}
+}
 
 func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
@@ -68,26 +88,151 @@ func (w *Worker) pollAndProcess(ctx context.Context) {
 		return
 	default:
 	}
-	log.Println("Polling for analysis jobs...")
+
+	if w.analyzed == nil {
+		w.analyzed = make(map[string]struct{})
+	}
+
+	ids, err := w.fetchFinishedMatchIDs(ctx)
+	if err != nil {
+		log.Printf("poll: fetch finished match ids failed: %v", err)
+		return
+	}
+
+	processed := 0
+	for _, matchID := range ids {
+		if _, ok := w.analyzed[matchID]; ok {
+			continue
+		}
+		if err := w.processMatch(ctx, matchID); err != nil {
+			log.Printf("process: match %s failed: %v", matchID, err)
+			continue
+		}
+		w.analyzed[matchID] = struct{}{}
+		processed++
+	}
+	if processed > 0 {
+		log.Printf("processed %d match(es)", processed)
+	}
 }
 
-func (w *Worker) ProcessJob(ctx context.Context, job *Job) (*Result, error) {
+func (w *Worker) fetchFinishedMatchIDs(ctx context.Context) ([]string, error) {
+	u, err := url.Parse(strings.TrimRight(w.matchServiceURL, "/") + "/api/matches/internal/finished-jobs")
+	if err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
+	}
+	q := u.Query()
+	q.Set("limit", "10")
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if w.serviceToken != "" {
+		req.Header.Set("X-Internal-Service-Token", w.serviceToken)
+	}
+
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	var body struct {
+		MatchIDs []string `json:"matchIds"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode body: %w", err)
+	}
+	return body.MatchIDs, nil
+}
+
+func (w *Worker) processMatch(ctx context.Context, matchID string) error {
+	snapshot, err := w.fetchMatchSnapshot(ctx, matchID)
+	if err != nil {
+		return err
+	}
+
+	whiteID := snapshot.Match.WhiteGuestID
+	if whiteID == "" {
+		whiteID = snapshot.Match.WhiteAccountID
+	}
+	blackID := snapshot.Match.BlackGuestID
+	if blackID == "" {
+		blackID = snapshot.Match.BlackAccountID
+	}
+
 	record := &anticheat.GameRecord{
-		MatchID: job.MatchID,
-		WhiteID: job.WhiteID,
-		BlackID: job.BlackID,
-		Moves:   []anticheat.MoveRecord{},
+		MatchID:    matchID,
+		WhiteID:    whiteID,
+		BlackID:    blackID,
+		Mode:       string(snapshot.Match.ModeID),
+		StartedAt:  snapshot.Match.CreatedAt,
+		FinishedAt: snapshot.Match.UpdatedAt,
+		Result:     snapshot.Match.Winner,
+		Moves:      buildMoveRecords(snapshot.Match.MoveHistory),
 	}
 
-	if err := json.Unmarshal([]byte(job.GameJSON), &record.Moves); err != nil {
-		return nil, fmt.Errorf("unmarshal moves: %w", err)
+	if whiteID != "" {
+		result := anticheat.AnalyzeGame(record, whiteID)
+		log.Printf("analysis: match=%s winner=%s moves=%d suspicion=%.1f flags=%v",
+			matchID, snapshot.Match.Winner, len(record.Moves), result.SuspicionScore, result.Flags)
+	} else {
+		log.Printf("analysis: match=%s winner=%s moves=%d (skipped: no whiteID)",
+			matchID, snapshot.Match.Winner, len(record.Moves))
+	}
+	return nil
+}
+
+func (w *Worker) fetchMatchSnapshot(ctx context.Context, matchID string) (contracts.MatchSnapshotResponse, error) {
+	u := strings.TrimRight(w.matchServiceURL, "/") + "/api/matches/" + matchID
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return contracts.MatchSnapshotResponse{}, fmt.Errorf("build request: %w", err)
+	}
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		return contracts.MatchSnapshotResponse{}, fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return contracts.MatchSnapshotResponse{}, fmt.Errorf("get match %s: status %d", matchID, resp.StatusCode)
 	}
 
-	result := anticheat.AnalyzeGame(record, job.WhiteID)
+	var snapshot contracts.MatchSnapshotResponse
+	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
+		return contracts.MatchSnapshotResponse{}, fmt.Errorf("decode body: %w", err)
+	}
+	return snapshot, nil
+}
 
-	return &Result{
-		MatchID:  job.MatchID,
-		PlayerID: job.WhiteID,
-		Result:   result,
-	}, nil
+func buildMoveRecords(history []string) []anticheat.MoveRecord {
+	moves := make([]anticheat.MoveRecord, 0, len(history))
+	for i, notation := range history {
+		notation = strings.TrimSpace(notation)
+		if notation == "" {
+			continue
+		}
+		moves = append(moves, anticheat.MoveRecord{
+			MoveNumber: i + 1,
+			Color:      "white",
+			From:       "",
+			To:         "",
+			Timestamp:  time.Time{},
+			ThinkTime:  0,
+		})
+		if i == 0 {
+			moves[i].Color = "white"
+		} else if i%2 == 0 {
+			moves[i].Color = "white"
+		} else {
+			moves[i].Color = "black"
+		}
+		_ = notation
+	}
+	return moves
 }

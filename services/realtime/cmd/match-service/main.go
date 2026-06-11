@@ -117,6 +117,20 @@ func main() {
 		})
 	})
 
+	mux.HandleFunc("/api/matches/internal/finished-jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if r.Header.Get("X-Internal-Service-Token") == "" || r.Header.Get("X-Internal-Service-Token") != internalServiceToken() {
+			httputil.WriteError(w, http.StatusUnauthorized, "internal service token required")
+			return
+		}
+		limit := platform.ParseListLimit(r.URL.Query().Get("limit"), 10)
+		ids := archive.ListFinishedMatchIDs(limit)
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{"matchIds": ids})
+	})
+
 	mux.HandleFunc("/api/matches", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
@@ -288,6 +302,10 @@ func (s *finalizingArchiveStore) LoadMatch(matchID string) (contracts.MatchState
 
 func (s *finalizingArchiveStore) ListUnfinishedMatchIDs(limit int) []string {
 	return s.archive.ListUnfinishedMatchIDs(limit)
+}
+
+func (s *finalizingArchiveStore) ListFinishedMatchIDs(limit int) []string {
+	return s.archive.ListFinishedMatchIDs(limit)
 }
 
 func (s *finalizingArchiveStore) maybeFinalizeRatedMatch(snapshot contracts.MatchSnapshotResponse) {
