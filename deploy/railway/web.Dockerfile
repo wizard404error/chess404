@@ -13,7 +13,7 @@ COPY packages/contracts packages/contracts
 COPY packages/game-core packages/game-core
 RUN pnpm --filter @chess404/web build
 ENV NODE_ENV=production
-RUN adduser -D -g '' -u 1001 chess404
+RUN adduser --disabled-password --comment "" --uid 1001 chess404
 WORKDIR /app/apps/web
 USER chess404
 EXPOSE 8080
