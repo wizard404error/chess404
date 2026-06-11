@@ -102,6 +102,17 @@ jobs:
       - run: corepack enable && pnpm install
       - run: pnpm run lint
 
+  packages-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable && pnpm install
+      - run: pnpm --filter @chess404/contracts run lint
+      - run: pnpm --filter @chess404/game-core run lint
+
   web-build:
     runs-on: ubuntu-latest
     defaults:

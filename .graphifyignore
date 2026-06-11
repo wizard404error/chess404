@@ -1,0 +1,39 @@
+# .graphifyignore — exclude from the knowledge graph
+# Same syntax as .gitignore, with ! for negation.
+# Falls back to .gitignore if absent.
+
+# Generated / build artifacts
+.next/
+.turbo/
+dist/
+build/
+out/
+
+# Vendored / installed dependencies
+node_modules/
+.pnpm-store/
+
+# Local data and runtime artifacts
+data/
+*.log
+.env.local
+.pg-creds.env
+redis-unstable/
+
+# Stockfish engine binaries (large, no semantic value)
+*.wasm
+
+# Pre-built APK
+*.apk
+
+# Graphify's own output (don't re-extract the graph)
+graphify-out/
+
+# Lock files
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Generated Go files
+*.pb.go
+*_generated.go

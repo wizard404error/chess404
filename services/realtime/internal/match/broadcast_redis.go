@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -18,11 +19,20 @@ type Broadcaster interface {
 	Close() error
 }
 
+// redisSubscription tracks a per-matchID Redis PubSub plus the count of
+// active local subscribers. The pubsub is closed only when the last
+// subscriber unsubscribes, so multiple concurrent Subscribe() calls for
+// the same matchID share the same underlying connection safely.
+type redisSubscription struct {
+	ps       *redis.PubSub
+	refCount int32
+}
+
 type RedisBroadcaster struct {
 	client    *redis.Client
 	keyPrefix string
 	mu        sync.Mutex
-	subs      map[string]*redis.PubSub
+	subs      map[string]*redisSubscription
 	quit      chan struct{}
 }
 
@@ -43,7 +53,7 @@ func NewRedisBroadcaster(redisURL, keyPrefix string) (*RedisBroadcaster, error) 
 	return &RedisBroadcaster{
 		client:    client,
 		keyPrefix: keyPrefix,
-		subs:      make(map[string]*redis.PubSub),
+		subs:      make(map[string]*redisSubscription),
 		quit:      make(chan struct{}),
 	}, nil
 }
@@ -60,24 +70,25 @@ func (b *RedisBroadcaster) Publish(matchID string, data []byte) error {
 
 func (b *RedisBroadcaster) Subscribe(matchID string) <-chan []byte {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
-	if existing, ok := b.subs[matchID]; ok {
-		ch := make(chan []byte, 64)
-		go func() {
-			for msg := range existing.Channel() {
-				ch <- []byte(msg.Payload)
-			}
-			close(ch)
-		}()
-		return ch
+	sub, ok := b.subs[matchID]
+	if !ok {
+		ps := b.client.Subscribe(context.Background(), b.channelName(matchID))
+		sub = &redisSubscription{ps: ps, refCount: 0}
+		b.subs[matchID] = sub
 	}
+	atomic.AddInt32(&sub.refCount, 1)
+	ps := sub.ps
+	b.mu.Unlock()
 
-	ps := b.client.Subscribe(context.Background(), b.channelName(matchID))
-	b.subs[matchID] = ps
-
+	// Each subscriber gets its own buffered channel. The relay goroutine
+	// never blocks longer than a single message write: if the local
+	// consumer is slow, the message is dropped (and logged) so the
+	// shared ps.Channel() stays drained. This prevents one slow consumer
+	// from blocking every other subscriber's delivery.
 	ch := make(chan []byte, 64)
 	go func() {
+		defer close(ch)
 		for msg := range ps.Channel() {
 			select {
 			case ch <- []byte(msg.Payload):
@@ -85,7 +96,6 @@ func (b *RedisBroadcaster) Subscribe(matchID string) <-chan []byte {
 				slog.Warn("broadcast channel full, dropping message", "matchId", matchID)
 			}
 		}
-		close(ch)
 	}()
 
 	return ch
@@ -93,11 +103,20 @@ func (b *RedisBroadcaster) Subscribe(matchID string) <-chan []byte {
 
 func (b *RedisBroadcaster) Unsubscribe(matchID string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if ps, ok := b.subs[matchID]; ok {
-		_ = ps.Close()
-		delete(b.subs, matchID)
+	sub, ok := b.subs[matchID]
+	if !ok {
+		b.mu.Unlock()
+		return
 	}
+	remaining := atomic.AddInt32(&sub.refCount, -1)
+	if remaining > 0 {
+		b.mu.Unlock()
+		return
+	}
+	// Last subscriber left: close the underlying pubsub and remove from map.
+	_ = sub.ps.Close()
+	delete(b.subs, matchID)
+	b.mu.Unlock()
 }
 
 func (b *RedisBroadcaster) Ping() error {
@@ -110,8 +129,8 @@ func (b *RedisBroadcaster) Close() error {
 	close(b.quit)
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for matchID, ps := range b.subs {
-		_ = ps.Close()
+	for matchID, sub := range b.subs {
+		_ = sub.ps.Close()
 		delete(b.subs, matchID)
 	}
 	return b.client.Close()

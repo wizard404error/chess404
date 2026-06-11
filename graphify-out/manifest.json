@@ -1180,8 +1180,8 @@
     "semantic_hash": ""
   },
   "services/realtime/internal/match/broadcast_redis.go": {
-    "mtime": 1781194160.0516062,
-    "ast_hash": "4bb5558e806313a5e102a50b4441ef17",
+    "mtime": 1781216050.9741554,
+    "ast_hash": "9d078ab1076af2f4d2766761e3b6083b",
     "semantic_hash": ""
   },
   "services/realtime/internal/match/chess.go": {
@@ -1640,8 +1640,8 @@
     "semantic_hash": ""
   },
   ".github/workflows/ci.yml": {
-    "mtime": 1781199588.1354823,
-    "ast_hash": "f2871a5dd1437f3ff51db5284b0e97f7",
+    "mtime": 1781215925.2436712,
+    "ast_hash": "3d3de187c1487e5307203549c9f02440",
     "semantic_hash": ""
   },
   "ARCHITECTURE.md": {
@@ -1690,8 +1690,8 @@
     "semantic_hash": ""
   },
   "audit-findings.md": {
-    "mtime": 1781194159.989564,
-    "ast_hash": "eca6afd40742882fe4d3355e5323414f",
+    "mtime": 1781216304.1422489,
+    "ast_hash": "defd84121f168f2a3a82a38ee5505b51",
     "semantic_hash": ""
   },
   "deploy/prometheus/alerts.yml": {
@@ -2157,6 +2157,26 @@
   "white_knight_rook.png": {
     "mtime": 1781194160.1139767,
     "ast_hash": "e75e9fb75583b367ab5d3e8545e6344e",
+    "semantic_hash": ""
+  },
+  ".opencode/opencode.json": {
+    "mtime": 1781215537.492527,
+    "ast_hash": "f2ae21510d07365eb2bce8159272c7a0",
+    "semantic_hash": ""
+  },
+  ".opencode/plugins/graphify.js": {
+    "mtime": 1781215537.493503,
+    "ast_hash": "32b67963417a30cb80544e0b2a56a98d",
+    "semantic_hash": ""
+  },
+  "services/realtime/internal/match/broadcast_redis_test.go": {
+    "mtime": 1781216211.548787,
+    "ast_hash": "92e2c22f76488fdb570484affa5cb714",
+    "semantic_hash": ""
+  },
+  "AGENTS.md": {
+    "mtime": 1781215537.493503,
+    "ast_hash": "752aa83aa64361ac32860f882dcff932",
     "semantic_hash": ""
   }
 }
