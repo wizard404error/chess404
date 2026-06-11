@@ -122,6 +122,7 @@ func main() {
 		case http.MethodPost:
 			var req contracts.CreateMatchRequest
 			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 					return
@@ -156,6 +157,7 @@ func main() {
 
 		if len(parts) == 2 && parts[1] == "join" && r.Method == http.MethodPost {
 			var req contracts.JoinMatchSeatRequest
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 				return
@@ -171,6 +173,7 @@ func main() {
 
 		if len(parts) == 2 && parts[1] == "intents" && r.Method == http.MethodPost {
 			var req contracts.ApplyIntentRequest
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 				return
@@ -199,6 +202,7 @@ func main() {
 
 		if len(parts) == 2 && parts[1] == "presence" && r.Method == http.MethodPost {
 			var req contracts.MatchPresenceRequest
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 				return

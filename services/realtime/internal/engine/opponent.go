@@ -2,6 +2,7 @@ package engine
 
 import (
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
@@ -16,6 +17,21 @@ const (
 	DifficultyHard
 	DifficultyExpert
 )
+
+func ParseDifficulty(s string) Difficulty {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "beginner":
+		return DifficultyBeginner
+	case "easy":
+		return DifficultyEasy
+	case "hard":
+		return DifficultyHard
+	case "expert":
+		return DifficultyExpert
+	default:
+		return DifficultyMedium
+	}
+}
 
 func (d Difficulty) SearchDepth() int {
 	switch d {

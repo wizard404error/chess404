@@ -150,6 +150,7 @@ type GatewayPrivateMatchRequest struct {
 	Account       *GatewayAccountIdentity `json:"account,omitempty"`
 	Queue         string                  `json:"queue,omitempty"`
 	ModeID        contracts.MatchModeID   `json:"modeId,omitempty"`
+	Difficulty    string                  `json:"difficulty,omitempty"`
 	ClockSeconds  int64                   `json:"clockSeconds,omitempty"`
 	PreferredSeat string                  `json:"preferredSeat,omitempty"`
 }
@@ -1023,7 +1024,7 @@ func createGatewayPrivateMatch(config GatewayConfig, client *http.Client, reques
 	if accountSessionErr != nil {
 		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
 	}
-	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.Queue, request.ModeID, request.ClockSeconds, request.PreferredSeat)
+	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.Queue, request.ModeID, request.ClockSeconds, request.PreferredSeat, request.Difficulty)
 }
 
 func createGatewayPrivateMatchForSession(
@@ -1035,6 +1036,7 @@ func createGatewayPrivateMatchForSession(
 	modeID contracts.MatchModeID,
 	clockSeconds int64,
 	preferredSeat string,
+	difficulty string,
 ) (GatewayPrivateMatchResponse, int, error) {
 	if session == nil {
 		return GatewayPrivateMatchResponse{}, http.StatusBadRequest, errors.New("guest session is required")
@@ -1055,6 +1057,7 @@ func createGatewayPrivateMatchForSession(
 		ClockSeconds: clockSeconds,
 		Queue:        matchQueue,
 		ModeID:       contracts.NormalizeMatchModeID(string(modeID)),
+		Difficulty:   strings.TrimSpace(difficulty),
 	}
 	if createReq.ModeID == "" {
 		createReq.ModeID = contracts.MatchModeOpenCards
@@ -1235,6 +1238,7 @@ func rematchGatewayPrivateMatch(config GatewayConfig, client *http.Client, match
 		snapshot.Match.ModeID,
 		clockSeconds,
 		requesterSeat,
+		"",
 	)
 }
 

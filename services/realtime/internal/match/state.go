@@ -667,7 +667,8 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 	s.presence[matchID] = newMatchPresenceState(state, now)
 
 	if string(req.ModeID) == "computer" {
-		s.computers[matchID] = engine.NewComputerOpponent(engine.DifficultyMedium, "black")
+		diff := engine.ParseDifficulty(req.Difficulty)
+		s.computers[matchID] = engine.NewComputerOpponent(diff, "black")
 	}
 
 	snapshot := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), s.events[matchID], now)

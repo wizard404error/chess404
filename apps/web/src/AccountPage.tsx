@@ -38,22 +38,22 @@ import {
   type GuestSession,
   type MatchArchiveEntry,
 } from './lib/platform-service';
-
-const WHITE_GUEST_ID_STORAGE_KEY = 'chess404.guest.white';
-const BLACK_GUEST_ID_STORAGE_KEY = 'chess404.guest.black';
-const WHITE_GUEST_SECRET_STORAGE_KEY = 'chess404.guest.white.secret';
-const BLACK_GUEST_SECRET_STORAGE_KEY = 'chess404.guest.black.secret';
-const WHITE_GUEST_TOKEN_STORAGE_KEY = 'chess404.guest.white.token';
-const BLACK_GUEST_TOKEN_STORAGE_KEY = 'chess404.guest.black.token';
-const WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY = 'chess404.guest.white.token.expiresAt';
-const BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY = 'chess404.guest.black.token.expiresAt';
-
-const WHITE_ACCOUNT_ID_STORAGE_KEY = 'chess404.account.white.id';
-const BLACK_ACCOUNT_ID_STORAGE_KEY = 'chess404.account.black.id';
-const WHITE_ACCOUNT_TOKEN_STORAGE_KEY = 'chess404.account.white.token';
-const BLACK_ACCOUNT_TOKEN_STORAGE_KEY = 'chess404.account.black.token';
-const WHITE_ACCOUNT_EXPIRY_STORAGE_KEY = 'chess404.account.white.expiresAt';
-const BLACK_ACCOUNT_EXPIRY_STORAGE_KEY = 'chess404.account.black.expiresAt';
+import {
+  WHITE_GUEST_ID_STORAGE_KEY,
+  BLACK_GUEST_ID_STORAGE_KEY,
+  WHITE_GUEST_SECRET_STORAGE_KEY,
+  BLACK_GUEST_SECRET_STORAGE_KEY,
+  WHITE_GUEST_TOKEN_STORAGE_KEY,
+  BLACK_GUEST_TOKEN_STORAGE_KEY,
+  WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
+  BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
+  WHITE_ACCOUNT_ID_STORAGE_KEY,
+  BLACK_ACCOUNT_ID_STORAGE_KEY,
+  WHITE_ACCOUNT_TOKEN_STORAGE_KEY,
+  BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
+  WHITE_ACCOUNT_EXPIRY_STORAGE_KEY,
+  BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
+} from './lib/session-storage';
 
 function formatDateTime(value?: string): string {
   if (!value) {

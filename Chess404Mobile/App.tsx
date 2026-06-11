@@ -48,7 +48,6 @@ function App(): React.JSX.Element {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return true;
     }
-    Linking.openURL(url);
     return false;
   }, []);
 
@@ -154,7 +153,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   loadingText: {
-    color: '#bbbbba0',
+    color: '#bbbbba',
     fontSize: 14,
   },
   errorContainer: {
@@ -177,7 +176,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   errorText: {
-    color: '#bbbbba0',
+    color: '#bbbbba',
     fontSize: 14,
     textAlign: 'center',
     marginBottom: 24,

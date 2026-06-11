@@ -414,7 +414,7 @@ export default function CardsPage({onNavigate, embedded = false}:CardsPageProps)
           <span style={{fontSize:21,fontWeight:800,letterSpacing:1,background:'linear-gradient(135deg,#ffd700,#c8860a,#fff8e0)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>CardChess</span>
         </div>
         <div style={{display:'flex',gap:8}}>
-          {['Play','Queue','History','Cards','Rankings','Community','Status','Account'].map(label=>{
+          {['Play','History','Cards','Rankings','Community','Status','Account'].map(label=>{
             const active=label==='Cards';
             return <button key={label} onClick={()=>onNavigate(label)} style={{padding:'8px 22px',fontSize:14,fontWeight:active?700:500,background:active?'linear-gradient(180deg,rgba(200,134,10,0.4),rgba(139,94,10,0.5))':'transparent',color:active?'#ffd700':'rgba(220,210,180,0.9)',border:active?'1px solid rgba(200,134,10,0.6)':'1px solid transparent',borderRadius:8,cursor:'pointer',borderBottom:active?'2px solid #c8860a':'2px solid transparent',fontFamily:'inherit'}}>{label}</button>;
           })}

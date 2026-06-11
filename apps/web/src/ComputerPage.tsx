@@ -36,6 +36,7 @@ export default function ComputerPage({ identity, embedded = false }: ComputerPag
         identity,
         queue: 'direct',
         modeId: 'computer' as MatchModeId,
+        difficulty,
         clockSeconds: 600,
         preferredSeat: 'white',
       });

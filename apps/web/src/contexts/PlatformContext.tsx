@@ -5,7 +5,7 @@ import type { GuestProfile } from '../lib/platform-service';
 import type { QueueTicket } from '../lib/matchmaking-service';
 import type { StoredRoomMeta } from '../lib/match-service';
 
-export type AppPage = 'Play' | 'Watch' | 'Rankings' | 'History' | 'Cards' | 'Friends' | 'Inbox' | 'Community' | 'Account' | 'Status' | 'Admin' | 'Match' | 'Profiles';
+export type AppPage = 'Play' | 'Watch' | 'Rankings' | 'History' | 'Cards' | 'Friends' | 'Inbox' | 'Community' | 'Account' | 'Status' | 'Admin' | 'Match' | 'Profiles' | 'Modes' | 'Queue' | 'Lobbies';
 
 export interface PlatformContextShape {
   hostedRuntime: boolean | null;

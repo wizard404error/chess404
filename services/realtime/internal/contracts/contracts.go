@@ -279,6 +279,7 @@ type CreateMatchRequest struct {
 	StarterHandMode   string      `json:"starterHandMode,omitempty"`
 	Queue             string      `json:"queue,omitempty"`
 	ModeID            MatchModeID `json:"modeId,omitempty"`
+	Difficulty        string      `json:"difficulty,omitempty"`
 	WhiteGuestID      string      `json:"whiteGuestId,omitempty"`
 	BlackGuestID      string      `json:"blackGuestId,omitempty"`
 	WhiteAccountID    string      `json:"whiteAccountId,omitempty"`

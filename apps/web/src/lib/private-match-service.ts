@@ -24,6 +24,7 @@ export async function createPrivateMatch(input: {
   modeId?: MatchModeId;
   clockSeconds?: number;
   preferredSeat?: PieceColor;
+  difficulty?: string;
 }): Promise<PrivateMatchAccessResponse> {
   const response = await fetch('/api/gateway/private-matches', {
     method: 'POST',
@@ -42,6 +43,7 @@ export async function createPrivateMatch(input: {
       } : undefined,
       queue: input.queue ?? 'direct',
       modeId: input.modeId ?? DEFAULT_MATCH_MODE_ID,
+      difficulty: input.difficulty ?? '',
       clockSeconds: input.clockSeconds ?? 600,
       preferredSeat: input.preferredSeat ?? 'white',
     }),

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useRef } from 'react';
 import { type MatchModeId, type PieceColor } from '@chess404/contracts';
 import type { GuestProfile } from './lib/platform-service';
 import type { QueueName, QueueTicket } from './lib/matchmaking-service';
@@ -61,6 +61,14 @@ export default function PlayHubPage({
   onReturnToMatch,
   onCopyMatchLink,
 }: PlayHubPageProps): React.ReactElement {
+  const queueRef = useRef<HTMLDivElement>(null);
+  const lobbiesRef = useRef<HTMLDivElement>(null);
+  const computerRef = useRef<HTMLDivElement>(null);
+
+  const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) => {
+    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 28px 32px', color: '#f4e8c8' }}>
       <div style={{ maxWidth: '1380px', margin: '0 auto', display: 'grid', gap: '18px' }}>
@@ -138,22 +146,25 @@ export default function PlayHubPage({
               eyebrow="Quick Pair"
               title="Enter the official queue lanes"
               detail="Pick the mode and choose casual or rated from one place. Once an opponent is assigned, the live board opens automatically."
+              onClick={() => scrollTo(queueRef)}
             />
             <LaunchTile
               eyebrow="Play A Friend"
               title="Create one room and one clean invite"
               detail="Open a private waiting room, share the link, and let the second device claim the empty seat without extra setup."
+              onClick={() => scrollTo(lobbiesRef)}
             />
             <LaunchTile
               eyebrow="Play vs Computer"
               title="Challenge the built-in engine"
               detail="Play against a chess engine with full card effects. Choose difficulty and start immediately — no opponent needed."
+              onClick={() => scrollTo(computerRef)}
             />
           </div>
         )}
 
         <div style={{ display: 'grid', gap: '18px' }}>
-          <div className="stat-card">
+          <div ref={queueRef} className="stat-card">
             <div style={{ marginBottom: '14px' }}>
               <div style={{ color: '#ffcf72', fontSize: '12px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
                 Quick Pair
@@ -178,7 +189,7 @@ export default function PlayHubPage({
             />
           </div>
 
-          <div className="stat-card" style={{ borderColor: 'rgba(110,170,255,0.14)' }}>
+          <div ref={lobbiesRef} className="stat-card" style={{ borderColor: 'rgba(110,170,255,0.14)' }}>
             <div style={{ marginBottom: '14px' }}>
               <div style={{ color: '#9ed0ff', fontSize: '12px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
                 Play A Friend
@@ -199,7 +210,7 @@ export default function PlayHubPage({
             />
           </div>
 
-          <div className="stat-card" style={{ borderColor: 'rgba(180,130,255,0.14)' }}>
+          <div ref={computerRef} className="stat-card" style={{ borderColor: 'rgba(180,130,255,0.14)' }}>
             <div style={{ marginBottom: '14px' }}>
               <div style={{ color: '#d4a0ff', fontSize: '12px', fontWeight: 800, letterSpacing: '1.2px', textTransform: 'uppercase' }}>
                 Play vs Computer

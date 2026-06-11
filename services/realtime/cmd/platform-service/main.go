@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
-	"github.com/chess404/realtime/internal/envutil"
 	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/metrics"
 	"github.com/chess404/realtime/internal/platform"
@@ -566,7 +565,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 
-		for {
+		for retries := 0; retries < 3; retries++ {
 			claim, ok := claims.FindByGuest(session.Guest.GuestID)
 			if !ok {
 				http.Error(w, `{"error":"no active match claim"}`, http.StatusNotFound)
@@ -589,6 +588,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			_ = json.NewEncoder(w).Encode(claim)
 			return
 		}
+		http.Error(w, `{"error":"failed to refresh match claim"}`, http.StatusInternalServerError)
 	})
 
 	mux.HandleFunc("/api/platform/accounts/claim", func(w http.ResponseWriter, r *http.Request) {
@@ -3247,8 +3247,7 @@ func accountAuthPreviewEnabled() bool {
 }
 
 func accountAuthPublicBaseURL() string {
-	envutil.Require("ACCOUNT_AUTH_PUBLIC_BASE_URL")
-	return os.Getenv("ACCOUNT_AUTH_PUBLIC_BASE_URL")
+	return httputil.EnvOrDefault("ACCOUNT_AUTH_PUBLIC_BASE_URL", "")
 }
 
 func recordAccountSecurityEvent(store platform.AccountSecurityAuditDirectory, accountID, kind, detail string) {
