@@ -279,7 +279,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		httputil.WriteJSON(w, http.StatusOK, collectGatewayStatus(config, client))
+		httputil.WriteJSON(w, http.StatusOK, collectGatewayStatus(config, client, r))
 	})
 
 	mux.Handle("/metrics", metrics.Handler())
@@ -301,9 +301,9 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 					return
 				}
 			}
-			payload = buildGatewayBootstrapPayload(config, client, request)
+			payload = buildGatewayBootstrapPayload(config, client, request, r)
 		} else {
-			payload = buildGatewayBootstrapPayload(config, client, GatewayBootstrapRequest{})
+			payload = buildGatewayBootstrapPayload(config, client, GatewayBootstrapRequest{}, r)
 		}
 
 		httputil.WriteJSON(w, http.StatusOK, contracts.Envelope{
@@ -326,7 +326,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 				return
 			}
 		}
-		response, statusCode, err := createGatewayPrivateMatch(config, client, payload)
+		response, statusCode, err := createGatewayPrivateMatch(config, client, payload, r)
 		if err != nil {
 			httputil.WriteError(w, statusCode, err.Error())
 			return
@@ -394,9 +394,9 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			err        error
 		)
 		if parts[1] == "join" {
-			response, statusCode, err = joinGatewayPrivateMatch(config, client, parts[0], payload)
+			response, statusCode, err = joinGatewayPrivateMatch(config, client, parts[0], payload, r)
 		} else {
-			response, statusCode, err = rematchGatewayPrivateMatch(config, client, parts[0], payload)
+			response, statusCode, err = rematchGatewayPrivateMatch(config, client, parts[0], payload, r)
 		}
 		if err != nil {
 			httputil.WriteError(w, statusCode, err.Error())
@@ -419,7 +419,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 				return
 			}
 		}
-		response, statusCode, err := createGatewayDirectChallenge(config, client, payload)
+		response, statusCode, err := createGatewayDirectChallenge(config, client, payload, r)
 		if err != nil {
 			httputil.WriteError(w, statusCode, err.Error())
 			return
@@ -451,7 +451,7 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			httputil.WriteError(w, http.StatusBadRequest, "invalid challenge id")
 			return
 		}
-		response, statusCode, err := acceptGatewayDirectChallenge(config, client, parts[0], payload)
+		response, statusCode, err := acceptGatewayDirectChallenge(config, client, parts[0], payload, r)
 		if err != nil {
 			httputil.WriteError(w, statusCode, err.Error())
 			return
@@ -459,14 +459,47 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		httputil.WriteJSON(w, http.StatusOK, response)
 	})
 
-	return mux
+	return sourceRequestMiddleware(mux)
 }
 
-func collectGatewayStatus(config GatewayConfig, client *http.Client) GatewaySystemStatus {
+// sourceRequestKey is the context key under which the gateway stores the
+// incoming *http.Request for the lifetime of a single request. Downstream
+// helpers (e.g., fetchGatewayJSONRequestWithContext) read it back to forward
+// the browser's Origin/Referer headers to backend services, so their CSRF
+// middleware can validate the request against its allow-list.
+type sourceRequestKey struct{}
+
+func withSourceRequest(ctx context.Context, r *http.Request) context.Context {
+	if r == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, sourceRequestKey{}, r)
+}
+
+func sourceRequestFromContext(ctx context.Context) *http.Request {
+	if ctx == nil {
+		return nil
+	}
+	r, _ := ctx.Value(sourceRequestKey{}).(*http.Request)
+	return r
+}
+
+// sourceRequestMiddleware wraps a handler so every request's source is
+// available in its context. This lets the gateway's outgoing HTTP calls
+// (which use context.Background today) read back the original incoming
+// request to forward headers like Origin/Referer.
+func sourceRequestMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := withSourceRequest(r.Context(), r)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func collectGatewayStatus(config GatewayConfig, client *http.Client, r *http.Request) GatewaySystemStatus {
 	services := map[string]GatewayServiceHealth{
-		"match":       fetchGatewayJSON(client, config.MatchServiceURL+"/api/system/status"),
-		"platform":    fetchGatewayJSON(client, config.PlatformServiceURL+"/api/platform/status"),
-		"matchmaking": fetchGatewayJSON(client, config.MatchmakingServiceURL+"/api/status"),
+		"match":       fetchGatewayJSON(r, client, config.MatchServiceURL+"/api/system/status"),
+		"platform":    fetchGatewayJSON(r, client, config.PlatformServiceURL+"/api/platform/status"),
+		"matchmaking": fetchGatewayJSON(r, client, config.MatchmakingServiceURL+"/api/status"),
 	}
 
 	status := "ok"
@@ -489,15 +522,15 @@ func collectGatewayStatus(config GatewayConfig, client *http.Client) GatewaySyst
 	}
 }
 
-func buildGatewayBootstrapPayload(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest) GatewayBootstrapPayload {
-	systemStatus := collectGatewayStatus(config, client)
-	capabilities := fetchGatewayJSON(client, config.PlatformServiceURL+"/api/platform/capabilities")
-	defaultQueue := fetchGatewayJSON(client, config.MatchmakingServiceURL+"/api/queues/default")
-	guestSessions, sessionErrors := bootstrapGuestSessions(config, client, request)
-	matchClaims, claimErrors := bootstrapMatchClaims(config, client, request.MatchID, guestSessions)
-	accountSessions, accountErrors := bootstrapAccountSessions(config, client, request, guestSessions)
-	queueTickets, queueErrors := bootstrapQueueTickets(config, client, guestSessions, accountSessions)
-	recoveredMatch, recoveredMatchErrors := bootstrapRecoveredMatch(config, client, guestSessions, queueTickets)
+func buildGatewayBootstrapPayload(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest, r *http.Request) GatewayBootstrapPayload {
+	systemStatus := collectGatewayStatus(config, client, r)
+	capabilities := fetchGatewayJSON(r, client, config.PlatformServiceURL+"/api/platform/capabilities")
+	defaultQueue := fetchGatewayJSON(r, client, config.MatchmakingServiceURL+"/api/queues/default")
+	guestSessions, sessionErrors := bootstrapGuestSessions(config, client, request, r)
+	matchClaims, claimErrors := bootstrapMatchClaims(config, client, request.MatchID, guestSessions, r)
+	accountSessions, accountErrors := bootstrapAccountSessions(config, client, request, guestSessions, r)
+	queueTickets, queueErrors := bootstrapQueueTickets(config, client, guestSessions, accountSessions, r)
+	recoveredMatch, recoveredMatchErrors := bootstrapRecoveredMatch(config, client, guestSessions, queueTickets, r)
 
 	return GatewayBootstrapPayload{
 		Status:               systemStatus.Status,
@@ -525,17 +558,17 @@ func buildGatewayBootstrapPayload(config GatewayConfig, client *http.Client, req
 	}
 }
 
-func bootstrapGuestSessions(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest) (*GatewayBootstrapGuestSessions, *GatewayBootstrapErrors) {
+func bootstrapGuestSessions(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest, r *http.Request) (*GatewayBootstrapGuestSessions, *GatewayBootstrapErrors) {
 	sessions := &GatewayBootstrapGuestSessions{}
 	errors := &GatewayBootstrapErrors{}
 
-	if session, errMessage := bootstrapGuestSessionForSide(config, client, request.White); session != nil {
+	if session, errMessage := bootstrapGuestSessionForSide(config, client, request.White, r); session != nil {
 		sessions.White = session
 	} else if errMessage != "" {
 		errors.White = errMessage
 	}
 
-	if session, errMessage := bootstrapGuestSessionForSide(config, client, request.Black); session != nil {
+	if session, errMessage := bootstrapGuestSessionForSide(config, client, request.Black, r); session != nil {
 		sessions.Black = session
 	} else if errMessage != "" {
 		errors.Black = errMessage
@@ -551,10 +584,10 @@ func bootstrapGuestSessions(config GatewayConfig, client *http.Client, request G
 	return sessions, errors
 }
 
-func bootstrapGuestSessionForSide(config GatewayConfig, client *http.Client, identity *GatewayGuestIdentity) (*platform.GuestSession, string) {
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/guest-sessions", identity)
+func bootstrapGuestSessionForSide(config GatewayConfig, client *http.Client, identity *GatewayGuestIdentity, r *http.Request) (*platform.GuestSession, string) {
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/guest-sessions", identity)
 	if !result.Healthy && result.StatusCode == http.StatusUnauthorized && identity != nil && (identity.GuestID != "" || identity.SessionSecret != "") {
-		result = fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/guest-sessions", GatewayGuestIdentity{})
+		result = fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/guest-sessions", GatewayGuestIdentity{})
 	}
 	if !result.Healthy {
 		return nil, gatewayErrorMessage(result, "failed to bootstrap guest session")
@@ -567,7 +600,7 @@ func bootstrapGuestSessionForSide(config GatewayConfig, client *http.Client, ide
 	return &session, ""
 }
 
-func bootstrapMatchClaims(config GatewayConfig, client *http.Client, matchID string, sessions *GatewayBootstrapGuestSessions) (*GatewayBootstrapMatchClaims, *GatewayBootstrapErrors) {
+func bootstrapMatchClaims(config GatewayConfig, client *http.Client, matchID string, sessions *GatewayBootstrapGuestSessions, r *http.Request) (*GatewayBootstrapMatchClaims, *GatewayBootstrapErrors) {
 	if matchID == "" || sessions == nil {
 		return nil, nil
 	}
@@ -575,13 +608,13 @@ func bootstrapMatchClaims(config GatewayConfig, client *http.Client, matchID str
 	claims := &GatewayBootstrapMatchClaims{}
 	errors := &GatewayBootstrapErrors{}
 
-	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.White, nil); claim != nil {
+	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.White, nil, r); claim != nil {
 		claims.White = sanitizeSeatClaim(claim)
 	} else if errMessage != "" {
 		errors.White = errMessage
 	}
 
-	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.Black, nil); claim != nil {
+	if claim, errMessage := bootstrapMatchClaimForSide(config, client, matchID, sessions.Black, nil, r); claim != nil {
 		claims.Black = sanitizeSeatClaim(claim)
 	} else if errMessage != "" {
 		errors.Black = errMessage
@@ -609,7 +642,7 @@ type matchClaimBootstrapFields struct {
 	MatchStatus  string
 }
 
-func bootstrapMatchClaimForSide(config GatewayConfig, client *http.Client, matchID string, session *platform.GuestSession, matchFields *matchClaimBootstrapFields) (*GatewaySeatClaim, string) {
+func bootstrapMatchClaimForSide(config GatewayConfig, client *http.Client, matchID string, session *platform.GuestSession, matchFields *matchClaimBootstrapFields, r *http.Request) (*GatewaySeatClaim, string) {
 	if session == nil || session.Guest.GuestID == "" || session.SessionSecret == "" {
 		return nil, ""
 	}
@@ -630,7 +663,7 @@ func bootstrapMatchClaimForSide(config GatewayConfig, client *http.Client, match
 		body["modeId"] = matchFields.ModeID
 		body["matchStatus"] = matchFields.MatchStatus
 	}
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims", body)
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims", body)
 	if !result.Healthy {
 		return nil, gatewayErrorMessage(result, "failed to recover match claim")
 	}
@@ -642,17 +675,17 @@ func bootstrapMatchClaimForSide(config GatewayConfig, client *http.Client, match
 	return &claim, ""
 }
 
-func bootstrapAccountSessions(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest, guestSessions *GatewayBootstrapGuestSessions) (*GatewayBootstrapAccountSessions, *GatewayBootstrapErrors) {
+func bootstrapAccountSessions(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest, guestSessions *GatewayBootstrapGuestSessions, r *http.Request) (*GatewayBootstrapAccountSessions, *GatewayBootstrapErrors) {
 	sessions := &GatewayBootstrapAccountSessions{}
 	errors := &GatewayBootstrapErrors{}
 
-	if session, errMessage := bootstrapAccountSessionForSide(config, client, request.WhiteAccount, guestSessionsSide(guestSessions, "white")); session != nil {
+	if session, errMessage := bootstrapAccountSessionForSide(config, client, request.WhiteAccount, guestSessionsSide(guestSessions, "white"), r); session != nil {
 		sessions.White = session
 	} else if errMessage != "" {
 		errors.White = errMessage
 	}
 
-	if session, errMessage := bootstrapAccountSessionForSide(config, client, request.BlackAccount, guestSessionsSide(guestSessions, "black")); session != nil {
+	if session, errMessage := bootstrapAccountSessionForSide(config, client, request.BlackAccount, guestSessionsSide(guestSessions, "black"), r); session != nil {
 		sessions.Black = session
 	} else if errMessage != "" {
 		errors.Black = errMessage
@@ -673,17 +706,18 @@ func bootstrapQueueTickets(
 	client *http.Client,
 	guestSessions *GatewayBootstrapGuestSessions,
 	accountSessions *GatewayBootstrapAccountSessions,
+	r *http.Request,
 ) (*GatewayBootstrapQueueTickets, *GatewayBootstrapErrors) {
 	tickets := &GatewayBootstrapQueueTickets{}
 	errors := &GatewayBootstrapErrors{}
 
-	if ticket, errMessage := bootstrapQueueTicketForSide(config, client, guestSessionsSide(guestSessions, "white"), accountSessionsSide(accountSessions, "white")); ticket != nil {
+	if ticket, errMessage := bootstrapQueueTicketForSide(config, client, guestSessionsSide(guestSessions, "white"), accountSessionsSide(accountSessions, "white"), r); ticket != nil {
 		tickets.White = ticket
 	} else if errMessage != "" {
 		errors.White = errMessage
 	}
 
-	if ticket, errMessage := bootstrapQueueTicketForSide(config, client, guestSessionsSide(guestSessions, "black"), accountSessionsSide(accountSessions, "black")); ticket != nil {
+	if ticket, errMessage := bootstrapQueueTicketForSide(config, client, guestSessionsSide(guestSessions, "black"), accountSessionsSide(accountSessions, "black"), r); ticket != nil {
 		tickets.Black = ticket
 	} else if errMessage != "" {
 		errors.Black = errMessage
@@ -704,6 +738,7 @@ func bootstrapQueueTicketForSide(
 	client *http.Client,
 	guestSession *platform.GuestSession,
 	accountSession *platform.AccountSession,
+	r *http.Request,
 ) (*matchmaking.Ticket, string) {
 	guestID := ""
 	if guestSession != nil {
@@ -725,7 +760,7 @@ func bootstrapQueueTicketForSide(
 		params.Set("accountId", accountID)
 	}
 
-	result := fetchGatewayJSON(client, config.MatchmakingServiceURL+"/api/queues/tickets?"+params.Encode())
+	result := fetchGatewayJSON(r, client, config.MatchmakingServiceURL+"/api/queues/tickets?"+params.Encode())
 	if result.StatusCode == http.StatusNotFound {
 		return nil, ""
 	}
@@ -747,8 +782,9 @@ func bootstrapRecoveredMatch(
 	client *http.Client,
 	guestSessions *GatewayBootstrapGuestSessions,
 	queueTickets *GatewayBootstrapQueueTickets,
+	r *http.Request,
 ) (*GatewayBootstrapRecoveredMatch, *GatewayBootstrapErrors) {
-	claims, errors := bootstrapActiveMatchClaims(config, client, guestSessions)
+	claims, errors := bootstrapActiveMatchClaims(config, client, guestSessions, r)
 	if activeMatch := recoveredMatchFromClaims(claims); activeMatch != nil {
 		return activeMatch, errors
 	}
@@ -767,17 +803,18 @@ func bootstrapActiveMatchClaims(
 	config GatewayConfig,
 	client *http.Client,
 	guestSessions *GatewayBootstrapGuestSessions,
+	r *http.Request,
 ) (*GatewayBootstrapMatchClaims, *GatewayBootstrapErrors) {
 	claims := &GatewayBootstrapMatchClaims{}
 	errors := &GatewayBootstrapErrors{}
 
-	if claim, errMessage := bootstrapActiveMatchClaimForSide(config, client, guestSessionsSide(guestSessions, "white")); claim != nil {
+	if claim, errMessage := bootstrapActiveMatchClaimForSide(config, client, guestSessionsSide(guestSessions, "white"), r); claim != nil {
 		claims.White = claim
 	} else if errMessage != "" {
 		errors.White = errMessage
 	}
 
-	if claim, errMessage := bootstrapActiveMatchClaimForSide(config, client, guestSessionsSide(guestSessions, "black")); claim != nil {
+	if claim, errMessage := bootstrapActiveMatchClaimForSide(config, client, guestSessionsSide(guestSessions, "black"), r); claim != nil {
 		claims.Black = claim
 	} else if errMessage != "" {
 		errors.Black = errMessage
@@ -797,6 +834,7 @@ func bootstrapActiveMatchClaimForSide(
 	config GatewayConfig,
 	client *http.Client,
 	session *platform.GuestSession,
+	r *http.Request,
 ) (*GatewaySeatClaim, string) {
 	if session == nil || strings.TrimSpace(session.Guest.GuestID) == "" {
 		return nil, ""
@@ -811,7 +849,7 @@ func bootstrapActiveMatchClaimForSide(
 		payload["sessionSecret"] = strings.TrimSpace(session.SessionSecret)
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims/active", payload)
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims/active", payload)
 	if result.StatusCode == http.StatusNotFound {
 		return nil, ""
 	}
@@ -937,12 +975,12 @@ func accountSessionsSide(sessions *GatewayBootstrapAccountSessions, side string)
 	return sessions.Black
 }
 
-func bootstrapAccountSessionForSide(config GatewayConfig, client *http.Client, identity *GatewayAccountIdentity, guestSession *platform.GuestSession) (*platform.AccountSession, string) {
+func bootstrapAccountSessionForSide(config GatewayConfig, client *http.Client, identity *GatewayAccountIdentity, guestSession *platform.GuestSession, r *http.Request) (*platform.AccountSession, string) {
 	if identity == nil || strings.TrimSpace(identity.AccountID) == "" {
 		return nil, ""
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/account-sessions", map[string]string{
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/account-sessions", map[string]string{
 		"accountId":    strings.TrimSpace(identity.AccountID),
 		"sessionToken": strings.TrimSpace(identity.SessionToken),
 	})
@@ -955,7 +993,7 @@ func bootstrapAccountSessionForSide(config GatewayConfig, client *http.Client, i
 	}
 
 	if result.StatusCode == http.StatusUnauthorized && guestSession != nil && strings.TrimSpace(guestSession.Guest.GuestID) != "" {
-		reclaimed, errMessage := reclaimGatewayAccountSession(config, client, strings.TrimSpace(identity.AccountID), guestSession)
+		reclaimed, errMessage := reclaimGatewayAccountSession(config, client, strings.TrimSpace(identity.AccountID), guestSession, r)
 		if reclaimed != nil || errMessage != "" {
 			return reclaimed, errMessage
 		}
@@ -964,8 +1002,8 @@ func bootstrapAccountSessionForSide(config GatewayConfig, client *http.Client, i
 	return nil, gatewayErrorMessage(result, "failed to bootstrap account session")
 }
 
-func reclaimGatewayAccountSession(config GatewayConfig, client *http.Client, accountID string, guestSession *platform.GuestSession) (*platform.AccountSession, string) {
-	accountResult := fetchGatewayJSON(client, config.PlatformServiceURL+"/api/platform/accounts/"+accountID)
+func reclaimGatewayAccountSession(config GatewayConfig, client *http.Client, accountID string, guestSession *platform.GuestSession, r *http.Request) (*platform.AccountSession, string) {
+	accountResult := fetchGatewayJSON(r, client, config.PlatformServiceURL+"/api/platform/accounts/"+accountID)
 	if !accountResult.Healthy {
 		return nil, gatewayErrorMessage(accountResult, "failed to fetch account profile")
 	}
@@ -989,7 +1027,7 @@ func reclaimGatewayAccountSession(config GatewayConfig, client *http.Client, acc
 		claimPayload["sessionSecret"] = strings.TrimSpace(guestSession.SessionSecret)
 	}
 
-	claimResult := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/accounts/claim", claimPayload)
+	claimResult := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/accounts/claim", claimPayload)
 	if !claimResult.Healthy {
 		return nil, gatewayErrorMessage(claimResult, "failed to reclaim account session")
 	}
@@ -1000,8 +1038,8 @@ func reclaimGatewayAccountSession(config GatewayConfig, client *http.Client, acc
 	return &session, ""
 }
 
-func resolveGatewayClaimByToken(config GatewayConfig, client *http.Client, matchID, claimToken string) (*GatewaySeatClaim, string) {
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims/resolve", map[string]string{
+func resolveGatewayClaimByToken(config GatewayConfig, client *http.Client, matchID, claimToken string, r *http.Request) (*GatewaySeatClaim, string) {
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/match-claims/resolve", map[string]string{
 		"matchId":    matchID,
 		"claimToken": claimToken,
 	})
@@ -1015,16 +1053,16 @@ func resolveGatewayClaimByToken(config GatewayConfig, client *http.Client, match
 	return &claim, ""
 }
 
-func createGatewayPrivateMatch(config GatewayConfig, client *http.Client, request GatewayPrivateMatchRequest) (GatewayPrivateMatchResponse, int, error) {
-	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+func createGatewayPrivateMatch(config GatewayConfig, client *http.Client, request GatewayPrivateMatchRequest, r *http.Request) (GatewayPrivateMatchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest, r)
 	if err != nil {
 		return GatewayPrivateMatchResponse{}, statusCode, err
 	}
-	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session, r)
 	if accountSessionErr != nil {
 		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
 	}
-	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.Queue, request.ModeID, request.ClockSeconds, request.PreferredSeat, request.Difficulty)
+	return createGatewayPrivateMatchForSession(config, client, session, accountSession, request.Queue, request.ModeID, request.ClockSeconds, request.PreferredSeat, request.Difficulty, r)
 }
 
 func createGatewayPrivateMatchForSession(
@@ -1037,6 +1075,7 @@ func createGatewayPrivateMatchForSession(
 	clockSeconds int64,
 	preferredSeat string,
 	difficulty string,
+	r *http.Request,
 ) (GatewayPrivateMatchResponse, int, error) {
 	if session == nil {
 		return GatewayPrivateMatchResponse{}, http.StatusBadRequest, errors.New("guest session is required")
@@ -1078,7 +1117,7 @@ func createGatewayPrivateMatchForSession(
 		}
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches", createReq)
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.MatchServiceURL+"/api/matches", createReq)
 	if result.Error != "" && result.StatusCode == 0 {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(result.Error)
 	}
@@ -1105,7 +1144,7 @@ func createGatewayPrivateMatchForSession(
 		ModeID:       string(snapshot.Match.ModeID),
 		MatchStatus:  strings.TrimSpace(snapshot.Match.Status),
 	}
-	claim, claimErr := bootstrapMatchClaimForSide(config, client, snapshot.Match.MatchID, session, matchFields)
+	claim, claimErr := bootstrapMatchClaimForSide(config, client, snapshot.Match.MatchID, session, matchFields, r)
 	if claimErr != "" {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to bootstrap match claim: %s", claimErr)
 	}
@@ -1122,12 +1161,12 @@ func createGatewayPrivateMatchForSession(
 	}, http.StatusCreated, nil
 }
 
-func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID string, request GatewayPrivateMatchRequest) (GatewayPrivateMatchResponse, int, error) {
-	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID string, request GatewayPrivateMatchRequest, r *http.Request) (GatewayPrivateMatchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest, r)
 	if err != nil {
 		return GatewayPrivateMatchResponse{}, statusCode, err
 	}
-	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session, r)
 	if accountSessionErr != nil {
 		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
 	}
@@ -1142,7 +1181,7 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 		joinReq.AccountID = accountSession.Account.AccountID
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/join", joinReq)
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/join", joinReq)
 	if result.Error != "" && result.StatusCode == 0 {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(result.Error)
 	}
@@ -1169,7 +1208,7 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 		ModeID:       string(joined.Match.Match.ModeID),
 		MatchStatus:  strings.TrimSpace(joined.Match.Match.Status),
 	}
-	claim, claimErr := bootstrapMatchClaimForSide(config, client, matchID, session, joinMatchFields)
+	claim, claimErr := bootstrapMatchClaimForSide(config, client, matchID, session, joinMatchFields, r)
 	if claimErr != "" {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to bootstrap match claim: %s", claimErr)
 	}
@@ -1186,17 +1225,17 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 	}, http.StatusOK, nil
 }
 
-func rematchGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID string, request GatewayPrivateMatchRequest) (GatewayPrivateMatchResponse, int, error) {
-	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+func rematchGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID string, request GatewayPrivateMatchRequest, r *http.Request) (GatewayPrivateMatchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest, r)
 	if err != nil {
 		return GatewayPrivateMatchResponse{}, statusCode, err
 	}
-	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, _, accountSessionErr := ensureGatewayPrivateAccountSession(config, client, request.Account, session, r)
 	if accountSessionErr != nil {
 		log.Printf("note: account session bootstrap skipped: %v", accountSessionErr)
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodGet, config.MatchServiceURL+"/api/matches/"+matchID, nil)
+	result := fetchGatewayJSONRequest(r, client, http.MethodGet, config.MatchServiceURL+"/api/matches/"+matchID, nil)
 	if result.Error != "" && result.StatusCode == 0 {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(result.Error)
 	}
@@ -1239,15 +1278,16 @@ func rematchGatewayPrivateMatch(config GatewayConfig, client *http.Client, match
 		clockSeconds,
 		requesterSeat,
 		"",
+		r,
 	)
 }
 
-func createGatewayDirectChallenge(config GatewayConfig, client *http.Client, request GatewayDirectChallengeRequest) (GatewayDirectChallengeLaunchResponse, int, error) {
-	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+func createGatewayDirectChallenge(config GatewayConfig, client *http.Client, request GatewayDirectChallengeRequest, r *http.Request) (GatewayDirectChallengeLaunchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest, r)
 	if err != nil {
 		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
 	}
-	accountSession, statusCode, err := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, statusCode, err := ensureGatewayPrivateAccountSession(config, client, request.Account, session, r)
 	if err != nil {
 		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
 	}
@@ -1259,7 +1299,7 @@ func createGatewayDirectChallenge(config GatewayConfig, client *http.Client, req
 		return GatewayDirectChallengeLaunchResponse{}, http.StatusBadRequest, errors.New("target account is required")
 	}
 
-	eligibility := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/eligibility", map[string]string{
+	eligibility := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/eligibility", map[string]string{
 		"accountId":       accountSession.Account.AccountID,
 		"sessionToken":    accountSession.SessionToken,
 		"targetAccountId": targetAccountID,
@@ -1274,12 +1314,12 @@ func createGatewayDirectChallenge(config GatewayConfig, client *http.Client, req
 		ModeID:        request.ModeID,
 		ClockSeconds:  request.ClockSeconds,
 		PreferredSeat: request.PreferredSeat,
-	})
+	}, r)
 	if err != nil {
 		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
 	}
 
-	createResult := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges", map[string]any{
+	createResult := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges", map[string]any{
 		"accountId":       accountSession.Account.AccountID,
 		"sessionToken":    accountSession.SessionToken,
 		"targetAccountId": targetAccountID,
@@ -1303,12 +1343,12 @@ func createGatewayDirectChallenge(config GatewayConfig, client *http.Client, req
 	}, http.StatusCreated, nil
 }
 
-func acceptGatewayDirectChallenge(config GatewayConfig, client *http.Client, challengeID string, request GatewayDirectChallengeAcceptRequest) (GatewayDirectChallengeLaunchResponse, int, error) {
-	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest)
+func acceptGatewayDirectChallenge(config GatewayConfig, client *http.Client, challengeID string, request GatewayDirectChallengeAcceptRequest, r *http.Request) (GatewayDirectChallengeLaunchResponse, int, error) {
+	session, statusCode, err := ensureGatewayPrivateGuestSession(config, client, request.Guest, r)
 	if err != nil {
 		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
 	}
-	accountSession, statusCode, err := ensureGatewayPrivateAccountSession(config, client, request.Account, session)
+	accountSession, statusCode, err := ensureGatewayPrivateAccountSession(config, client, request.Account, session, r)
 	if err != nil {
 		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
 	}
@@ -1316,7 +1356,7 @@ func acceptGatewayDirectChallenge(config GatewayConfig, client *http.Client, cha
 		return GatewayDirectChallengeLaunchResponse{}, http.StatusUnauthorized, errors.New("direct challenges require a signed-in account session")
 	}
 
-	viewResult := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/"+challengeID+"/view", map[string]string{
+	viewResult := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/"+challengeID+"/view", map[string]string{
 		"accountId":    accountSession.Account.AccountID,
 		"sessionToken": accountSession.SessionToken,
 	})
@@ -1334,12 +1374,12 @@ func acceptGatewayDirectChallenge(config GatewayConfig, client *http.Client, cha
 	matchResponse, statusCode, err := joinGatewayPrivateMatch(config, client, challenge.MatchID, GatewayPrivateMatchRequest{
 		Guest:   request.Guest,
 		Account: request.Account,
-	})
+	}, r)
 	if err != nil {
 		return GatewayDirectChallengeLaunchResponse{}, statusCode, err
 	}
 
-	respondResult := fetchGatewayJSONRequest(client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/"+challengeID+"/respond", map[string]any{
+	respondResult := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/challenges/"+challengeID+"/respond", map[string]any{
 		"accountId":    accountSession.Account.AccountID,
 		"sessionToken": accountSession.SessionToken,
 		"accept":       true,
@@ -1355,8 +1395,8 @@ func acceptGatewayDirectChallenge(config GatewayConfig, client *http.Client, cha
 	}, http.StatusOK, nil
 }
 
-func ensureGatewayPrivateGuestSession(config GatewayConfig, client *http.Client, identity GatewayGuestIdentity) (*platform.GuestSession, int, error) {
-	session, errMessage := bootstrapGuestSessionForSide(config, client, &identity)
+func ensureGatewayPrivateGuestSession(config GatewayConfig, client *http.Client, identity GatewayGuestIdentity, r *http.Request) (*platform.GuestSession, int, error) {
+	session, errMessage := bootstrapGuestSessionForSide(config, client, &identity, r)
 	if session != nil {
 		return session, http.StatusOK, nil
 	}
@@ -1372,11 +1412,11 @@ func ensureGatewayPrivateGuestSession(config GatewayConfig, client *http.Client,
 	return nil, http.StatusBadGateway, errors.New(errMessage)
 }
 
-func ensureGatewayPrivateAccountSession(config GatewayConfig, client *http.Client, identity *GatewayAccountIdentity, guestSession *platform.GuestSession) (*platform.AccountSession, int, error) {
+func ensureGatewayPrivateAccountSession(config GatewayConfig, client *http.Client, identity *GatewayAccountIdentity, guestSession *platform.GuestSession, r *http.Request) (*platform.AccountSession, int, error) {
 	if identity == nil || strings.TrimSpace(identity.AccountID) == "" {
 		return nil, http.StatusOK, nil
 	}
-	session, errMessage := bootstrapAccountSessionForSide(config, client, identity, guestSession)
+	session, errMessage := bootstrapAccountSessionForSide(config, client, identity, guestSession, r)
 	if session != nil {
 		return session, http.StatusOK, nil
 	}
@@ -1406,7 +1446,7 @@ func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayCo
 
 	req.Intent.MatchID = matchID
 	if strings.TrimSpace(req.Intent.PlayerClaimToken) != "" {
-		claim, errMessage := resolveGatewayClaimByToken(config, client, matchID, strings.TrimSpace(req.Intent.PlayerClaimToken))
+		claim, errMessage := resolveGatewayClaimByToken(config, client, matchID, strings.TrimSpace(req.Intent.PlayerClaimToken), r)
 		if errMessage != "" {
 			httputil.WriteError(w, http.StatusUnauthorized, errMessage)
 			return
@@ -1416,7 +1456,7 @@ func proxyGatewayIntent(w http.ResponseWriter, r *http.Request, config GatewayCo
 		req.Intent.PlayerClaimToken = ""
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/intents", req)
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/intents", req)
 	if result.Error != "" && result.StatusCode == 0 {
 		httputil.WriteError(w, http.StatusBadGateway, result.Error)
 		return
@@ -1440,7 +1480,7 @@ func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config Gateway
 	}
 
 	if strings.TrimSpace(req.PlayerClaimToken) != "" {
-		claim, errMessage := resolveGatewayClaimByToken(config, client, matchID, strings.TrimSpace(req.PlayerClaimToken))
+		claim, errMessage := resolveGatewayClaimByToken(config, client, matchID, strings.TrimSpace(req.PlayerClaimToken), r)
 		if errMessage != "" {
 			httputil.WriteError(w, http.StatusUnauthorized, errMessage)
 			return
@@ -1450,7 +1490,7 @@ func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config Gateway
 		req.PlayerClaimToken = ""
 	}
 
-	result := fetchGatewayJSONRequest(client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/presence", req)
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.MatchServiceURL+"/api/matches/"+matchID+"/presence", req)
 	if result.Error != "" && result.StatusCode == 0 {
 		httputil.WriteError(w, http.StatusBadGateway, result.Error)
 		return
@@ -1462,12 +1502,18 @@ func proxyGatewayPresence(w http.ResponseWriter, r *http.Request, config Gateway
 	httputil.WriteJSON(w, statusOrDefault(result.StatusCode, http.StatusBadGateway), result.Payload)
 }
 
-func fetchGatewayJSON(client *http.Client, url string) GatewayServiceHealth {
-	return fetchGatewayJSONRequest(client, http.MethodGet, url, nil)
+func fetchGatewayJSON(r *http.Request, client *http.Client, url string) GatewayServiceHealth {
+	return fetchGatewayJSONRequest(r, client, http.MethodGet, url, nil)
 }
 
-func fetchGatewayJSONRequest(client *http.Client, method, url string, payload any) GatewayServiceHealth {
-	return fetchGatewayJSONRequestWithContext(context.Background(), client, method, url, payload)
+func fetchGatewayJSONRequest(r *http.Request, client *http.Client, method, url string, payload any) GatewayServiceHealth {
+	var ctx context.Context
+	if r != nil {
+		ctx = r.Context()
+	} else {
+		ctx = context.Background()
+	}
+	return fetchGatewayJSONRequestWithContext(ctx, client, method, url, payload)
 }
 
 func fetchGatewayJSONRequestWithContext(ctx context.Context, client *http.Client, method, url string, payload any) GatewayServiceHealth {
@@ -1488,6 +1534,21 @@ func fetchGatewayJSONRequestWithContext(ctx context.Context, client *http.Client
 	}
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	// Forward the original incoming request's Origin/Referer headers to
+	// backend services so the destination's CSRF middleware can validate
+	// the request as same-origin or against its allow-list. Without this,
+	// server-to-server POSTs from the gateway arrive with no Origin/Referer
+	// and are rejected with 403 (CSRF check failed: origin header required).
+	// The source request is propagated via context by the gateway's
+	// sourceRequestMiddleware.
+	if source := sourceRequestFromContext(ctx); source != nil {
+		if origin := source.Header.Get("Origin"); origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		if referer := source.Header.Get("Referer"); referer != "" {
+			request.Header.Set("Referer", referer)
+		}
 	}
 
 	response, err := client.Do(request)

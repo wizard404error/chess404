@@ -1399,3 +1399,144 @@ func TestGatewayPresenceProxyResolvesClaimToken(t *testing.T) {
 		t.Fatalf("expected gateway presence proxy to succeed, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestGatewayForwardsOriginHeaderToBackendServices verifies that when the
+// browser sends an Origin header to the gateway, the gateway forwards it to
+// the backend services (platform/match). This is required so the destination
+// services' CSRF middleware can validate the request as same-origin or
+// against its allow-list, instead of rejecting it with 403 "origin header
+// required".
+func TestGatewayForwardsOriginHeaderToBackendServices(t *testing.T) {
+	const wantOrigin = "https://web-production-9a697.up.railway.app"
+	const wantReferer = "https://web-production-9a697.up.railway.app/play"
+
+	var (
+		platformCalls   int
+		platformOrigins []string
+		matchCalls      int
+		matchOrigins    []string
+	)
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"profiles": true})
+		case "/api/platform/guest-sessions":
+			platformCalls++
+			platformOrigins = append(platformOrigins, r.Header.Get("Origin"))
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			guestID := strings.TrimSpace(payload["guestId"])
+			if guestID == "" {
+				guestID = "gw_guest_white"
+			}
+			secret := strings.TrimSpace(payload["sessionSecret"])
+			if secret == "" {
+				secret = "gw_secret_white"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       guestID,
+					"displayName":   "Guest",
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": secret,
+			})
+		case "/api/platform/match-claims":
+			platformOrigins = append(platformOrigins, r.Header.Get("Origin"))
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      payload["matchId"],
+				"guestId":      payload["guestId"],
+				"seatColor":    "white",
+				"playerId":     "white_player",
+				"playerSecret": "claim-secret",
+				"claimToken":   "claim-token",
+				"queue":        "direct",
+				"status":       "active",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/system/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "/api/matches":
+			matchCalls++
+			matchOrigins = append(matchOrigins, r.Header.Get("Origin"))
+			var payload map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"matchId":         "match_forward_origin",
+					"queue":           "direct",
+					"modeId":          "open_cards",
+					"status":          "waiting",
+					"whiteGuestId":    "gw_guest_white",
+					"blackGuestId":    "gw_guest_black",
+					"whiteName":       "White",
+					"blackName":       "Black",
+					"clockSeconds":    600,
+					"clockIncrement":  5,
+					"createdAt":       "2026-01-01T00:00:00Z",
+					"updatedAt":       "2026-01-01T00:00:00Z",
+					"moveCount":       0,
+					"version":         0,
+					"firstMoveAuthor": "",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer matchServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/private-matches", strings.NewReader(`{
+		"guest": {"guestId":"gw_guest_white","sessionSecret":"gw_secret_white","displayName":"White"},
+		"queue":"direct","preferredSeat":"white"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", wantOrigin)
+	req.Header.Set("Referer", wantReferer)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected gateway to create match, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if platformCalls == 0 {
+		t.Fatalf("expected platform-service to be called at least once")
+	}
+	if matchCalls == 0 {
+		t.Fatalf("expected match-service to be called at least once")
+	}
+	for i, origin := range platformOrigins {
+		if origin != wantOrigin {
+			t.Fatalf("platform call #%d: expected Origin %q, got %q", i, wantOrigin, origin)
+		}
+	}
+	for i, origin := range matchOrigins {
+		if origin != wantOrigin {
+			t.Fatalf("match call #%d: expected Origin %q, got %q", i, wantOrigin, origin)
+		}
+	}
+}
