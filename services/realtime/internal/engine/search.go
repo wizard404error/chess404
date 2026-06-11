@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -316,7 +317,7 @@ func keyForSquare(sq contracts.Square) string {
 }
 
 func keyForCoords(row, col int) string {
-	return string(rune('0'+row)) + "-" + string(rune('0'+col))
+	return fmt.Sprintf("%d-%d", row, col)
 }
 
 func sliceToSet(values []string) map[string]struct{} {

@@ -3,6 +3,7 @@ package engine
 import (
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
@@ -73,6 +74,7 @@ type ComputerOpponent struct {
 	rng        *rand.Rand
 	tt         *TranspositionTable
 	cardEval   *CardEvaluator
+	mu         sync.Mutex
 }
 
 func NewComputerOpponent(difficulty Difficulty, color string) *ComputerOpponent {
@@ -87,6 +89,9 @@ func NewComputerOpponent(difficulty Difficulty, color string) *ComputerOpponent 
 }
 
 func (co *ComputerOpponent) MakeMove(state *contracts.MatchState) *contracts.PlayerIntent {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+
 	if state.Status != "active" {
 		return nil
 	}

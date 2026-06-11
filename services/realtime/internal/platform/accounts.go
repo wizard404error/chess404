@@ -19,7 +19,7 @@ var ErrInvalidAccountHandle = errors.New("invalid account handle")
 var ErrAccountHandleTaken = errors.New("account handle already taken")
 var ErrUnauthorizedAccountSession = errors.New("unauthorized account session")
 
-const defaultAccountSessionTTL = 30 * 24 * time.Hour
+const defaultAccountSessionTTL = 14 * 24 * time.Hour
 const maxAccountRatingHistoryEntries = 100
 
 var accountHandlePattern = regexp.MustCompile(`^[a-z0-9_-]{3,24}$`)
