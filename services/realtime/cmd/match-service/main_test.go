@@ -146,7 +146,7 @@ func TestWithCORSRejectsUnknownOriginWithoutAllowOrigin(t *testing.T) {
 	}
 }
 
-func TestWithCORSAcceptsEmptyAllowlist(t *testing.T) {
+func TestWithCORSRejectsEmptyAllowlist(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "")
 
 	handler := withCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +158,7 @@ func TestWithCORSAcceptsEmptyAllowlist(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://anywhere.example.com" {
-		t.Fatalf("empty allowlist should be permissive, got Allow-Origin=%q", got)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("empty allowlist should not set Allow-Origin (rejected for security), got Allow-Origin=%q", got)
 	}
 }

@@ -200,7 +200,7 @@ func isValidPathParam(param string) bool {
 }
 
 func main() {
-	envutil.Require("MATCH_SERVICE_INTERNAL_URL", "PLATFORM_SERVICE_INTERNAL_URL", "MATCHMAKING_SERVICE_INTERNAL_URL")
+	envutil.Require("MATCH_SERVICE_INTERNAL_URL", "PLATFORM_SERVICE_INTERNAL_URL", "MATCHMAKING_SERVICE_INTERNAL_URL", "ALLOWED_ORIGINS")
 	config := gatewayConfigFromEnv()
 	client := httputil.NewHTTPClient(3 * time.Second)
 	mux := buildGatewayMux(config, client)

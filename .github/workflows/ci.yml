@@ -71,7 +71,7 @@ jobs:
           - match-service
           - platform-service
           - matchmaking-service
-          - replay-worker
+          - analysis-worker
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -84,7 +84,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/railway/${{ matrix.service == 'replay-worker' && 'Dockerfile.replay-worker' || format('{0}.Dockerfile', matrix.service) }}
+          file: deploy/railway/${{ matrix.service == 'analysis-worker' && 'Dockerfile.analysis-worker' || format('{0}.Dockerfile', matrix.service) }}
           push: false
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max

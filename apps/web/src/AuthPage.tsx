@@ -16,14 +16,15 @@ import {
   type GuestSession,
 } from './lib/platform-service';
 import { formatDateTime } from './lib/display';
-
-const WHITE_GUEST_ID_STORAGE_KEY = 'chess404.guest.white';
-const WHITE_GUEST_SECRET_STORAGE_KEY = 'chess404.guest.white.secret';
-const WHITE_GUEST_TOKEN_STORAGE_KEY = 'chess404.guest.white.token';
-const WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY = 'chess404.guest.white.token.expiresAt';
-const WHITE_ACCOUNT_ID_STORAGE_KEY = 'chess404.account.white.id';
-const WHITE_ACCOUNT_TOKEN_STORAGE_KEY = 'chess404.account.white.token';
-const WHITE_ACCOUNT_EXPIRY_STORAGE_KEY = 'chess404.account.white.expiresAt';
+import {
+  WHITE_GUEST_ID_STORAGE_KEY,
+  WHITE_GUEST_SECRET_STORAGE_KEY,
+  WHITE_GUEST_TOKEN_STORAGE_KEY,
+  WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
+  WHITE_ACCOUNT_ID_STORAGE_KEY,
+  WHITE_ACCOUNT_TOKEN_STORAGE_KEY,
+  WHITE_ACCOUNT_EXPIRY_STORAGE_KEY,
+} from './lib/session-storage';
 
 type StoredGuestIdentity = {
   guestId?: string;

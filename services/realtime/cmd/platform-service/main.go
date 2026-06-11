@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
+	"github.com/chess404/realtime/internal/envutil"
 	"github.com/chess404/realtime/internal/httputil"
 	"github.com/chess404/realtime/internal/metrics"
 	"github.com/chess404/realtime/internal/platform"
@@ -23,6 +24,7 @@ import (
 )
 
 func main() {
+	envutil.Require("ALLOWED_ORIGINS")
 	archive, err := openArchiveStore()
 	if err != nil {
 		log.Fatalf("failed to initialize archive store: %v", err)

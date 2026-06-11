@@ -49,10 +49,10 @@
         "restartPolicyMaxRetries": 3
       }
     },
-    "replay-worker": {
+    "analysis-worker": {
       "build": {
         "builder": "DOCKERFILE",
-        "dockerfilePath": "deploy/railway/Dockerfile.replay-worker"
+        "dockerfilePath": "deploy/railway/Dockerfile.analysis-worker"
       },
       "deploy": {
         "restartPolicyType": "ON_FAILURE",

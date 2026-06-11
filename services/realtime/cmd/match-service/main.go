@@ -27,7 +27,7 @@ import (
 )
 
 func main() {
-	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL")
+	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL", "ALLOWED_ORIGINS")
 	mux := http.NewServeMux()
 	archive, err := openArchiveStore()
 	if err != nil {

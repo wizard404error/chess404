@@ -280,83 +280,77 @@ export function connectToMatchStream(
       return;
     }
 
-    const buildWsUrl = async () => {
-      const params = new URLSearchParams();
-      if (playerIdentity?.playerClaimToken?.trim()) {
-        params.set('t', playerIdentity.playerClaimToken.trim());
-      } else if (playerIdentity?.playerId?.trim() && playerIdentity?.playerSecret?.trim()) {
-        const token = await fetchAuthToken(matchId, playerIdentity.playerId.trim(), playerIdentity.playerSecret.trim());
-        if (token) {
-          params.set('t', token);
-        }
-      }
-      if (!params.has('t')) {
-        console.error('Cannot connect to match: no auth token available');
-        return null;
-      }
-      return `${nextSocketUrl}/api/matches/${matchId}/ws?${params.toString()}`;
-    };
+    const wsUrl = `${nextSocketUrl}/api/matches/${matchId}/ws`;
 
-    buildWsUrl().then(wsUrl => {
-      if (disposed || !wsUrl) {
-        if (!wsUrl) {
-          handlers.onStatusChange?.('disconnected');
-        }
-        return;
-      }
+    let authPromise: Promise<{ authed: boolean }>;
+    if (playerIdentity?.playerClaimToken?.trim()) {
+      authPromise = Promise.resolve({ claimToken: playerIdentity.playerClaimToken!.trim() });
+    } else if (playerIdentity?.playerId?.trim() && playerIdentity?.playerSecret?.trim()) {
+      authPromise = fetchAuthToken(matchId, playerIdentity.playerId.trim(), playerIdentity.playerSecret.trim())
+        .then(token => ({ claimToken: token }));
+    } else {
+      console.error('Cannot connect to match: no auth token available');
+      handlers.onStatusChange?.('disconnected');
+      return;
+    }
+
+    authPromise.then(({ claimToken }) => {
+      if (disposed) return;
       const nextSocket = new WebSocket(wsUrl);
       socket = nextSocket;
 
+      let authReceived = false;
+
       nextSocket.addEventListener('open', () => {
-        reconnectAttempt = 0;
-          isWsConnected = true;
-        handlers.onStatusChange?.('connected');
+        nextSocket.send(JSON.stringify({ type: 'auth', claimToken }));
       });
 
       nextSocket.addEventListener('message', event => {
         try {
-          const payload = JSON.parse(event.data) as { type?: string; payload?: MatchSnapshotMessage };
-          if (payload.type === 'match.snapshot' && payload.payload) {
-            const snapshot = payload.payload;
+          const msg = JSON.parse(event.data as string) as { type?: string; payload?: MatchSnapshotMessage };
+          if (msg.type === 'auth.success') {
+            if (authReceived) return;
+            authReceived = true;
+            reconnectAttempt = 0;
+            isWsConnected = true;
+            handlers.onStatusChange?.('connected');
+            return;
+          }
+          if (msg.type === 'auth.error') {
+            nextSocket.close();
+            handlers.onStatusChange?.('disconnected');
+            return;
+          }
+          if (!authReceived) return;
+          if (msg.type === 'match.snapshot' && msg.payload) {
+            const snapshot = msg.payload;
             if (snapshot.seqNum && lastSeqNum > 0 && snapshot.seqNum > lastSeqNum + 1) {
               console.warn(`seqNum gap detected: ${lastSeqNum} -> ${snapshot.seqNum}, refetching`);
               fetchMatch(matchId).then(fullSnapshot => {
-                if (!disposed) {
-                  handlers.onSnapshot(fullSnapshot);
-                }
+                if (!disposed) handlers.onSnapshot(fullSnapshot);
               }).catch(() => {});
             }
-            if (snapshot.seqNum) {
-              lastSeqNum = snapshot.seqNum;
-            }
+            if (snapshot.seqNum) lastSeqNum = snapshot.seqNum;
             handlers.onSnapshot(snapshot);
           }
         } catch {
-          // Ignore malformed stream payloads for now.
+          // Ignore malformed payloads.
         }
       });
 
       nextSocket.addEventListener('error', event => {
         handlers.onError?.(event);
-          isWsConnected = false;
-        if (!disposed) {
-          nextSocket.close();
-        }
+        isWsConnected = false;
+        if (!disposed) nextSocket.close();
       });
 
       nextSocket.addEventListener('close', () => {
-        if (socket === nextSocket) {
-          socket = null;
-        }
-          isWsConnected = false;
-        if (!disposed) {
-          scheduleReconnect();
-        }
+        if (socket === nextSocket) socket = null;
+        isWsConnected = false;
+        if (!disposed) scheduleReconnect();
       });
     }).catch(() => {
-      if (!disposed) {
-        schedulePoll(0);
-      }
+      if (!disposed) schedulePoll(0);
     });
   };
 
