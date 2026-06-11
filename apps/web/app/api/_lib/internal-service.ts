@@ -131,9 +131,7 @@ function filterHeaders(headers: Headers): Headers {
     if (
       lower === 'host' ||
       lower === 'connection' ||
-      lower === 'content-length' ||
-      lower === 'origin' ||
-      lower === 'referer'
+      lower === 'content-length'
     ) {
       return;
     }
