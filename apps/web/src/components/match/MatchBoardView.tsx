@@ -324,6 +324,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
   const promoFullRef = React.useRef<HTMLDivElement>(null);
   const cardPromoRef = React.useRef<HTMLDivElement>(null);
   const [confirmResign, setConfirmResign] = React.useState<'idle' | 'prompting'>('idle');
+  const [mobilePanel, setMobilePanel] = React.useState<'left' | 'right' | null>(null);
   const lastDrawOfferTime = React.useRef(0);
 
   useFocusTrap(promoRef, promoPicker !== null);
@@ -345,8 +346,28 @@ export function MatchBoardView(props: MatchBoardViewProps) {
 
   return (
     <div className="match-layout">
+      {/* Mobile panel toggle buttons */}
+      <button
+        type="button"
+        className="match-layout__panel-toggle"
+        style={{ right: mobilePanel === 'right' ? '16px' : '72px' }}
+        onClick={() => setMobilePanel(mobilePanel === 'left' ? null : 'left')}
+        aria-label="Toggle left panel"
+      >
+        {mobilePanel === 'left' ? '✕' : '☰'}
+      </button>
+      <button
+        type="button"
+        className="match-layout__panel-toggle"
+        style={{ right: '16px' }}
+        onClick={() => setMobilePanel(mobilePanel === 'right' ? null : 'right')}
+        aria-label="Toggle right panel"
+      >
+        {mobilePanel === 'right' ? '✕' : '☰'}
+      </button>
+
       {/* ── Left column ── */}
-      <div className="match-layout__left">
+      <div className={`match-layout__left${mobilePanel === 'left' ? ' is-open' : ''}`}>
         {renderPlayerCard(topSeat)}
         {false && (
         <div style={{
@@ -871,7 +892,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
       </div>
 
       {/* ── Right panel ── */}
-      <div style={{
+      <div className={`match-layout__right${mobilePanel === 'right' ? ' is-open' : ''}`} style={{
         flex:1, minWidth:0,
         background:'rgba(20,8,45,0.45)',
         backdropFilter:'blur(24px)', WebkitBackdropFilter:'blur(24px)',
