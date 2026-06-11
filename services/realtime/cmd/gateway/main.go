@@ -208,7 +208,7 @@ func main() {
 	addr := httputil.ListenAddr("GATEWAY_ADDR", 8080)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httputil.WithRecovery(httputil.WithLogging("gateway", rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins()))),
+		Handler:           httputil.WithRecovery(httputil.WithLogging("gateway", rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(rate_limit.ContentTypeMiddleware(mux)), httputil.ParseAllowedOrigins()))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -476,6 +476,7 @@ func collectGatewayStatus(config GatewayConfig, client *http.Client) GatewaySyst
 		service := services[name]
 		service.URL = ""
 		service.Payload = nil
+		service.Error = ""
 		services[name] = service
 	}
 
@@ -1519,11 +1520,8 @@ func fetchGatewayJSONRequestWithContext(ctx context.Context, client *http.Client
 func gatewayErrorMessage(status GatewayServiceHealth, fallback string) string {
 	if payload, ok := status.Payload.(map[string]any); ok {
 		if message, ok := payload["error"].(string); ok && message != "" {
-			return message
+			return fallback
 		}
-	}
-	if status.Error != "" {
-		return status.Error
 	}
 	return fallback
 }

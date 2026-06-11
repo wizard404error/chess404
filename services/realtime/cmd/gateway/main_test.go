@@ -107,8 +107,8 @@ func TestGatewayStatusReportsDegradedService(t *testing.T) {
 	if payload.Status != "degraded" {
 		t.Fatalf("expected degraded overall status, got %#v", payload)
 	}
-	if payload.Services["platform"].Healthy || payload.Services["platform"].Error == "" {
-		t.Fatalf("expected platform service failure to be surfaced, got %#v", payload.Services["platform"])
+	if payload.Services["platform"].Healthy {
+		t.Fatalf("expected platform service to be unhealthy, got %#v", payload.Services["platform"])
 	}
 }
 

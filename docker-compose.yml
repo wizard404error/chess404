@@ -181,8 +181,9 @@ services:
   migrate:
     build:
       context: .
-      dockerfile: deploy/railway/Dockerfile.replay-worker
-    entrypoint: ["./replay-worker"]
+      dockerfile: deploy/railway/Dockerfile.migrate
+    entrypoint: ["./migrate"]
+    command: ["-db", "postgres://chess404:chess404_dev@postgres:5432/chess404?sslmode=disable", "-path", "./migrations", "-direction", "up"]
     environment:
       DATABASE_URL: postgres://chess404:chess404_dev@postgres:5432/chess404?sslmode=disable
     depends_on:

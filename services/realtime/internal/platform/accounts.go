@@ -614,6 +614,7 @@ func (s *AccountStore) ResetPassword(accountID, token, password string) (Account
 	}
 	privateState.PasswordHash = passwordHash
 	privateState.PasswordResets = nil
+	privateState = clearAccountPrivateSession(privateState)
 	touchAccountPresence(&account, now)
 	privateState, record := issueAccountPrivateSession(privateState, now)
 	s.private[resolvedAccountID] = privateState

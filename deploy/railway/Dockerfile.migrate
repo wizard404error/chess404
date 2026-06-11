@@ -1,0 +1,13 @@
+FROM golang:1.25-alpine AS builder
+WORKDIR /build
+COPY services/realtime/ .
+RUN go vet ./cmd/migrate/... && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /build/migrate ./cmd/migrate/
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+WORKDIR /app
+COPY --from=builder /build/migrate .
+RUN adduser -D -g '' -u 1001 chess404
+USER chess404
+CMD ["./migrate"]
