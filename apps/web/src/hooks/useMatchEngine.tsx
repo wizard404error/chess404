@@ -550,6 +550,20 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     teleportAnimTimerRef.current = setTimeout(() => setTeleportAnim(null), 1400);
   }, []);
 
+  React.useEffect(() => {
+    return () => {
+      if (swapAnimTimerRef.current) clearTimeout(swapAnimTimerRef.current);
+      if (transformAnimTimerRef.current) clearTimeout(transformAnimTimerRef.current);
+      if (sniperAnimTimerRef.current) clearTimeout(sniperAnimTimerRef.current);
+      if (teleportAnimTimerRef.current) clearTimeout(teleportAnimTimerRef.current);
+      if (jumpAnimTimerRef.current) clearTimeout(jumpAnimTimerRef.current);
+      if (sacrificeAnimTimerRef.current) clearTimeout(sacrificeAnimTimerRef.current);
+      if (mindControlAnimTimerRef.current) clearTimeout(mindControlAnimTimerRef.current);
+      if (fuseAnimTimerRef.current) clearTimeout(fuseAnimTimerRef.current);
+      if (cardMsgTimerRef.current) clearTimeout(cardMsgTimerRef.current);
+    };
+  }, []);
+
   const pendingCardUseRef = React.useRef<Set<string>>(new Set());
   const cardUsedByRef     = React.useRef<{ white: boolean; black: boolean }>({ white: false, black: false });
   const cardMsgTimerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null);
