@@ -8,6 +8,18 @@ let wsBaseUrl = '';
 const MATCH_POLL_INTERVAL_MS = 750;
 const MATCH_POLL_RETRY_INTERVAL_MS = 900;
 
+const latestSeqByMatch = new Map<string, number>();
+
+export function recordMatchSeqNum(matchId: string, seqNum: number | undefined): void {
+  if (seqNum && seqNum > 0) {
+    latestSeqByMatch.set(matchId, seqNum);
+  }
+}
+
+export function getLatestSeqNum(matchId: string): number {
+  return latestSeqByMatch.get(matchId) ?? 0;
+}
+
 export interface MatchServiceRuntimeConfig {
   httpBaseUrl?: string;
   wsBaseUrl?: string;
@@ -101,6 +113,8 @@ export async function ensureMatch(input: CreateMatchInput & { matchId: string })
 }
 
 export async function applyIntent(matchId: string, intent: Omit<PlayerIntent, 'matchId'>): Promise<MatchSnapshotMessage> {
+  const latestSeq = latestSeqByMatch.get(matchId) ?? 0;
+  const intentWithSeq = { ...intent, expectedSeqNum: latestSeq } as Omit<PlayerIntent, 'matchId'>;
   const response = await fetch(buildIntentUrl(matchId, intent), {
     method: 'POST',
     headers: {
@@ -108,13 +122,17 @@ export async function applyIntent(matchId: string, intent: Omit<PlayerIntent, 'm
     },
     body: JSON.stringify({
       intent: {
-        ...intent,
+        ...intentWithSeq,
         matchId
       }
     })
   });
 
-  return unwrapResponse<MatchSnapshotMessage>(response);
+  const snapshot = await unwrapResponse<MatchSnapshotMessage>(response);
+  if (snapshot?.seqNum && snapshot.seqNum > 0) {
+    latestSeqByMatch.set(matchId, snapshot.seqNum);
+  }
+  return snapshot;
 }
 
 export async function sendMatchPresenceHeartbeat(

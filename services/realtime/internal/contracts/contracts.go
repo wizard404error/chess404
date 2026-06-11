@@ -246,6 +246,7 @@ type PlayerIntent struct {
 	SelectionID      string  `json:"selectionId,omitempty"`
 	Promotion        string  `json:"promotion,omitempty"`
 	ClientMoveID     string  `json:"clientMoveId,omitempty"`
+	ExpectedSeqNum   int64   `json:"expectedSeqNum,omitempty"`
 }
 
 type MatchPresenceRequest struct {

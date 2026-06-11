@@ -273,15 +273,15 @@ export interface ReplayLog {
 }
 
 export type PlayerIntent =
-  | { type: 'make_move'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; from: Sq; to: Sq; promotion?: PieceType; clientMoveId?: string }
-  | { type: 'play_card'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; cardId: string; clientMoveId?: string }
-  | { type: 'select_target'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; target?: Sq; selectionId?: string; clientMoveId?: string }
-  | { type: 'offer_draw'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string }
-  | { type: 'respond_draw'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; accept: boolean; clientMoveId?: string }
-  | { type: 'abort'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string }
-  | { type: 'resign'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string }
-  | { type: 'request_rematch'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string }
-  | { type: 'send_chat'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; text: string; clientMoveId?: string };
+  | { type: 'make_move'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; from: Sq; to: Sq; promotion?: PieceType; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'play_card'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; cardId: string; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'select_target'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; target?: Sq; selectionId?: string; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'offer_draw'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'respond_draw'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; accept: boolean; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'abort'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'resign'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'request_rematch'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; clientMoveId?: string; expectedSeqNum?: number }
+  | { type: 'send_chat'; matchId: string; playerId: string; playerSecret?: string; playerClaimToken?: string; text: string; clientMoveId?: string; expectedSeqNum?: number };
 
 export type MatchEventType =
   | 'match_started'

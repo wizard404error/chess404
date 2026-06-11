@@ -36,6 +36,7 @@ var (
 	ErrMatchNotFound     = errors.New("match not found")
 	ErrMatchSeatFull     = errors.New("match has no open seats")
 	ErrMatchJoinFinished = errors.New("match is finished")
+	ErrStaleClientState  = errors.New("client state is stale; refresh from latest snapshot")
 )
 
 type Service struct {
@@ -883,6 +884,13 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 				presence := s.ensurePresenceStateLocked(intent.MatchID, state, now)
 				return buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), nil, now), nil
 			}
+		}
+	}
+
+	if intent.ExpectedSeqNum > 0 {
+		currentSeq := s.matchSeqNum[intent.MatchID]
+		if currentSeq > 0 && intent.ExpectedSeqNum < currentSeq {
+			return contracts.MatchSnapshotResponse{}, ErrStaleClientState
 		}
 	}
 

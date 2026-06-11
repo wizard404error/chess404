@@ -443,6 +443,8 @@ func writeMatchError(w http.ResponseWriter, err error) {
 		httputil.WriteError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, match.ErrMatchJoinFinished):
 		httputil.WriteError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, match.ErrStaleClientState):
+		httputil.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		httputil.WriteError(w, http.StatusBadRequest, err.Error())
 	}
