@@ -356,7 +356,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(session)
+		_ = json.NewEncoder(w).Encode(session.IssuedView())
 	})
 
 	mux.HandleFunc("/api/platform/match-claims", func(w http.ResponseWriter, r *http.Request) {
@@ -415,7 +415,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 				}
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(claim)
+			_ = json.NewEncoder(w).Encode(claim.IssuedView())
 			return
 		}
 
@@ -438,7 +438,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 				claim = storedClaim
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(claim)
+			_ = json.NewEncoder(w).Encode(claim.IssuedView())
 			return
 		}
 
@@ -481,7 +481,6 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			BlackGuestID: strings.TrimSpace(payload.BlackGuestID),
 			WhiteName:    strings.TrimSpace(payload.WhiteName),
 			BlackName:    strings.TrimSpace(payload.BlackName),
-			Status:       strings.TrimSpace(payload.MatchStatus),
 		}
 		if err := claims.Put(claim); err != nil {
 			http.Error(w, `{"error":"failed to cache match claim"}`, http.StatusInternalServerError)
@@ -533,7 +532,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(claim)
+		_ = json.NewEncoder(w).Encode(claim.IssuedView())
 	})
 
 	mux.HandleFunc("/api/platform/match-claims/active", func(w http.ResponseWriter, r *http.Request) {
@@ -587,7 +586,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(claim)
+			_ = json.NewEncoder(w).Encode(claim.IssuedView())
 			return
 		}
 		http.Error(w, `{"error":"failed to refresh match claim"}`, http.StatusInternalServerError)
@@ -698,7 +697,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(overview)
+		_ = json.NewEncoder(w).Encode(overview.PublicView(payload.SessionToken))
 	})
 
 	mux.HandleFunc("/api/platform/account-security/overview", func(w http.ResponseWriter, r *http.Request) {
@@ -3075,7 +3074,6 @@ func buildMatchSeatClaim(matchState contracts.MatchState, guestID, fallbackSecre
 		BlackGuestID: matchState.BlackGuestID,
 		WhiteName:    matchState.WhiteName,
 		BlackName:    matchState.BlackName,
-		Status:       matchState.Status,
 	}, true
 }
 

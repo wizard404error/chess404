@@ -1735,6 +1735,7 @@ func (s *Service) gcFinishedMatches(now time.Time) {
 				delete(s.subs, matchID)
 				delete(s.matchSeqNum, matchID)
 				delete(s.presence, matchID)
+				delete(s.matchMu, matchID)
 			}
 		} else if state.Status == "waiting" {
 			if now.Sub(state.UpdatedAt) >= waitingMatchTTL {
@@ -1743,6 +1744,7 @@ func (s *Service) gcFinishedMatches(now time.Time) {
 				delete(s.subs, matchID)
 				delete(s.matchSeqNum, matchID)
 				delete(s.presence, matchID)
+				delete(s.matchMu, matchID)
 			}
 		}
 	}

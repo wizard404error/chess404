@@ -244,18 +244,21 @@ func (s *GuestStore) FinalizeMatch(matchID, whiteGuestID, blackGuestID, winner s
 	}
 
 	now := time.Now().UTC()
+	newWhite, newBlack := ApplyEloMatchResult(white.Rating, black.Rating, winner)
 	switch winner {
 	case "white":
-		white.Rating += 16
-		black.Rating = maxInt(100, black.Rating-16)
+		white.Rating = newWhite
+		black.Rating = newBlack
 		white.Wins++
 		black.Losses++
 	case "black":
-		black.Rating += 16
-		white.Rating = maxInt(100, white.Rating-16)
+		white.Rating = newWhite
+		black.Rating = newBlack
 		black.Wins++
 		white.Losses++
 	case "draw":
+		white.Rating = newWhite
+		black.Rating = newBlack
 		white.Draws++
 		black.Draws++
 	default:
@@ -434,6 +437,45 @@ func buildGuestSession(entry GuestProfile, privateState GuestPrivateState) Guest
 		SessionSecret: strings.TrimSpace(privateState.SessionSecret),
 		SessionToken:  strings.TrimSpace(privateState.SessionToken),
 		ExpiresAt:     privateState.SessionExpiresAt.UTC(),
+	}
+}
+
+// PublicGuestSession is the sanitized JSON view of a guest session, suitable
+// for read endpoints. It strips the long-lived session secret and opaque
+// session token, exposing only the public profile and expiry. Issue-time
+// endpoints (login, register, resume-rotates) must construct the
+// IssuedGuestSession envelope below to deliver credentials to the caller.
+type PublicGuestSession struct {
+	Guest     GuestProfile `json:"guest"`
+	ExpiresAt time.Time    `json:"expiresAt,omitempty"`
+}
+
+// IssuedGuestSession is the JSON envelope returned at credential-issue time.
+// It embeds the public view plus the credentials the caller needs to keep
+// using the session. It must only be used at login / register /
+// resume-rotates endpoints.
+type IssuedGuestSession struct {
+	Guest         GuestProfile `json:"guest"`
+	SessionSecret string       `json:"sessionSecret"`
+	SessionToken  string       `json:"sessionToken,omitempty"`
+	ExpiresAt     time.Time    `json:"expiresAt,omitempty"`
+}
+
+// PublicView returns the sanitized session for read endpoints.
+func (s GuestSession) PublicView() PublicGuestSession {
+	return PublicGuestSession{
+		Guest:     s.Guest,
+		ExpiresAt: s.ExpiresAt,
+	}
+}
+
+// IssuedView returns the credential-bearing session for issue-time endpoints.
+func (s GuestSession) IssuedView() IssuedGuestSession {
+	return IssuedGuestSession{
+		Guest:         s.Guest,
+		SessionSecret: s.SessionSecret,
+		SessionToken:  s.SessionToken,
+		ExpiresAt:     s.ExpiresAt,
 	}
 }
 

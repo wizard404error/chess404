@@ -105,13 +105,13 @@ func TestCSRFAllowsPlainGET(t *testing.T) {
 	}
 }
 
-func TestCSRFAllowsMissingOriginAndReferer(t *testing.T) {
+func TestCSRFRejectsMissingOriginAndReferer(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "https://chess.example/play", nil)
 	req.Host = "chess.example"
 	rr := httptest.NewRecorder()
 	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 when Origin/Referer are absent (e.g. native mobile), got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when Origin/Referer are absent (CSRF defense), got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -140,29 +140,29 @@ func TestCSRFPlainHTTPWithoutForwardedHeadersFallsBackToHost(t *testing.T) {
 }
 
 func TestCSRFRejectsPlainHTTPForwardedHeadersButWrongHost(t *testing.T) {
-	// Without an explicit allow-list, missing X-Forwarded-Host falls through
-	// to the permissive default (CORS owns cross-origin policy).
+	// Without an explicit allow-list and a mismatched Origin, the request is
+	// rejected. The deployment must declare allowed origins explicitly.
 	req := httptest.NewRequest(http.MethodPost, "http://internal/api", nil)
 	req.Host = "internal"
 	req.Header.Set("Origin", "https://public.example")
 	req.Header.Set("X-Forwarded-Proto", "https")
 	rr := httptest.NewRecorder()
 	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 (permissive default), got %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 (unlisted origin rejected), got %d", rr.Code)
 	}
 }
 
-func TestCSRFPermissiveDefaultForUnlistedCrossOrigin(t *testing.T) {
-	// When the allow-list is empty (default), cross-origin POSTs are allowed
-	// by CSRF. CORS middleware is the actual gatekeeper for the browser.
+func TestCSRFRejectsUnlistedCrossOrigin(t *testing.T) {
+	// When the allow-list is empty (default), unlisted cross-origin POSTs are
+	// rejected by CSRF. The deployment must declare an allow list explicitly.
 	req := httptest.NewRequest(http.MethodPost, "https://chess.example/play", nil)
 	req.Host = "chess.example"
 	req.Header.Set("Origin", "https://web-production-9a697.up.railway.app")
 	rr := httptest.NewRecorder()
 	CSRFMiddleware(newCSRFOkHandler(), nil).ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 (permissive default), got %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 (unlisted cross-origin rejected), got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

@@ -1696,8 +1696,8 @@ func TestAccountDetailIncludesDerivedGuestStats(t *testing.T) {
 	if response.Account.AccountID != accountSession.Account.AccountID || response.Account.Handle != "aurora_stats" {
 		t.Fatalf("unexpected account identity response %#v", response)
 	}
-	if response.Account.DisplayName != guestSession.Guest.DisplayName || response.Account.Rating != 1216 {
-		t.Fatalf("expected derived account display/rating, got %#v", response)
+	if response.Account.DisplayName != guestSession.Guest.DisplayName || response.Account.Rating != 1215 {
+		t.Fatalf("expected derived account display/rating=1215, got %#v", response)
 	}
 	if response.Account.MatchesPlayed != 2 || response.Account.Wins != 1 || response.Account.Losses != 0 || response.Account.Draws != 1 || response.Account.GuestCount != 1 {
 		t.Fatalf("expected derived account stats, got %#v", response)
@@ -2530,7 +2530,6 @@ func TestMatchClaimsRejectCachedClaimWithoutArchiveEntry(t *testing.T) {
 		PlayerID:     session.Guest.GuestID,
 		PlayerSecret: "cached_room_secret",
 		Queue:        "rated",
-		Status:       "active",
 	}); err != nil {
 		t.Fatalf("expected cached claim write to succeed, got %v", err)
 	}
@@ -2588,7 +2587,6 @@ func TestActiveMatchClaimsRejectFinishedRooms(t *testing.T) {
 		PlayerID:     session.Guest.GuestID,
 		PlayerSecret: "cached_room_secret",
 		Queue:        "rated",
-		Status:       "active",
 	}); err != nil {
 		t.Fatalf("expected cached claim write to succeed, got %v", err)
 	}

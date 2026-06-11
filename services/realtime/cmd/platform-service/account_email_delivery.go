@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -55,6 +56,7 @@ type smtpAccountEmailSender struct {
 	from      mail.Address
 	replyTo   string
 	messageID string
+	useTLS    bool
 }
 
 func (s smtpAccountEmailSender) Provider() string { return "smtp" }
@@ -77,7 +79,7 @@ func (s smtpAccountEmailSender) Send(ctx context.Context, delivery platform.Acco
 	}
 	ch := make(chan sendResult, 1)
 	go func() {
-		err := smtp.SendMail(s.address, s.auth, s.from.Address, recipients, payload)
+		err := sendSMTPMessage(s.address, s.auth, s.from.Address, recipients, payload, s.useTLS)
 		ch <- sendResult{err}
 	}()
 	select {
@@ -295,6 +297,15 @@ func newSMTPAccountEmailSender() (accountEmailSender, error) {
 	if username != "" {
 		auth = smtp.PlainAuth("", username, password, host)
 	}
+	// SECURITY: SMTP credentials must not be sent in cleartext. Require
+	// ACCOUNT_EMAIL_SMTP_TLS=true for any non-loopback host, or reject
+	// delivery outright. This is a hard fail-on-misconfig: the audit
+	// flagged this as a launch blocker.
+	tlsRequired := strings.EqualFold(strings.TrimSpace(os.Getenv("ACCOUNT_EMAIL_SMTP_TLS")), "true")
+	isLoopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
+	if !tlsRequired && !isLoopback {
+		return nil, fmt.Errorf("ACCOUNT_EMAIL_SMTP_TLS=true is required for non-loopback SMTP host %q (cleartext credentials are not allowed)", host)
+	}
 	from := mail.Address{
 		Name:    strings.TrimSpace(os.Getenv("ACCOUNT_EMAIL_SMTP_FROM_NAME")),
 		Address: fromAddress,
@@ -309,6 +320,7 @@ func newSMTPAccountEmailSender() (accountEmailSender, error) {
 		from:      from,
 		replyTo:   strings.TrimSpace(os.Getenv("ACCOUNT_EMAIL_SMTP_REPLY_TO")),
 		messageID: accountEmailSMTPMessageDomain(host),
+		useTLS:    tlsRequired,
 	}, nil
 }
 
@@ -321,6 +333,54 @@ func accountEmailSMTPMessageDomain(host string) string {
 		return host
 	}
 	return "chess404.local"
+}
+
+// sendSMTPMessage sends a single SMTP message. If useTLS is true, it
+// dials the server over implicit TLS on port 465 (the smtps scheme),
+// which keeps the auth credentials off the wire in cleartext.
+func sendSMTPMessage(address string, auth smtp.Auth, from string, to []string, msg []byte, useTLS bool) error {
+	if !useTLS {
+		return smtp.SendMail(address, auth, from, to, msg)
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("parse smtp address: %w", err)
+	}
+	conn, err := tls.Dial("tcp", address, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	if err != nil {
+		return fmt.Errorf("smtp tls dial: %w", err)
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("smtp new client: %w", err)
+	}
+	defer func() { _ = client.Quit() }()
+	if auth != nil {
+		if ok, _ := client.Extension("AUTH"); ok {
+			if err := client.Auth(auth); err != nil {
+				return fmt.Errorf("smtp auth: %w", err)
+			}
+		}
+	}
+	if err := client.Mail(from); err != nil {
+		return fmt.Errorf("smtp MAIL FROM: %w", err)
+	}
+	for _, recipient := range to {
+		if err := client.Rcpt(recipient); err != nil {
+			return fmt.Errorf("smtp RCPT TO %q: %w", recipient, err)
+		}
+	}
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("smtp DATA: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("smtp DATA write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("smtp DATA close: %w", err)
+	}
+	return nil
 }
 
 func buildSMTPAccountEmailMessage(from mail.Address, replyTo, messageID string, delivery platform.AccountEmailDelivery) ([]byte, error) {

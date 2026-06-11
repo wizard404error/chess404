@@ -15,6 +15,7 @@ import (
 
 	"github.com/chess404/realtime/internal/anticheat"
 	"github.com/chess404/realtime/internal/contracts"
+	"github.com/chess404/realtime/internal/match"
 )
 
 type Job struct {
@@ -212,27 +213,48 @@ func (w *Worker) fetchMatchSnapshot(ctx context.Context, matchID string) (contra
 
 func buildMoveRecords(history []string) []anticheat.MoveRecord {
 	moves := make([]anticheat.MoveRecord, 0, len(history))
-	for i, notation := range history {
-		notation = strings.TrimSpace(notation)
+	index := 0
+	for i, raw := range history {
+		notation := strings.TrimSpace(raw)
 		if notation == "" {
 			continue
 		}
+		color := "white"
+		if index%2 == 1 {
+			color = "black"
+		}
+		from := ""
+		to := ""
+		isCapture := false
+		isCastle := ""
+		if parsed, ok := match.ParseAlgebraicMove(notation); ok {
+			from = squareLabel(parsed.From)
+			to = squareLabel(parsed.To)
+			isCapture = parsed.IsCapture
+			isCastle = parsed.IsCastle
+		}
 		moves = append(moves, anticheat.MoveRecord{
-			MoveNumber: i + 1,
-			Color:      "white",
-			From:       "",
-			To:         "",
+			MoveNumber: index + 1,
+			Color:      color,
+			From:       from,
+			To:         to,
 			Timestamp:  time.Time{},
 			ThinkTime:  0,
+			CardsPlayed: nil,
 		})
-		if i == 0 {
-			moves[i].Color = "white"
-		} else if i%2 == 0 {
-			moves[i].Color = "white"
-		} else {
-			moves[i].Color = "black"
-		}
-		_ = notation
+		_ = isCapture
+		_ = isCastle
+		_ = i
+		index++
 	}
 	return moves
+}
+
+func squareLabel(square contracts.Square) string {
+	files := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	ranks := []string{"1", "2", "3", "4", "5", "6", "7", "8"}
+	if square.Row < 0 || square.Row > 7 || square.Col < 0 || square.Col > 7 {
+		return ""
+	}
+	return files[square.Col] + ranks[square.Row]
 }

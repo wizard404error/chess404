@@ -4,6 +4,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -122,7 +123,13 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 		origin := r.Header.Get("Origin")
 		referer := r.Header.Get("Referer")
 		if origin == "" && referer == "" {
-			next.ServeHTTP(w, r)
+			// Reject state-changing requests with no Origin and no Referer.
+			// Without these headers, the request cannot be tied to a browser
+			// origin, which is the standard CSRF defense. Non-browser clients
+			// must set Origin explicitly.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"CSRF check failed: origin header required"}`))
 			return
 		}
 		check := origin
@@ -136,19 +143,14 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
 			return
 		}
 		// Cross-origin: allowed only if (a) the origin is in the explicit allow
-		// list, or (b) the allow list is empty (CORS is permissive, so CSRF
-		// shouldn't be stricter than CORS — it would just turn a CORS-allowed
-		// request into a confusing 403 for legitimate first-party clients).
-		if len(allowedOrigins) > 0 {
-			for _, allowed := range allowedOrigins {
-				if equalFoldOrigin(check, allowed) {
-					next.ServeHTTP(w, r)
-					return
-				}
+		// list. We no longer fall through to permissive if the allow list is
+		// empty — the CSRF defense is now strictly tighter than CORS, so the
+		// deployment must declare an allow list explicitly.
+		for _, allowed := range allowedOrigins {
+			if equalFoldOrigin(check, allowed) {
+				next.ServeHTTP(w, r)
+				return
 			}
-		} else {
-			next.ServeHTTP(w, r)
-			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
@@ -227,34 +229,35 @@ func ClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if railwayIP := strings.TrimSpace(r.Header.Get("X-Railway-Client-Ip")); railwayIP != "" {
+	// Trusted proxy headers must be enabled via env var. Without it, the
+	// limiter uses r.RemoteAddr only, which cannot be spoofed by the client.
+	trustForwarded := trustForwardedHeaders()
+	if railwayIP := strings.TrimSpace(r.Header.Get("X-Railway-Client-Ip")); trustForwarded && railwayIP != "" {
 		return railwayIP
 	}
-	if flyIP := strings.TrimSpace(r.Header.Get("Fly-Client-IP")); flyIP != "" {
+	if flyIP := strings.TrimSpace(r.Header.Get("Fly-Client-IP")); trustForwarded && flyIP != "" {
 		return flyIP
 	}
-	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); trustForwarded && realIP != "" {
 		return realIP
 	}
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		parts := strings.Split(forwarded, ",")
-		if len(parts) > 0 {
-			// Taking the last element, which is the immediate proxy IP
-			// Wait, the safest approach for X-Forwarded-For when behind a proxy
-			// that *appends* the client IP is indeed taking the last or first?
-			// Typically, it's `client_ip, proxy1, proxy2`. So taking parts[0] is the client IP.
-			// But parts[0] can be spoofed. If we trust the proxy to append correctly,
-			// the actual client IP is the one right before our trusted proxies.
-			// For simplicity and to fix the vulnerability where the last IP is the proxy itself:
-			// Let's take the first IP, which is standard, but since X-Real-IP and Railway headers
-			// are checked first, this acts as a fallback.
-			return strings.TrimSpace(parts[0])
+	if trustForwarded {
+		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+			parts := strings.Split(forwarded, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
 		}
 	}
 	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
 		return strings.TrimSpace(host)
 	}
 	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func trustForwardedHeaders() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("TRUST_FORWARDED_HEADERS")))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 // equalFoldOrigin reports whether two origin URLs are equivalent for CSRF

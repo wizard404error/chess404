@@ -18,7 +18,6 @@ func TestMatchClaimStoreFindByGuestReturnsNewestClaim(t *testing.T) {
 		PlayerSecret: "secret_one",
 		Queue:        "direct",
 		ModeID:       contracts.MatchModeOpenCards,
-		Status:       "waiting",
 	}
 	if err := store.Put(first); err != nil {
 		t.Fatalf("store first claim: %v", err)
@@ -34,7 +33,6 @@ func TestMatchClaimStoreFindByGuestReturnsNewestClaim(t *testing.T) {
 		PlayerSecret: "secret_two",
 		Queue:        "rated",
 		ModeID:       contracts.MatchModeHiddenCards,
-		Status:       "active",
 	}
 	if err := store.Put(second); err != nil {
 		t.Fatalf("store second claim: %v", err)

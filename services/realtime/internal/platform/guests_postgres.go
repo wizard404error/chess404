@@ -256,18 +256,21 @@ func (s *PostgresGuestStore) FinalizeMatch(matchID, whiteGuestID, blackGuestID, 
 	}
 
 	now := time.Now().UTC()
+	newWhite, newBlack := ApplyEloMatchResult(white.Rating, black.Rating, winner)
 	switch winner {
 	case "white":
-		white.Rating += 16
-		black.Rating = maxInt(100, black.Rating-16)
+		white.Rating = newWhite
+		black.Rating = newBlack
 		white.Wins++
 		black.Losses++
 	case "black":
-		black.Rating += 16
-		white.Rating = maxInt(100, white.Rating-16)
+		white.Rating = newWhite
+		black.Rating = newBlack
 		black.Wins++
 		white.Losses++
 	case "draw":
+		white.Rating = newWhite
+		black.Rating = newBlack
 		white.Draws++
 		black.Draws++
 	default:

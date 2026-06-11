@@ -16,9 +16,44 @@ type AccountSessionRecord struct {
 	LastSeenAt   time.Time `json:"lastSeenAt"`
 }
 
+// PublicAccountSessionRecord is the sanitized view returned in the
+// account-sessions/overview endpoint. The raw session token is stripped.
+type PublicAccountSessionRecord struct {
+	SessionID   string    `json:"sessionId"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+	CreatedAt   time.Time `json:"createdAt"`
+	LastSeenAt  time.Time `json:"lastSeenAt"`
+	IsCurrent   bool      `json:"isCurrent"`
+}
+
 type AccountSessionOverview struct {
 	Account  AccountProfile         `json:"account"`
 	Sessions []AccountSessionRecord `json:"sessions"`
+}
+
+// PublicView returns the sanitized overview that omits raw session tokens.
+func (o AccountSessionOverview) PublicView(currentToken string) AccountSessionOverviewPublic {
+	currentToken = strings.TrimSpace(currentToken)
+	publicSessions := make([]PublicAccountSessionRecord, 0, len(o.Sessions))
+	for _, s := range o.Sessions {
+		isCurrent := subtle.ConstantTimeCompare([]byte(strings.TrimSpace(s.SessionToken)), []byte(currentToken)) == 1
+		publicSessions = append(publicSessions, PublicAccountSessionRecord{
+			SessionID:  s.SessionToken[:min(8, len(s.SessionToken))],
+			ExpiresAt:  s.ExpiresAt,
+			CreatedAt:  s.CreatedAt,
+			LastSeenAt: s.LastSeenAt,
+			IsCurrent:  isCurrent,
+		})
+	}
+	return AccountSessionOverviewPublic{
+		Account:  o.Account,
+		Sessions: publicSessions,
+	}
+}
+
+type AccountSessionOverviewPublic struct {
+	Account  AccountProfile              `json:"account"`
+	Sessions []PublicAccountSessionRecord `json:"sessions"`
 }
 
 func normalizeAccountPrivateState(state AccountPrivateState) AccountPrivateState {

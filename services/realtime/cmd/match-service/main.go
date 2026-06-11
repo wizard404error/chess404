@@ -27,7 +27,7 @@ import (
 )
 
 func main() {
-	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL", "ALLOWED_ORIGINS")
+	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL", "ALLOWED_ORIGINS", "INTERNAL_SERVICE_TOKEN")
 	mux := http.NewServeMux()
 	archive, err := openArchiveStore()
 	if err != nil {
@@ -124,6 +124,10 @@ func main() {
 		}
 		if r.Header.Get("X-Internal-Service-Token") == "" || r.Header.Get("X-Internal-Service-Token") != internalServiceToken() {
 			httputil.WriteError(w, http.StatusUnauthorized, "internal service token required")
+			return
+		}
+		if internalServiceToken() == "" {
+			httputil.WriteError(w, http.StatusServiceUnavailable, "internal service token not configured on server")
 			return
 		}
 		limit := platform.ParseListLimit(r.URL.Query().Get("limit"), 10)

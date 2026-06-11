@@ -17,7 +17,7 @@ type MatchSeatClaim struct {
 	GuestID      string                `json:"guestId"`
 	SeatColor    string                `json:"seatColor"`
 	PlayerID     string                `json:"playerId"`
-	PlayerSecret string                `json:"playerSecret"`
+	PlayerSecret string                `json:"-"`
 	ClaimToken   string                `json:"claimToken,omitempty"`
 	ExpiresAt    time.Time             `json:"expiresAt,omitempty"`
 	Queue        string                `json:"queue,omitempty"`
@@ -26,7 +26,29 @@ type MatchSeatClaim struct {
 	BlackGuestID string                `json:"blackGuestId,omitempty"`
 	WhiteName    string                `json:"whiteName,omitempty"`
 	BlackName    string                `json:"blackName,omitempty"`
-	Status       string                `json:"status,omitempty"`
+	CreatedAt    time.Time             `json:"createdAt,omitempty"`
+	UpdatedAt    time.Time             `json:"updatedAt,omitempty"`
+}
+
+// IssuedMatchSeatClaim is the credential-bearing envelope returned at
+// claim-issue / claim-renewal time. The raw PlayerSecret is exposed only in
+// this view; the regular MatchSeatClaim JSON serialization omits the secret.
+type IssuedMatchSeatClaim struct {
+	MatchSeatClaim
+	PlayerSecret string `json:"playerSecret"`
+}
+
+// PublicView returns the JSON-safe view of the claim (PlayerSecret omitted).
+func (c MatchSeatClaim) PublicView() MatchSeatClaim {
+	public := c
+	public.PlayerSecret = ""
+	return public
+}
+
+// IssuedView returns the credential-bearing view (PlayerSecret included).
+// This must only be used at claim-issue / claim-renewal endpoints.
+func (c MatchSeatClaim) IssuedView() IssuedMatchSeatClaim {
+	return IssuedMatchSeatClaim{MatchSeatClaim: c, PlayerSecret: c.PlayerSecret}
 }
 
 type MatchClaimStats struct {

@@ -27,7 +27,6 @@ func TestRedisMatchClaimStoreRoundTripsClaims(t *testing.T) {
 		PlayerID:     "guest_alpha",
 		PlayerSecret: "seat_secret_alpha",
 		Queue:        "rated",
-		Status:       "active",
 	}
 	if err := store.Put(claim); err != nil {
 		t.Fatalf("expected claim put to succeed, got %v", err)
