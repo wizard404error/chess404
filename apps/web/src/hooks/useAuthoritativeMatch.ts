@@ -98,7 +98,7 @@ export function useAuthoritativeMatch() {
     }
 
     setIsStreaming(true);
-    const disconnect = connectToMatchStream(matchId, {
+    const { disconnect } = connectToMatchStream(matchId, {
       onSnapshot: (next) => {
         setSnapshot(next);
         setError(null);

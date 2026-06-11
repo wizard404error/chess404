@@ -84,6 +84,8 @@ interface MatchBoardViewProps {
   cancelCard: () => void;
   cardMsg: string;
   setCardMsg: (msg: string) => void;
+  streamDisconnected: boolean;
+  onReconnect: () => void;
   clickSq: (r: number, c: number) => void;
   getMoves: (r: number, c: number) => Sq[];
   doMove: (fr: number, fc: number, tr: number, tc: number) => void;
@@ -225,6 +227,8 @@ export function MatchBoardView(props: MatchBoardViewProps) {
     cancelCard,
     cardMsg,
     setCardMsg,
+    streamDisconnected,
+    onReconnect,
     clickSq,
     getMoves,
     doMove,
@@ -570,6 +574,15 @@ export function MatchBoardView(props: MatchBoardViewProps) {
               <div style={{ fontSize:'40px', opacity:0.15 }}>🃏</div>
               <div style={{ color:'rgba(180,150,100,0.4)', fontSize:'12px', letterSpacing:'0.5px' }}>Click a card to preview</div>
               {cardMsg && <div style={{ color:'#f59e0b', fontSize:'11px', textAlign:'center', padding:'6px 10px', background:'rgba(245,158,11,0.1)', border:'1px solid rgba(245,158,11,0.3)', borderRadius:'6px', maxWidth:'180px' }}>{cardMsg}</div>}
+              {streamDisconnected && (
+                <button
+                  type="button"
+                  onClick={onReconnect}
+                  style={{ padding:'6px 12px', background:'rgba(74,222,128,0.15)', border:'1px solid rgba(74,222,128,0.5)', borderRadius:'6px', color:'#4ade80', fontWeight:700, fontSize:'11px', cursor:'pointer' }}
+                >
+                  ↻ Reconnect
+                </button>
+              )}
               {doubleMove && (
                 <div style={{ padding:'8px 12px', background: doubleMove.type === 'same' ? 'rgba(74,222,128,0.12)' : 'rgba(96,165,250,0.12)', border:`1px solid ${doubleMove.type === 'same' ? 'rgba(74,222,128,0.5)' : 'rgba(96,165,250,0.5)'}`, borderRadius:'8px', fontSize:'10px', color: doubleMove.type === 'same' ? '#4ade80' : '#60a5fa', fontWeight:700, textAlign:'center', maxWidth:'180px', animation:'pulse 1.5s ease infinite' }}>
                   {doubleMove.type === 'same' ? '🏃 SOLO' : '👥 TWIN'} — Move {3 - doubleMove.movesLeft}/2

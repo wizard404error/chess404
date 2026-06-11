@@ -454,6 +454,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     color1: string; color2: string; // accent colors for the two pieces
   } | null>(null);
   const swapAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const manualRetryRef = React.useRef<(() => void) | null>(null);
 
   const triggerSwapAnim = React.useCallback((sq1: Sq, sq2: Sq, color1 = '#4ade80', color2 = '#60a5fa') => {
     if (swapAnimTimerRef.current) clearTimeout(swapAnimTimerRef.current);
@@ -1198,6 +1199,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
   const [engineOn,    setEngineOn]    = React.useState(false);
   const [authoritativeLive, setAuthoritativeLive] = React.useState(false);
+  const [streamDisconnected, setStreamDisconnected] = React.useState(false);
 
   const {
     timeW, setTimeW,
@@ -2218,7 +2220,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     stopAbortCountdown(true);
     const streamIdentity = hostedRuntime && viewerSeat ? authoritativeActorForColor(viewerSeat) : null;
 
-    const disconnect = connectToMatchStream(authoritativeMatchId, {
+    const { disconnect, retry } = connectToMatchStream(authoritativeMatchId, {
       onSnapshot: (snapshot) => {
         setCardMsg(prev => prev === STREAM_RECONNECT_MESSAGE ? '' : prev);
         applyAuthoritativeSnapshot(snapshot);
@@ -2226,17 +2228,26 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       onStatusChange: (status) => {
         if (status === 'connected') {
           setCardMsg(prev => prev === STREAM_RECONNECT_MESSAGE ? '' : prev);
+          setStreamDisconnected(false);
           return;
         }
         if (status === 'reconnecting') {
           setAuthoritativeLive(false);
+          setStreamDisconnected(false);
           setCardMsg(STREAM_RECONNECT_MESSAGE);
+        }
+        if (status === 'disconnected') {
+          setAuthoritativeLive(false);
+          setStreamDisconnected(true);
+          setCardMsg('Live match stream lost. Click "Reconnect" to try again.');
         }
       },
       onError: () => {
         setAuthoritativeLive(false);
       }
     }, streamIdentity);
+
+    manualRetryRef.current = retry;
 
     return () => {
       disconnect();
@@ -5712,6 +5723,10 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     setEngineOn,
     authoritativeLive,
     setAuthoritativeLive,
+    streamDisconnected,
+    onStreamReconnect: React.useCallback(() => {
+      manualRetryRef.current?.();
+    }, []),
             authoritativeStatus,
     setAuthoritativeStatus,
     authoritativeWhiteConnected,

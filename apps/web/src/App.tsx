@@ -1332,6 +1332,8 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
         cancelCard={cancelCard}
         cardMsg={cardMsg}
         setCardMsg={setCardMsg}
+        streamDisconnected={matchEngine.streamDisconnected}
+        onReconnect={matchEngine.onStreamReconnect}
         clickSq={clickSq}
         getMoves={getMoves}
         doMove={doMove}

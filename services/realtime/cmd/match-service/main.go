@@ -408,7 +408,7 @@ func openArchiveStore() (*platform.MatchArchiveStore, error) {
 }
 
 func openMatchStore() (match.MatchStore, match.Broadcaster) {
-	backend := strings.ToLower(httputil.EnvOrDefault("MATCH_STATE_BACKEND", "memory"))
+	backend := strings.ToLower(httputil.EnvOrDefault("MATCH_STATE_BACKEND", "redis"))
 	redisURL := httputil.EnvOrDefault("MATCH_REDIS_URL", "")
 	keyPrefix := httputil.EnvOrDefault("MATCH_REDIS_KEY_PREFIX", "chess404:match")
 
@@ -427,7 +427,11 @@ func openMatchStore() (match.MatchStore, match.Broadcaster) {
 		return store, broadcaster
 	}
 
-	log.Printf("match store: memory backend")
+	if backend == "redis" {
+		log.Printf("WARNING: MATCH_STATE_BACKEND=redis but MATCH_REDIS_URL is unset, falling back to memory (DATA LOSS ON RESTART)")
+	} else {
+		log.Printf("WARNING: MATCH_STATE_BACKEND=%s, match state will be lost on restart", backend)
+	}
 	return match.NewMemoryMatchStore(), match.NoopBroadcaster{}
 }
 

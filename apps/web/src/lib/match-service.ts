@@ -195,7 +195,7 @@ export function connectToMatchStream(
     onError?: (error: Event) => void;
   },
   playerIdentity?: { playerId?: string; playerSecret?: string; playerClaimToken?: string } | null
-): () => void {
+): { disconnect: () => void; retry: () => void } {
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
   let pollTimer: number | null = null;
@@ -282,7 +282,7 @@ export function connectToMatchStream(
 
     const wsUrl = `${nextSocketUrl}/api/matches/${matchId}/ws`;
 
-    let authPromise: Promise<{ authed: boolean }>;
+    let authPromise: Promise<{ claimToken: string | null }>;
     if (playerIdentity?.playerClaimToken?.trim()) {
       authPromise = Promise.resolve({ claimToken: playerIdentity.playerClaimToken!.trim() });
     } else if (playerIdentity?.playerId?.trim() && playerIdentity?.playerSecret?.trim()) {
@@ -356,14 +356,30 @@ export function connectToMatchStream(
 
   connect();
 
-  return () => {
-    disposed = true;
+  const manualRetry = () => {
+    if (disposed) return;
+    reconnectAttempt = 0;
     clearReconnectTimer();
     clearPollTimer();
-    handlers.onStatusChange?.('disconnected');
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       socket.close();
     }
+    socket = null;
+    handlers.onStatusChange?.('connecting');
+    connect();
+  };
+
+  return {
+    disconnect: () => {
+      disposed = true;
+      clearReconnectTimer();
+      clearPollTimer();
+      handlers.onStatusChange?.('disconnected');
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        socket.close();
+      }
+    },
+    retry: manualRetry,
   };
 }
 
