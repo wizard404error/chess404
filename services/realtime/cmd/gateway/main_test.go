@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -11,16 +12,42 @@ import (
 )
 
 func TestResolveInternalServiceURLAddsRailwayPortFallback(t *testing.T) {
-	resolved := resolveInternalServiceURL("http://platform-service.railway.internal", "http://platform-service.railway.internal:8080")
+	t.Setenv("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service.railway.internal:")
+	resolved := resolveInternalServiceURL("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service.railway.internal:8080")
 	if resolved != "http://platform-service.railway.internal:8080" {
-		t.Fatalf("expected railway internal host to gain :8080, got %q", resolved)
+		t.Fatalf("expected railway internal host with trailing colon to gain :8080, got %q", resolved)
 	}
 }
 
 func TestResolveInternalServiceURLFallsBackForInvalidTemplate(t *testing.T) {
-	resolved := resolveInternalServiceURL("${{platform-service.RAILWAY_PRIVATE_DOMAIN}}", "http://platform-service.railway.internal:8080")
+	t.Setenv("PLATFORM_SERVICE_INTERNAL_URL", "${{platform-service.RAILWAY_PRIVATE_DOMAIN}}")
+	resolved := resolveInternalServiceURL("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service.railway.internal:8080")
 	if resolved != "http://platform-service.railway.internal:8080" {
-		t.Fatalf("expected invalid template value to use fallback, got %q", resolved)
+		t.Fatalf("expected unresolved Railway template to use fallback, got %q", resolved)
+	}
+}
+
+func TestResolveInternalServiceURLFallsBackWhenUnset(t *testing.T) {
+	os.Unsetenv("PLATFORM_SERVICE_INTERNAL_URL")
+	resolved := resolveInternalServiceURL("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service.railway.internal:8080")
+	if resolved != "http://platform-service.railway.internal:8080" {
+		t.Fatalf("expected unset env var to use fallback, got %q", resolved)
+	}
+}
+
+func TestResolveInternalServiceURLPreservesExplicitPort(t *testing.T) {
+	t.Setenv("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service.railway.internal:9090")
+	resolved := resolveInternalServiceURL("PLATFORM_SERVICE_INTERNAL_URL", "http://platform-service.railway.internal:8080")
+	if resolved != "http://platform-service.railway.internal:9090" {
+		t.Fatalf("expected explicit port to be preserved, got %q", resolved)
+	}
+}
+
+func TestResolveInternalServiceURLTrimsWhitespace(t *testing.T) {
+	t.Setenv("PLATFORM_SERVICE_INTERNAL_URL", "  http://platform-service.railway.internal:8080  ")
+	resolved := resolveInternalServiceURL("PLATFORM_SERVICE_INTERNAL_URL", "fallback")
+	if resolved != "http://platform-service.railway.internal:8080" {
+		t.Fatalf("expected whitespace to be trimmed, got %q", resolved)
 	}
 }
 

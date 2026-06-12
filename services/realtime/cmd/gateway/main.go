@@ -1705,11 +1705,31 @@ func gatewayConfigFromEnv() GatewayConfig {
 	}
 }
 
+// resolveInternalServiceURL returns the value of envKey, falling back to
+// defaultURL if the env var is missing, blank, or contains an unresolved
+// Railway template (${{...}}). When the env var is set to a hostname-only
+// Railway internal URL (e.g., "http://match-service.railway.internal:" with
+// a trailing colon but no port), the function appends ":8080" so the
+// resulting URL is valid. Services in this repo listen on port 8080.
 func resolveInternalServiceURL(envKey string, defaultURL string) string {
-	if u := os.Getenv(envKey); u != "" {
-		return u
+	u := strings.TrimSpace(os.Getenv(envKey))
+	if u == "" {
+		return defaultURL
 	}
-	return defaultURL
+	// Unresolved Railway template references (e.g., when the env var was
+	// set to "${{match-service.RAILWAY_PRIVATE_DOMAIN}}" but the
+	// referenced variable does not exist on the project). Using the literal
+	// template as a URL would fail with a confusing connection error.
+	if strings.Contains(u, "${{") {
+		return defaultURL
+	}
+	// Hostname with no port (e.g., "http://match-service.railway.internal:"
+	// from a misconfigured Railway variable). Append the default port so
+	// the URL is valid.
+	if strings.HasSuffix(u, ":") {
+		u += "8080"
+	}
+	return u
 }
 
 
