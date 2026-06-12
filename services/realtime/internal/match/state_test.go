@@ -849,6 +849,32 @@ func TestDisconnectGraceFinishesBothDisconnectedNoMoveMatchAsAbort(t *testing.T)
 	}
 }
 
+func TestComputerModeBlackSeatStaysConnectedAfterWhiteDisconnect(t *testing.T) {
+	service := NewService()
+	now := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
+	createTestMatch(service, contracts.CreateMatchRequest{
+		MatchID:      "computer_white_offline",
+		ModeID:       contracts.MatchModeComputer,
+		WhiteGuestID: "guest-human",
+		BlackGuestID: "",
+		Difficulty:   "medium",
+	}, now)
+
+	if err := service.MarkDisconnected("computer_white_offline", "guest-human", "white-secret", now); err != nil {
+		t.Fatalf("expected human disconnect to succeed, got %v", err)
+	}
+
+	service.collectAndBroadcast(now.Add(presenceHeartbeatTimeout + disconnectGraceBothPeriod + time.Second))
+
+	snapshot, err := service.GetMatch("computer_white_offline")
+	if err != nil {
+		t.Fatalf("expected snapshot to load, got %v", err)
+	}
+	if snapshot.Match.Status == "finished" {
+		t.Fatalf("expected computer match to remain active after white disconnect, got status=%q winner=%q", snapshot.Match.Status, snapshot.Match.Winner)
+	}
+}
+
 func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "reconcile-archive.json")

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -3168,5 +3169,113 @@ func TestInternalFinalizeRatedMatchFinalizesArchivedRatedMatch(t *testing.T) {
 	}
 	if response.BlackAccount.AccountID != blackAccountSession.Account.AccountID || response.BlackAccount.Rating != 1184 {
 		t.Fatalf("expected internal finalizer to update black account, got %#v", response.BlackAccount)
+	}
+}
+
+func TestPlatformMatchesSyncStoresSnapshotAndClaimReturnsSecret(t *testing.T) {
+	tempDir := t.TempDir()
+	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
+	if err != nil {
+		t.Fatalf("expected archive store to initialize, got %v", err)
+	}
+	defer func() { _ = archive.Close() }()
+	guests, err := platform.NewGuestStore(filepath.Join(tempDir, "guests.json"))
+	if err != nil {
+		t.Fatalf("expected guest store to initialize, got %v", err)
+	}
+	defer func() { _ = guests.Close() }()
+	claims := platform.NewMatchClaimStore()
+
+	session, err := guests.EnsureGuest("guest_sync", "")
+	if err != nil {
+		t.Fatalf("expected guest session creation to succeed, got %v", err)
+	}
+
+	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	snapshot := contracts.MatchSnapshotResponse{
+		Match: contracts.MatchState{
+			MatchID:           "sync_match",
+			RulesVersion:      "v1-alpha-foundation",
+			Queue:             "direct",
+			ModeID:            "computer",
+			WhiteGuestID:      session.Guest.GuestID,
+			WhiteName:         session.Guest.DisplayName,
+			WhitePlayerSecret: "synced_secret_white",
+			Status:            "waiting",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("expected snapshot to marshal, got %v", err)
+	}
+
+	syncReq := httptest.NewRequest(http.MethodPost, "/api/platform/matches", bytes.NewReader(payload))
+	syncRec := httptest.NewRecorder()
+	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(syncRec, syncReq)
+	if syncRec.Code != http.StatusOK {
+		t.Fatalf("expected match sync to succeed, got status %d body=%s", syncRec.Code, syncRec.Body.String())
+	}
+
+	claimReq := httptest.NewRequest(http.MethodPost, "/api/platform/match-claims", strings.NewReader(`{"matchId":"sync_match","guestId":"`+session.Guest.GuestID+`","sessionSecret":"`+session.SessionSecret+`"}`))
+	claimRec := httptest.NewRecorder()
+	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(claimRec, claimReq)
+	if claimRec.Code != http.StatusOK {
+		t.Fatalf("expected match claim to succeed after sync, got status %d body=%s", claimRec.Code, claimRec.Body.String())
+	}
+
+	var claimResponse struct {
+		SeatColor    string `json:"seatColor"`
+		PlayerSecret string `json:"playerSecret"`
+		ClaimToken   string `json:"claimToken"`
+	}
+	if err := json.Unmarshal(claimRec.Body.Bytes(), &claimResponse); err != nil {
+		t.Fatalf("expected claim response to decode, got %v", err)
+	}
+	if claimResponse.SeatColor != "white" {
+		t.Fatalf("expected seat color white, got %q", claimResponse.SeatColor)
+	}
+	if claimResponse.PlayerSecret != "synced_secret_white" {
+		t.Fatalf("expected synced playerSecret to round-trip, got %q", claimResponse.PlayerSecret)
+	}
+	if claimResponse.ClaimToken == "" {
+		t.Fatalf("expected claim token to be issued, got empty")
+	}
+}
+
+func TestPlatformMatchesSyncRejectsSnapshotWithoutPlayerSecrets(t *testing.T) {
+	tempDir := t.TempDir()
+	archive, err := platform.NewMatchArchiveStore(filepath.Join(tempDir, "archive.json"))
+	if err != nil {
+		t.Fatalf("expected archive store to initialize, got %v", err)
+	}
+	defer func() { _ = archive.Close() }()
+	guests, err := platform.NewGuestStore(filepath.Join(tempDir, "guests.json"))
+	if err != nil {
+		t.Fatalf("expected guest store to initialize, got %v", err)
+	}
+	defer func() { _ = guests.Close() }()
+	claims := platform.NewMatchClaimStore()
+
+	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	snapshot := contracts.MatchSnapshotResponse{
+		Match: contracts.MatchState{
+			MatchID:     "naked_snapshot",
+			Status:      "waiting",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("expected snapshot to marshal, got %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/platform/matches", bytes.NewReader(payload))
+	rec := httptest.NewRecorder()
+	buildTestPlatformMux(t, archive, guests, claims).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for snapshot without player secrets, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }

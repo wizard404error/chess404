@@ -875,6 +875,9 @@ func (s *Service) MarkDisconnected(matchID string, playerID string, playerSecret
 		presence.WhiteLastSeenAt = time.Time{}
 		presence.WhiteConnected = false
 	} else {
+		if state.ModeID == contracts.MatchModeComputer {
+			return nil
+		}
 		if !presence.BlackConnected {
 			return nil
 		}
@@ -1453,6 +1456,10 @@ func newMatchPresenceState(state *contracts.MatchState, now time.Time) *matchPre
 		presence.BlackLastSeenAt = now
 		presence.BlackConnected = true
 	}
+	if state.ModeID == contracts.MatchModeComputer {
+		presence.BlackLastSeenAt = now
+		presence.BlackConnected = true
+	}
 	return presence
 }
 
@@ -1466,6 +1473,10 @@ func newRecoveredMatchPresenceState(state *contracts.MatchState) *matchPresenceS
 	if strings.TrimSpace(state.BlackGuestID) != "" {
 		presence.BlackLastSeenAt = lastSeen
 		presence.BlackConnected = false
+	}
+	if state.ModeID == contracts.MatchModeComputer {
+		presence.BlackLastSeenAt = lastSeen
+		presence.BlackConnected = true
 	}
 	return presence
 }
@@ -1533,7 +1544,7 @@ func evaluatePresenceRuntime(state *contracts.MatchState, presence *matchPresenc
 	}
 
 	whiteOccupied := strings.TrimSpace(state.WhiteGuestID) != ""
-	blackOccupied := strings.TrimSpace(state.BlackGuestID) != ""
+	blackOccupied := strings.TrimSpace(state.BlackGuestID) != "" || state.ModeID == contracts.MatchModeComputer
 
 	if whiteOccupied {
 		presence.WhiteConnected = now.Sub(presence.WhiteLastSeenAt) <= presenceHeartbeatTimeout
@@ -1541,7 +1552,12 @@ func evaluatePresenceRuntime(state *contracts.MatchState, presence *matchPresenc
 		presence.WhiteConnected = false
 	}
 	if blackOccupied {
-		presence.BlackConnected = now.Sub(presence.BlackLastSeenAt) <= presenceHeartbeatTimeout
+		if state.ModeID == contracts.MatchModeComputer {
+			presence.BlackConnected = true
+			presence.BlackLastSeenAt = now
+		} else {
+			presence.BlackConnected = now.Sub(presence.BlackLastSeenAt) <= presenceHeartbeatTimeout
+		}
 	} else {
 		presence.BlackConnected = false
 	}

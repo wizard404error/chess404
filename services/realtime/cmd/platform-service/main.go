@@ -500,6 +500,83 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		_ = json.NewEncoder(w).Encode(claim)
 	})
 
+	mux.HandleFunc("/api/platform/matches", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var snapshot contracts.MatchSnapshotResponse
+			if r.Body != nil {
+				defer r.Body.Close()
+				r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+				if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+					http.Error(w, `{"error":"invalid match snapshot payload"}`, http.StatusBadRequest)
+					return
+				}
+			}
+			if strings.TrimSpace(snapshot.Match.MatchID) == "" {
+				http.Error(w, `{"error":"matchId is required"}`, http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(snapshot.Match.WhitePlayerSecret) == "" && strings.TrimSpace(snapshot.Match.BlackPlayerSecret) == "" {
+				http.Error(w, `{"error":"snapshot must include at least one player secret"}`, http.StatusBadRequest)
+				return
+			}
+			if err := archive.Upsert(snapshot); err != nil {
+				log.Printf("platform:match-sync: upsert failed matchID=%s err=%v", snapshot.Match.MatchID, err)
+				http.Error(w, `{"error":"failed to persist match snapshot"}`, http.StatusInternalServerError)
+				return
+			}
+			log.Printf("platform:match-sync: stored matchID=%s modeID=%s whiteGuestID=%s", snapshot.Match.MatchID, snapshot.Match.ModeID, snapshot.Match.WhiteGuestID)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":      "ok",
+				"matchId":     snapshot.Match.MatchID,
+				"persistedAt": httputil.NowUTC(),
+			})
+		case http.MethodGet:
+			guestID := r.URL.Query().Get("guestId")
+			accountID := r.URL.Query().Get("accountId")
+			seasonID := strings.TrimSpace(r.URL.Query().Get("seasonId"))
+			modeID := parseOptionalModeID(r.URL.Query().Get("modeId"))
+			statusFilter := parseOptionalMatchStatus(r.URL.Query().Get("status"))
+			var matches []platform.MatchArchiveEntry
+			if accountID != "" {
+				account, ok := accounts.GetAccount(accountID)
+				if ok {
+					matches = archive.ListByAccount(account.AccountID, account.LinkedGuestIDs, platform.ParseListLimit(r.URL.Query().Get("limit"), 20))
+				} else {
+					matches = []platform.MatchArchiveEntry{}
+				}
+			} else if guestID != "" {
+				matches = archive.ListByGuest(guestID, platform.ParseListLimit(r.URL.Query().Get("limit"), 20))
+			} else {
+				matches = archive.List(platform.ParseListLimit(r.URL.Query().Get("limit"), 20))
+			}
+			for i := range matches {
+				matches[i] = enrichArchiveEntry(accounts, matches[i])
+			}
+			if seasonID != "" {
+				matches = filterArchivedMatchesBySeason(matches, seasonID)
+			}
+			if modeID != "" {
+				matches = filterArchivedMatchesByMode(matches, modeID)
+			}
+			matches = filterPublicArchivedMatchesByStatus(matches, statusFilter)
+			publicMatches := make([]platform.PublicMatchArchiveEntry, 0, len(matches))
+			for _, match := range matches {
+				publicMatches = append(publicMatches, platform.BuildPublicMatchArchiveEntry(match))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matches":          publicMatches,
+				"selectedSeasonId": seasonID,
+				"selectedModeId":   modeID,
+				"selectedStatus":   resolvedPublicStatusFilter(statusFilter),
+			})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+
 	mux.HandleFunc("/api/platform/match-claims/resolve", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -2501,52 +2578,6 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"guest": guest,
-		})
-	})
-
-	mux.HandleFunc("/api/platform/matches", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		guestID := r.URL.Query().Get("guestId")
-		accountID := r.URL.Query().Get("accountId")
-		seasonID := strings.TrimSpace(r.URL.Query().Get("seasonId"))
-		modeID := parseOptionalModeID(r.URL.Query().Get("modeId"))
-		statusFilter := parseOptionalMatchStatus(r.URL.Query().Get("status"))
-		var matches []platform.MatchArchiveEntry
-		if accountID != "" {
-			account, ok := accounts.GetAccount(accountID)
-			if ok {
-				matches = archive.ListByAccount(account.AccountID, account.LinkedGuestIDs, platform.ParseListLimit(r.URL.Query().Get("limit"), 20))
-			} else {
-				matches = []platform.MatchArchiveEntry{}
-			}
-		} else if guestID != "" {
-			matches = archive.ListByGuest(guestID, platform.ParseListLimit(r.URL.Query().Get("limit"), 20))
-		} else {
-			matches = archive.List(platform.ParseListLimit(r.URL.Query().Get("limit"), 20))
-		}
-		for i := range matches {
-			matches[i] = enrichArchiveEntry(accounts, matches[i])
-		}
-		if seasonID != "" {
-			matches = filterArchivedMatchesBySeason(matches, seasonID)
-		}
-		if modeID != "" {
-			matches = filterArchivedMatchesByMode(matches, modeID)
-		}
-		matches = filterPublicArchivedMatchesByStatus(matches, statusFilter)
-		publicMatches := make([]platform.PublicMatchArchiveEntry, 0, len(matches))
-		for _, match := range matches {
-			publicMatches = append(publicMatches, platform.BuildPublicMatchArchiveEntry(match))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"matches":          publicMatches,
-			"selectedSeasonId": seasonID,
-			"selectedModeId":   modeID,
-			"selectedStatus":   resolvedPublicStatusFilter(statusFilter),
 		})
 	})
 

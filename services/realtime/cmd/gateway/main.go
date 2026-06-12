@@ -589,6 +589,7 @@ func buildGatewayBootstrapPayload(config GatewayConfig, client *http.Client, req
 	capabilities := fetchGatewayJSON(r, client, config.PlatformServiceURL+"/api/platform/capabilities")
 	defaultQueue := fetchGatewayJSON(r, client, config.MatchmakingServiceURL+"/api/queues/default")
 	guestSessions, sessionErrors := bootstrapGuestSessions(config, client, request, r)
+	syncMatchSnapshotToPlatformServiceIfActive(config, client, request.MatchID, r)
 	matchClaims, claimErrors := bootstrapMatchClaims(config, client, request.MatchID, guestSessions, r)
 	accountSessions, accountErrors := bootstrapAccountSessions(config, client, request, guestSessions, r)
 	queueTickets, queueErrors := bootstrapQueueTickets(config, client, guestSessions, accountSessions, r)
@@ -735,6 +736,39 @@ func bootstrapMatchClaimForSide(config GatewayConfig, client *http.Client, match
 		return nil, fmt.Sprintf("failed to decode match claim: %v", err)
 	}
 	return &claim, ""
+}
+
+func syncMatchSnapshotToPlatformService(config GatewayConfig, client *http.Client, snapshot contracts.MatchSnapshotResponse, r *http.Request) {
+	if strings.TrimSpace(config.PlatformServiceURL) == "" {
+		log.Printf("gw:sync-match: skipped, no platform-service URL configured")
+		return
+	}
+	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.PlatformServiceURL+"/api/platform/matches", snapshot)
+	if result.Error != "" && result.StatusCode == 0 {
+		log.Printf("gw:sync-match: connection error to platform-service: %v", result.Error)
+		return
+	}
+	if !result.Healthy {
+		log.Printf("gw:sync-match: platform-service returned status=%d body=%v", result.StatusCode, result.Payload)
+		return
+	}
+	log.Printf("gw:sync-match: ok matchID=%s", snapshot.Match.MatchID)
+}
+
+func syncMatchSnapshotToPlatformServiceIfActive(config GatewayConfig, client *http.Client, matchID string, r *http.Request) {
+	if strings.TrimSpace(matchID) == "" || strings.TrimSpace(config.MatchServiceURL) == "" {
+		return
+	}
+	result := fetchGatewayJSON(r, client, config.MatchServiceURL+"/api/matches/"+matchID)
+	if !result.Healthy {
+		return
+	}
+	snapshot, err := decodeGatewayPayload[contracts.MatchSnapshotResponse](result.Payload)
+	if err != nil {
+		log.Printf("gw:sync-match: failed to decode match-service snapshot for matchID=%s: %v", matchID, err)
+		return
+	}
+	syncMatchSnapshotToPlatformService(config, client, snapshot, r)
 }
 
 func bootstrapAccountSessions(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest, guestSessions *GatewayBootstrapGuestSessions, r *http.Request) (*GatewayBootstrapAccountSessions, *GatewayBootstrapErrors) {
@@ -1197,6 +1231,8 @@ func createGatewayPrivateMatchForSession(
 	}
 	log.Printf("gw:create-private: match created matchID=%s modeID=%s", snapshot.Match.MatchID, snapshot.Match.ModeID)
 
+	syncMatchSnapshotToPlatformService(config, client, snapshot, r)
+
 	seatColor := strings.ToLower(strings.TrimSpace(preferredSeat))
 	if seatColor != "black" {
 		seatColor = "white"
@@ -1260,6 +1296,8 @@ func joinGatewayPrivateMatch(config GatewayConfig, client *http.Client, matchID 
 	if err != nil {
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode private join response: %v", err)
 	}
+
+	syncMatchSnapshotToPlatformService(config, client, joined.Match, r)
 
 	joinSeatColor := strings.ToLower(strings.TrimSpace(request.PreferredSeat))
 	if joinSeatColor != "black" {
