@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -41,6 +43,10 @@ func main() {
 		return
 	}
 	serviceToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
+	platformServiceURL := os.Getenv("PLATFORM_SERVICE_INTERNAL_URL")
+	if platformServiceURL == "" {
+		log.Println("WARN: PLATFORM_SERVICE_INTERNAL_URL not set, anticheat results will only be logged")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -54,19 +60,21 @@ func main() {
 	}()
 
 	worker := &Worker{
-		matchServiceURL: matchServiceURL,
-		serviceToken:    serviceToken,
-		httpClient:      &http.Client{Timeout: 10 * time.Second},
+		matchServiceURL:    matchServiceURL,
+		platformServiceURL: platformServiceURL,
+		serviceToken:       serviceToken,
+		httpClient:         &http.Client{Timeout: 10 * time.Second},
 	}
 	log.Println("Worker ready, polling for jobs...")
 	worker.Run(ctx)
 }
 
 type Worker struct {
-	matchServiceURL string
-	serviceToken    string
-	httpClient      *http.Client
-	analyzed        map[string]struct{}
+	matchServiceURL    string
+	platformServiceURL string
+	serviceToken       string
+	httpClient         *http.Client
+	analyzed           map[string]struct{}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -180,13 +188,71 @@ func (w *Worker) processMatch(ctx context.Context, matchID string) error {
 
 	if whiteID != "" {
 		result := anticheat.AnalyzeGame(record, whiteID)
-		log.Printf("analysis: match=%s winner=%s moves=%d suspicion=%.1f flags=%v",
-			matchID, snapshot.Match.Winner, len(record.Moves), result.SuspicionScore, result.Flags)
-	} else {
-		log.Printf("analysis: match=%s winner=%s moves=%d (skipped: no whiteID)",
+		log.Printf("analysis: match=%s player=%s winner=%s moves=%d suspicion=%.1f flags=%v",
+			matchID, whiteID, snapshot.Match.Winner, len(record.Moves), result.SuspicionScore, result.Flags)
+		w.postAnalysis(ctx, matchID, whiteID, string(snapshot.Match.ModeID), result)
+	}
+	if blackID != "" {
+		result := anticheat.AnalyzeGame(record, blackID)
+		log.Printf("analysis: match=%s player=%s winner=%s moves=%d suspicion=%.1f flags=%v",
+			matchID, blackID, snapshot.Match.Winner, len(record.Moves), result.SuspicionScore, result.Flags)
+		w.postAnalysis(ctx, matchID, blackID, string(snapshot.Match.ModeID), result)
+	}
+	if whiteID == "" && blackID == "" {
+		log.Printf("analysis: match=%s winner=%s moves=%d (skipped: no player ids)",
 			matchID, snapshot.Match.Winner, len(record.Moves))
 	}
 	return nil
+}
+
+// postAnalysis sends the analysis result to the platform-service. If
+// PLATFORM_SERVICE_INTERNAL_URL is not set, the function logs and returns
+// nil — the analysis was already printed by the caller, so nothing is
+// lost. If the platform-service is unreachable, we log and continue; the
+// next run for this match would re-post (the in-memory `analyzed` set
+// is per-process and cleared on restart, so a deploy-restart resends).
+func (w *Worker) postAnalysis(ctx context.Context, matchID, playerID, modeID string, result *anticheat.AnalysisResult) {
+	if strings.TrimSpace(w.platformServiceURL) == "" {
+		return
+	}
+	u := strings.TrimRight(w.platformServiceURL, "/") + "/api/platform/anticheat/analyses"
+	body, err := json.Marshal(map[string]any{
+		"matchId":        matchID,
+		"playerId":       playerID,
+		"modeId":         modeID,
+		"accuracy":       result.Accuracy,
+		"avgCpl":         result.AvgCPL,
+		"maxCpl":         result.MaxCPL,
+		"moveCount":      result.MoveCount,
+		"cardMoves":      result.CardMoves,
+		"flags":          result.Flags,
+		"suspicionScore": result.SuspicionScore,
+		"timeProfile":    result.TimeProfile,
+	})
+	if err != nil {
+		log.Printf("analysis: failed to marshal body for match=%s player=%s: %v", matchID, playerID, err)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("analysis: failed to build request for match=%s player=%s: %v", matchID, playerID, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if w.serviceToken != "" {
+		req.Header.Set("X-Chess404-Service-Token", w.serviceToken)
+	}
+	resp, err := w.httpClient.Do(req)
+	if err != nil {
+		log.Printf("analysis: POST to platform-service failed for match=%s player=%s: %v", matchID, playerID, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		log.Printf("analysis: platform-service returned %d for match=%s player=%s body=%s", resp.StatusCode, matchID, playerID, string(body))
+		return
+	}
 }
 
 func (w *Worker) fetchMatchSnapshot(ctx context.Context, matchID string) (contracts.MatchSnapshotResponse, error) {

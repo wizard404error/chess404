@@ -57,7 +57,8 @@ func buildTestPlatformMuxWithAccounts(t *testing.T, archive *platform.MatchArchi
 	if err != nil {
 		t.Fatalf("expected account security audit store to initialize, got %v", err)
 	}
-	return buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
+	anticheat := platform.NewInMemoryAnticheatStore()
+	return buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat)
 }
 
 const testInternalServiceToken = "test-internal-token"
@@ -841,6 +842,7 @@ func TestFriendRequestsCreateAndAcceptFriendship(t *testing.T) {
 	}
 	defer func() { _ = securityAudit.Close() }()
 	claims := platform.NewMatchClaimStore()
+	anticheat := platform.NewInMemoryAnticheatStore()
 
 	whiteGuest, err := guests.EnsureGuest("guest_friend_white", "")
 	if err != nil {
@@ -862,7 +864,7 @@ func TestFriendRequestsCreateAndAcceptFriendship(t *testing.T) {
 	sendReq := httptest.NewRequest(http.MethodPost, "/api/platform/friends/requests", strings.NewReader(`{"accountId":"`+whiteAccount.Account.AccountID+`","sessionToken":"`+whiteAccount.SessionToken+`","targetHandle":"nova_friend"}`))
 	sendRec := httptest.NewRecorder()
 
-	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims).ServeHTTP(sendRec, sendReq)
+	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat).ServeHTTP(sendRec, sendReq)
 
 	if sendRec.Code != http.StatusOK {
 		t.Fatalf("expected friend request send to succeed, got status %d body=%s", sendRec.Code, sendRec.Body.String())
@@ -883,7 +885,7 @@ func TestFriendRequestsCreateAndAcceptFriendship(t *testing.T) {
 	acceptReq := httptest.NewRequest(http.MethodPost, "/api/platform/friends/requests/"+sendResponse.Outgoing[0].RequestID+"/respond", strings.NewReader(`{"accountId":"`+blackAccount.Account.AccountID+`","sessionToken":"`+blackAccount.SessionToken+`","accept":true}`))
 	acceptRec := httptest.NewRecorder()
 
-	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims).ServeHTTP(acceptRec, acceptReq)
+	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat).ServeHTTP(acceptRec, acceptReq)
 
 	if acceptRec.Code != http.StatusOK {
 		t.Fatalf("expected friend request acceptance to succeed, got status %d body=%s", acceptRec.Code, acceptRec.Body.String())
@@ -910,7 +912,7 @@ func TestFriendRequestsCreateAndAcceptFriendship(t *testing.T) {
 
 	inboxReq := httptest.NewRequest(http.MethodPost, "/api/platform/inbox/overview", strings.NewReader(`{"accountId":"`+blackAccount.Account.AccountID+`","sessionToken":"`+blackAccount.SessionToken+`","limit":24}`))
 	inboxRec := httptest.NewRecorder()
-	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims).ServeHTTP(inboxRec, inboxReq)
+	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat).ServeHTTP(inboxRec, inboxReq)
 	if inboxRec.Code != http.StatusOK {
 		t.Fatalf("expected inbox overview to succeed, got status %d body=%s", inboxRec.Code, inboxRec.Body.String())
 	}
@@ -976,6 +978,7 @@ func TestDirectChallengesCreateAndDeclineThroughPlatformAPI(t *testing.T) {
 	}
 	defer func() { _ = securityAudit.Close() }()
 	claims := platform.NewMatchClaimStore()
+	anticheat := platform.NewInMemoryAnticheatStore()
 
 	alphaGuest, err := guests.EnsureGuest("guest_challenge_alpha", "")
 	if err != nil {
@@ -1002,7 +1005,7 @@ func TestDirectChallengesCreateAndDeclineThroughPlatformAPI(t *testing.T) {
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/platform/challenges", strings.NewReader(`{"accountId":"`+alphaAccount.Account.AccountID+`","sessionToken":"`+alphaAccount.SessionToken+`","targetAccountId":"`+betaAccount.Account.AccountID+`","matchId":"room-challenge-1","modeId":"hidden_cards","clockSeconds":900,"challengerSeat":"black"}`))
 	createRec := httptest.NewRecorder()
-	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims).ServeHTTP(createRec, createReq)
+	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat).ServeHTTP(createRec, createReq)
 
 	if createRec.Code != http.StatusOK {
 		t.Fatalf("expected direct challenge create to succeed, got status %d body=%s", createRec.Code, createRec.Body.String())
@@ -1022,7 +1025,7 @@ func TestDirectChallengesCreateAndDeclineThroughPlatformAPI(t *testing.T) {
 
 	declineReq := httptest.NewRequest(http.MethodPost, "/api/platform/challenges/"+createResponse.ChallengeID+"/respond", strings.NewReader(`{"accountId":"`+betaAccount.Account.AccountID+`","sessionToken":"`+betaAccount.SessionToken+`","accept":false}`))
 	declineRec := httptest.NewRecorder()
-	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims).ServeHTTP(declineRec, declineReq)
+	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat).ServeHTTP(declineRec, declineReq)
 
 	if declineRec.Code != http.StatusOK {
 		t.Fatalf("expected direct challenge decline to succeed, got status %d body=%s", declineRec.Code, declineRec.Body.String())
@@ -1034,7 +1037,7 @@ func TestDirectChallengesCreateAndDeclineThroughPlatformAPI(t *testing.T) {
 	}
 	overviewReq := httptest.NewRequest(http.MethodPost, "/api/platform/challenges/overview", strings.NewReader(`{"accountId":"`+betaAccount.Account.AccountID+`","sessionToken":"`+betaAccount.SessionToken+`"}`))
 	overviewRec := httptest.NewRecorder()
-	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims).ServeHTTP(overviewRec, overviewReq)
+	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat).ServeHTTP(overviewRec, overviewReq)
 	if overviewRec.Code != http.StatusOK {
 		t.Fatalf("expected direct challenge overview to succeed, got status %d body=%s", overviewRec.Code, overviewRec.Body.String())
 	}
@@ -1047,7 +1050,7 @@ func TestDirectChallengesCreateAndDeclineThroughPlatformAPI(t *testing.T) {
 
 	inboxReq := httptest.NewRequest(http.MethodPost, "/api/platform/inbox/overview", strings.NewReader(`{"accountId":"`+alphaAccount.Account.AccountID+`","sessionToken":"`+alphaAccount.SessionToken+`","limit":24}`))
 	inboxRec := httptest.NewRecorder()
-	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims).ServeHTTP(inboxRec, inboxReq)
+	buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat).ServeHTTP(inboxRec, inboxReq)
 	if inboxRec.Code != http.StatusOK {
 		t.Fatalf("expected challenger inbox overview to succeed, got status %d body=%s", inboxRec.Code, inboxRec.Body.String())
 	}
@@ -1113,7 +1116,8 @@ func TestModerationBlocksFriendRequestsAndDirectChallengesThroughPlatformAPI(t *
 	}
 	defer func() { _ = securityAudit.Close() }()
 	claims := platform.NewMatchClaimStore()
-	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
+	anticheat := platform.NewInMemoryAnticheatStore()
+	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat)
 
 	alphaGuest, err := guests.EnsureGuest("guest_moderation_alpha", "")
 	if err != nil {
@@ -1208,7 +1212,8 @@ func TestModerationOverviewIncludesReportsThroughPlatformAPI(t *testing.T) {
 	}
 	defer func() { _ = securityAudit.Close() }()
 	claims := platform.NewMatchClaimStore()
-	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
+	anticheat := platform.NewInMemoryAnticheatStore()
+	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat)
 
 	reporterGuest, err := guests.EnsureGuest("guest_reporter", "")
 	if err != nil {
@@ -1338,7 +1343,8 @@ func TestModerationAdminCanResolveReportsThroughPlatformAPI(t *testing.T) {
 	}
 	defer func() { _ = securityAudit.Close() }()
 	claims := platform.NewMatchClaimStore()
-	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
+	anticheat := platform.NewInMemoryAnticheatStore()
+	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheat)
 
 	adminGuest, err := guests.EnsureGuest("guest_mod_admin", "")
 	if err != nil {

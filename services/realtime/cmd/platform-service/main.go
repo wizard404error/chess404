@@ -82,7 +82,12 @@ func main() {
 		log.Fatalf("failed to initialize match claim store: %v", err)
 	}
 	defer func() { _ = claims.Close() }()
-	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims)
+	anticheatStore, err := openAnticheatStore()
+	if err != nil {
+		log.Fatalf("failed to initialize anticheat store: %v", err)
+	}
+	defer func() { _ = anticheatStore.Close() }()
+	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheatStore)
 	rl := rate_limit.New()
 
 	addr := httputil.ListenAddr("PLATFORM_ADDR", 8083)
@@ -215,8 +220,9 @@ func requireInternalServiceRequest(w http.ResponseWriter, r *http.Request) bool 
 	return true
 }
 
-func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.GuestDirectory, accounts platform.AccountDirectory, friends platform.FriendshipDirectory, moderation platform.ModerationDirectory, challenges platform.DirectChallengeDirectory, notifications platform.AccountNotificationDirectory, emailOutbox platform.AccountEmailOutboxDirectory, securityAudit platform.AccountSecurityAuditDirectory, claims *platform.MatchClaimStore) http.Handler {
+func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.GuestDirectory, accounts platform.AccountDirectory, friends platform.FriendshipDirectory, moderation platform.ModerationDirectory, challenges platform.DirectChallengeDirectory, notifications platform.AccountNotificationDirectory, emailOutbox platform.AccountEmailOutboxDirectory, securityAudit platform.AccountSecurityAuditDirectory, claims *platform.MatchClaimStore, anticheatStore platform.AnticheatStore) http.Handler {
 	mux := http.NewServeMux()
+	registerAnticheatRoutes(mux, anticheatStore)
 	authThrottle := newPlatformAuthThrottle(time.Now)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -3230,6 +3236,25 @@ func openAccountSecurityAuditStore() (platform.AccountSecurityAuditDirectory, er
 	default:
 		return platform.NewAccountSecurityAuditStore(accountSecurityAuditStorePath())
 	}
+}
+
+func openAnticheatStore() (platform.AnticheatStore, error) {
+	switch strings.ToLower(httputil.EnvOrDefault("ANTICHEAT_BACKEND", "memory")) {
+	case "postgres":
+		return platform.NewPostgresAnticheatStore(anticheatPostgresURL())
+	case "sqlite":
+		return platform.NewSqliteAnticheatStore(anticheatSQLitePath())
+	default:
+		return platform.NewInMemoryAnticheatStore(), nil
+	}
+}
+
+func anticheatPostgresURL() string {
+	return httputil.EnvOrDefault("ANTICHEAT_POSTGRES_URL", httputil.EnvOrDefault("PLATFORM_POSTGRES_URL", ""))
+}
+
+func anticheatSQLitePath() string {
+	return httputil.EnvOrDefault("ANTICHEAT_SQLITE_PATH", "./data/anticheat.sqlite")
 }
 
 func openMatchClaimStore() (*platform.MatchClaimStore, error) {
