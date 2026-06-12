@@ -1640,7 +1640,7 @@ func fetchGatewayJSONRequestWithContext(ctx context.Context, client *http.Client
 func gatewayErrorMessage(status GatewayServiceHealth, fallback string) string {
 	if payload, ok := status.Payload.(map[string]any); ok {
 		if message, ok := payload["error"].(string); ok && message != "" {
-			return fallback
+			return message
 		}
 	}
 	return fallback

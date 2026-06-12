@@ -1662,3 +1662,29 @@ func TestGatewayForwardsExplicitOriginHeader(t *testing.T) {
 		t.Fatalf("match: expected Origin %q, got %q", wantOrigin, matchOrigin)
 	}
 }
+
+// TestGatewayErrorMessageReturnsUpstreamError locks in the fix for a
+// pre-existing bug where gatewayErrorMessage always returned the fallback
+// string instead of the upstream service's actual error message. This
+// bug hid real error reasons (like CSRF 403s) behind generic fallback
+// messages, making production debugging impossible.
+func TestGatewayErrorMessageReturnsUpstreamError(t *testing.T) {
+	status := GatewayServiceHealth{
+		URL:        "https://platform.test/api/platform/guest-sessions",
+		StatusCode: 403,
+		Payload:    map[string]any{"error": "CSRF check failed: origin header required"},
+	}
+	if got := gatewayErrorMessage(status, "fallback"); got != "CSRF check failed: origin header required" {
+		t.Fatalf("expected upstream error to be returned, got %q", got)
+	}
+
+	empty := GatewayServiceHealth{URL: "x", StatusCode: 500}
+	if got := gatewayErrorMessage(empty, "fallback for empty payload"); got != "fallback for empty payload" {
+		t.Fatalf("expected fallback when payload has no error, got %q", got)
+	}
+
+	noString := GatewayServiceHealth{URL: "x", StatusCode: 500, Payload: map[string]any{"error": 42}}
+	if got := gatewayErrorMessage(noString, "fallback for non-string"); got != "fallback for non-string" {
+		t.Fatalf("expected fallback when error is not a string, got %q", got)
+	}
+}
