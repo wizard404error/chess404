@@ -5,10 +5,13 @@ RUN go vet ./cmd/analysis-worker/... && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /build/analysis-worker ./cmd/analysis-worker/
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata stockfish
 WORKDIR /app
 COPY --from=builder /build/analysis-worker .
 RUN adduser -D -g '' -u 1001 chess404
 USER chess404
+
+# Default Stockfish path; can be overridden via STOCKFISH_PATH.
+ENV STOCKFISH_PATH=/usr/bin/stockfish
 
 CMD ["./analysis-worker"]
