@@ -192,8 +192,8 @@ type MatchState struct {
 	BlackAccountID          string               `json:"blackAccountId,omitempty"`
 	WhiteName               string               `json:"whiteName,omitempty"`
 	BlackName               string               `json:"blackName,omitempty"`
-	WhitePlayerSecret       string               `json:"-"`
-	BlackPlayerSecret       string               `json:"-"`
+	WhitePlayerSecret       string               `json:"whitePlayerSecret,omitempty"`
+	BlackPlayerSecret       string               `json:"blackPlayerSecret,omitempty"`
 	Board                   [][]*Piece           `json:"board"`
 	LavaSquares             []LavaSquare         `json:"lavaSquares,omitempty"`
 	BombPieces              []BombPiece          `json:"bombPieces,omitempty"`
