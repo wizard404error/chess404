@@ -138,3 +138,24 @@ func TestAnticheatStoreStats(t *testing.T) {
 		t.Fatalf("expected 1 flagged (>=80), got %d", stats.FlaggedPlayerCount)
 	}
 }
+
+func TestAnticheatStorePruneAnalysesOlderThan(t *testing.T) {
+	store := newTestAnticheatStore()
+	now := time.Now().UTC()
+	_, _ = store.RecordAnalysis(AnticheatAnalysisRecord{AnalysisID: "old1", MatchID: "m1", PlayerID: "p1", AnalyzedAt: now.Add(-72 * time.Hour)})
+	_, _ = store.RecordAnalysis(AnticheatAnalysisRecord{AnalysisID: "old2", MatchID: "m2", PlayerID: "p2", AnalyzedAt: now.Add(-48 * time.Hour)})
+	_, _ = store.RecordAnalysis(AnticheatAnalysisRecord{AnalysisID: "new1", MatchID: "m3", PlayerID: "p1", AnalyzedAt: now.Add(-1 * time.Hour)})
+
+	cutoff := now.Add(-24 * time.Hour)
+	removed, err := store.PruneAnalysesOlderThan(cutoff)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("expected 2 rows removed, got %d", removed)
+	}
+	stats := store.Stats()
+	if stats.AnalysisCount != 1 {
+		t.Fatalf("expected 1 analysis remaining, got %d", stats.AnalysisCount)
+	}
+}

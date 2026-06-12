@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -120,4 +121,21 @@ func (s *inMemoryAnticheatStore) Stats() AnticheatStats {
 		}
 	}
 	return stats
+}
+
+func (s *inMemoryAnticheatStore) PruneAnalysesOlderThan(cutoff time.Time) (int64, error) {
+	if s == nil {
+		return 0, os.ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoffUTC := cutoff.UTC()
+	removed := int64(0)
+	for id, record := range s.analyses {
+		if record.AnalyzedAt.UTC().Before(cutoffUTC) {
+			delete(s.analyses, id)
+			removed++
+		}
+	}
+	return removed, nil
 }

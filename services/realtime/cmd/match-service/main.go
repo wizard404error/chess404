@@ -46,9 +46,14 @@ func main() {
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
+				log.Printf("match:ws: rejecting upgrade for matchID=%s: missing Origin header (allowed=%v)", r.URL.Path, allowed)
 				return false
 			}
-			return httputil.IsOriginAllowed(origin, allowed)
+			if !httputil.IsOriginAllowed(origin, allowed) {
+				log.Printf("match:ws: rejecting upgrade for matchID=%s: origin=%q not in allowed list %v", r.URL.Path, origin, allowed)
+				return false
+			}
+			return true
 		},
 	}
 

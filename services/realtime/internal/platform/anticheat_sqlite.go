@@ -250,6 +250,21 @@ func (s *SqliteAnticheatStore) Stats() AnticheatStats {
 	return stats
 }
 
+func (s *SqliteAnticheatStore) PruneAnalysesOlderThan(cutoff time.Time) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, os.ErrInvalid
+	}
+	result, err := s.db.Exec(`delete from anticheat_analyses where analyzed_at < ?`, cutoff.UTC())
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
 type sqliteAnticheatScanner interface {
 	Scan(dest ...any) error
 }

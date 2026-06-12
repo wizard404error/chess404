@@ -241,6 +241,21 @@ func (s *PostgresAnticheatStore) Stats() AnticheatStats {
 	return stats
 }
 
+func (s *PostgresAnticheatStore) PruneAnalysesOlderThan(cutoff time.Time) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, os.ErrInvalid
+	}
+	result, err := s.db.Exec(`delete from anticheat_analyses where analyzed_at < $1`, cutoff.UTC())
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
 type postgresAnticheatScanner interface {
 	Scan(dest ...any) error
 }

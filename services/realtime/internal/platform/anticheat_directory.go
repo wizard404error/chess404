@@ -51,6 +51,10 @@ type AnticheatStore interface {
 	GetPlayerSummary(playerID string) (AnticheatPlayerSummary, bool)
 	ListPlayerAnalyses(playerID string, limit int) []AnticheatAnalysisRecord
 	Stats() AnticheatStats
+	// PruneAnalysesOlderThan deletes analysis rows older than the given time
+	// and returns the number of rows removed. Implementations that don't
+	// support pruning should return 0 with no error.
+	PruneAnalysesOlderThan(cutoff time.Time) (int64, error)
 }
 
 // AnticheatStats are aggregate counts for the admin overview.

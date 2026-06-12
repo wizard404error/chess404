@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -89,6 +90,8 @@ func main() {
 	defer func() { _ = anticheatStore.Close() }()
 	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheatStore)
 	rl := rate_limit.New()
+
+	go runAnticheatRetentionLoop(anticheatStore)
 
 	addr := httputil.ListenAddr("PLATFORM_ADDR", 8083)
 	srv := &http.Server{
@@ -3277,6 +3280,32 @@ func openAnticheatStore() (platform.AnticheatStore, error) {
 		return platform.NewSqliteAnticheatStore(anticheatSQLitePath())
 	default:
 		return platform.NewInMemoryAnticheatStore(), nil
+	}
+}
+
+func runAnticheatRetentionLoop(store platform.AnticheatStore) {
+	retentionDays := 30
+	if raw := strings.TrimSpace(os.Getenv("ANTICHEAT_RETENTION_DAYS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			retentionDays = parsed
+		}
+	}
+	interval := time.Duration(retentionDays) * 24 * time.Hour
+	if interval < time.Hour {
+		interval = time.Hour
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+		removed, err := store.PruneAnalysesOlderThan(cutoff)
+		if err != nil {
+			log.Printf("platform:anticheat: retention prune failed: %v", err)
+			continue
+		}
+		if removed > 0 {
+			log.Printf("platform:anticheat: pruned %d analyses older than %s", removed, cutoff.Format(time.RFC3339))
+		}
 	}
 }
 
