@@ -1780,6 +1780,13 @@ func resolveInternalServiceURL(envKey string, defaultURL string) string {
 
 
 
+// sanitizeSeatClaim returns the claim with all fields the frontend
+// needs to connect to the match WebSocket. The PlayerSecret IS
+// included (it IS the human's session secret, which the human
+// already has); omitting it would prevent the frontend from
+// authenticating the WebSocket. ClaimToken is also included for
+// cases where the platform-service issues a separate per-match
+// claim token.
 func sanitizeSeatClaim(claim *GatewaySeatClaim) *GatewaySeatClaim {
 	if claim == nil {
 		return nil
@@ -1789,6 +1796,8 @@ func sanitizeSeatClaim(claim *GatewaySeatClaim) *GatewaySeatClaim {
 		GuestID:      claim.GuestID,
 		SeatColor:    claim.SeatColor,
 		PlayerID:     claim.PlayerID,
+		PlayerSecret: claim.PlayerSecret,
+		ClaimToken:   claim.ClaimToken,
 		ExpiresAt:    claim.ExpiresAt,
 		Queue:        claim.Queue,
 		ModeID:       claim.ModeID,

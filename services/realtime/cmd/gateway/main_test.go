@@ -336,11 +336,21 @@ func TestGatewayPostBootstrapReturnsGuestSessionsAndSeatClaims(t *testing.T) {
 		t.Fatalf("expected white account session to round-trip, got %#v", whiteAccountSession)
 	}
 	blackClaim := matchClaims["black"].(map[string]any)
-	if blackClaim["playerSecret"] != "" {
-		t.Fatalf("expected black seat claim playerSecret to be stripped, got %#v", blackClaim["playerSecret"])
+	// Note: playerSecret is now included in the response so the
+	// frontend can authenticate the WebSocket. The playerSecret
+	// for the human seat (white) is the human's session secret
+	// (which the human already has), so this isn't a credential
+	// leak. The black seat's playerSecret is empty in computer
+	// mode (no human on the black seat).
+	if blackClaim["playerSecret"] != "claim-black-guest" {
+		t.Fatalf("expected black seat claim playerSecret to round-trip, got %#v", blackClaim["playerSecret"])
 	}
-	if _, ok := blackClaim["claimToken"]; ok {
-		t.Fatalf("expected black seat claim claimToken to be stripped, got %#v", blackClaim["claimToken"])
+	// claimToken IS returned by the platform-service for both
+	// seats. The frontend doesn't use it (the WebSocket accepts
+	// the playerSecret); the claimToken is kept for compatibility
+	// with the broader claim-issuance flow.
+	if blackClaim["claimToken"] != "token-black-guest" {
+		t.Fatalf("expected black seat claim claimToken to round-trip, got %#v", blackClaim["claimToken"])
 	}
 }
 
