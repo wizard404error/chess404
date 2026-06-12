@@ -203,7 +203,13 @@ func isValidPathParam(param string) bool {
 func main() {
 	envutil.Require("MATCH_SERVICE_INTERNAL_URL", "PLATFORM_SERVICE_INTERNAL_URL", "MATCHMAKING_SERVICE_INTERNAL_URL", "ALLOWED_ORIGINS")
 	config := gatewayConfigFromEnv()
-	client := httputil.NewHTTPClient(3 * time.Second)
+	// HTTP client used to call sibling backend services. The 10s
+	// budget is comfortable for computer-mode match creation
+	// (which involves card eval + opponent init + persist to
+	// postgres + redis) and avoids spurious 502s on the first
+	// request after a deploy (cold-start). Most calls finish
+	// well under 1s; the headroom is for tail latency.
+	client := httputil.NewHTTPClient(10 * time.Second)
 	mux := buildGatewayMux(config, client)
 	rl := rate_limit.New()
 
