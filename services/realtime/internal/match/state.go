@@ -574,6 +574,8 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 		rand.Read(b)
 		matchID = fmt.Sprintf("match_%d_%s", now.UnixMilli(), hex.EncodeToString(b))
 	}
+	log.Printf("match:create: starting matchID=%s modeID=%q queue=%q clockSeconds=%d whiteGuestID=%q blackGuestID=%q difficulty=%q",
+		matchID, req.ModeID, req.Queue, req.ClockSeconds, req.WhiteGuestID, req.BlackGuestID, req.Difficulty)
 
 	clockMS := defaultClock
 	if req.ClockSeconds > 0 {
@@ -645,13 +647,32 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 	if string(req.ModeID) == "computer" {
 		diff := engine.ParseDifficulty(req.Difficulty)
 		s.computers[matchID] = engine.NewComputerOpponent(diff, "black")
+		log.Printf("match:create: computer opponent initialized matchID=%s difficulty=%v color=black", matchID, diff)
 	}
 
 	snapshot := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), s.events[matchID], now)
 	s.persistSnapshot(snapshot)
 	s.saveToRedis(snapshot, s.presence[matchID])
+	log.Printf("match:create: ok matchID=%s status=%s turn=%s whitePlayerSecret=%s blackPlayerSecret=%s computers=%t",
+		matchID, snapshot.Match.Status, snapshot.Match.Turn,
+		redactPlayerSecret(snapshot.Match.WhitePlayerSecret),
+		redactPlayerSecret(snapshot.Match.BlackPlayerSecret),
+		s.computers[matchID] != nil)
 
 	return snapshot
+}
+
+// redactPlayerSecret returns a short fingerprint of a player
+// secret so logs are useful for debugging without exposing the full
+// secret. Empty string becomes "<empty>".
+func redactPlayerSecret(s string) string {
+	if s == "" {
+		return "<empty>"
+	}
+	if len(s) <= 6 {
+		return s[:1] + "***"
+	}
+	return s[:6] + "...len=" + strconv.Itoa(len(s))
 }
 
 func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatRequest, now time.Time) (contracts.JoinMatchSeatResponse, error) {
@@ -973,6 +994,11 @@ func (s *Service) autoPlayComputer(matchID string, state *contracts.MatchState, 
 
 	computerIntent := computer.MakeMove(state)
 	if computerIntent == nil {
+		// Today this silently no-ops; the board freezes. Log it
+		// loudly so a future "computer didn't move" bug is
+		// diagnosable from Railway logs.
+		log.Printf("match:autoPlay: computer returned NIL intent matchID=%s turn=%s status=%s (board will freeze until human plays again)",
+			matchID, state.Turn, state.Status)
 		return
 	}
 
@@ -1736,6 +1762,7 @@ func (s *Service) gcFinishedMatches(now time.Time) {
 				delete(s.matchSeqNum, matchID)
 				delete(s.presence, matchID)
 				delete(s.matchMu, matchID)
+				delete(s.computers, matchID)
 			}
 		} else if state.Status == "waiting" {
 			if now.Sub(state.UpdatedAt) >= waitingMatchTTL {
@@ -1745,6 +1772,7 @@ func (s *Service) gcFinishedMatches(now time.Time) {
 				delete(s.matchSeqNum, matchID)
 				delete(s.presence, matchID)
 				delete(s.matchMu, matchID)
+				delete(s.computers, matchID)
 			}
 		}
 	}

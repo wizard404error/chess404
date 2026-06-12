@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -1172,17 +1173,23 @@ func createGatewayPrivateMatchForSession(
 		}
 	}
 
+	log.Printf("gw:create-private: starting modeID=%q difficulty=%q preferredSeat=%q matchServiceURL=%q",
+		createReq.ModeID, createReq.Difficulty, preferredSeat, config.MatchServiceURL)
 	result := fetchGatewayJSONRequest(r, client, http.MethodPost, config.MatchServiceURL+"/api/matches", createReq)
 	if result.Error != "" && result.StatusCode == 0 {
-		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, errors.New(result.Error)
+		log.Printf("gw:create-private: connection error to match-service: %v", result.Error)
+		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("match-service unreachable: %v", result.Error)
 	}
 	if !result.Healthy {
-		return GatewayPrivateMatchResponse{}, statusOrDefault(result.StatusCode, http.StatusBadGateway), errors.New(gatewayErrorMessage(result, "failed to create private match"))
+		log.Printf("gw:create-private: match-service returned status=%d body=%v", result.StatusCode, result.Payload)
+		return GatewayPrivateMatchResponse{}, statusOrDefault(result.StatusCode, http.StatusBadGateway), errors.New(formatUpstreamError(result, "failed to create private match"))
 	}
 	snapshot, err := decodeGatewayPayload[contracts.MatchSnapshotResponse](result.Payload)
 	if err != nil {
+		log.Printf("gw:create-private: failed to decode match-service response: %v", err)
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("failed to decode private match snapshot: %v", err)
 	}
+	log.Printf("gw:create-private: match created matchID=%s modeID=%s", snapshot.Match.MatchID, snapshot.Match.ModeID)
 
 	seatColor := strings.ToLower(strings.TrimSpace(preferredSeat))
 	if seatColor != "black" {
@@ -1451,10 +1458,14 @@ func acceptGatewayDirectChallenge(config GatewayConfig, client *http.Client, cha
 }
 
 func ensureGatewayPrivateGuestSession(config GatewayConfig, client *http.Client, identity GatewayGuestIdentity, r *http.Request) (*platform.GuestSession, int, error) {
+	log.Printf("gw:guest-bootstrap: starting guestID=%q sessionSecret=%s platformServiceURL=%q",
+		identity.GuestID, redactSecret(identity.SessionSecret), config.PlatformServiceURL)
 	session, errMessage := bootstrapGuestSessionForSide(config, client, &identity, r)
 	if session != nil {
+		log.Printf("gw:guest-bootstrap: ok guestID=%q accountID=%q", session.Guest.GuestID, accountIDOf(session))
 		return session, http.StatusOK, nil
 	}
+	log.Printf("gw:guest-bootstrap: FAILED errMessage=%q", errMessage)
 	if errMessage == "" {
 		return nil, http.StatusBadRequest, errors.New("failed to bootstrap guest session")
 	}
@@ -1465,6 +1476,34 @@ func ensureGatewayPrivateGuestSession(config GatewayConfig, client *http.Client,
 		return nil, http.StatusNotFound, errors.New(errMessage)
 	}
 	return nil, http.StatusBadGateway, errors.New(errMessage)
+}
+
+// accountIDOf safely returns the account ID from a session, or
+// "<guest-only>" if the session is a guest without an account.
+func accountIDOf(s *platform.GuestSession) string {
+	if s == nil {
+		return "<nil>"
+	}
+	if s.SessionToken != "" {
+		// SessionToken is set when the guest has an associated
+		// account session; we don't have the account ID
+		// directly on GuestSession so just say "linked".
+		return "<linked-account>"
+	}
+	return "<guest-only>"
+}
+
+// redactSecret returns a short fingerprint of a secret (first 6
+// chars + length) so logs are useful for debugging without exposing
+// the full secret. Empty string becomes "<empty>".
+func redactSecret(s string) string {
+	if s == "" {
+		return "<empty>"
+	}
+	if len(s) <= 6 {
+		return s[:1] + "***"
+	}
+	return s[:6] + "...len=" + strconv.Itoa(len(s))
 }
 
 func ensureGatewayPrivateAccountSession(config GatewayConfig, client *http.Client, identity *GatewayAccountIdentity, guestSession *platform.GuestSession, r *http.Request) (*platform.AccountSession, int, error) {
@@ -1644,6 +1683,21 @@ func gatewayErrorMessage(status GatewayServiceHealth, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// formatUpstreamError returns a human-readable error that includes
+// the upstream status code and (if the body is non-JSON or missing
+// the "error" field) the raw response excerpt. Used for 502/504
+// responses so the browser sees what actually failed, not a generic
+// fallback. The message is intentionally verbose; the frontend shows
+// it in the error banner.
+func formatUpstreamError(status GatewayServiceHealth, fallback string) string {
+	if payload, ok := status.Payload.(map[string]any); ok {
+		if message, ok := payload["error"].(string); ok && message != "" {
+			return fmt.Sprintf("%s (upstream status %d)", message, status.StatusCode)
+		}
+	}
+	return fmt.Sprintf("%s (upstream status %d)", fallback, status.StatusCode)
 }
 
 func statusOrDefault(statusCode int, fallback int) int {
