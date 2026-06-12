@@ -1401,14 +1401,20 @@ func TestGatewayPresenceProxyResolvesClaimToken(t *testing.T) {
 }
 
 // TestGatewayForwardsOriginHeaderToBackendServices verifies that when the
-// browser sends an Origin header to the gateway, the gateway forwards it to
-// the backend services (platform/match). This is required so the destination
-// services' CSRF middleware can validate the request as same-origin or
+// browser sends a request to the gateway, the gateway forwards a clean
+// Origin header to the backend services (platform/match). This is required
+// so the destination services' CSRF middleware can validate the request
 // against its allow-list, instead of rejecting it with 403 "origin header
 // required".
+//
+// The browser does NOT send an Origin header for same-origin POSTs — it
+// only sends a Referer (with a path) — so the gateway must reconstruct the
+// Origin from the source request's host information. A path-bearing
+// Referer like https://example.com/play does not match a bare origin
+// https://example.com/ in the allow-list.
 func TestGatewayForwardsOriginHeaderToBackendServices(t *testing.T) {
 	const wantOrigin = "https://web-production-9a697.up.railway.app"
-	const wantReferer = "https://web-production-9a697.up.railway.app/play"
+	const refererWithPath = "https://web-production-9a697.up.railway.app/play"
 
 	var (
 		platformCalls   int
@@ -1511,13 +1517,18 @@ func TestGatewayForwardsOriginHeaderToBackendServices(t *testing.T) {
 	}, matchServer.Client())
 
 	rec := httptest.NewRecorder()
+	// Simulate a same-origin POST arriving at the gateway from behind a
+	// reverse proxy: browser sends no Origin, only Referer with a path.
+	// The proxy (e.g., Next.js or Railway) sets X-Forwarded-Proto and
+	// X-Forwarded-Host so the gateway can reconstruct the public origin.
 	req := httptest.NewRequest(http.MethodPost, "/api/private-matches", strings.NewReader(`{
 		"guest": {"guestId":"gw_guest_white","sessionSecret":"gw_secret_white","displayName":"White"},
 		"queue":"direct","preferredSeat":"white"
 	}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", wantOrigin)
-	req.Header.Set("Referer", wantReferer)
+	req.Header.Set("Referer", refererWithPath)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "web-production-9a697.up.railway.app")
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
@@ -1538,5 +1549,116 @@ func TestGatewayForwardsOriginHeaderToBackendServices(t *testing.T) {
 		if origin != wantOrigin {
 			t.Fatalf("match call #%d: expected Origin %q, got %q", i, wantOrigin, origin)
 		}
+	}
+}
+
+// TestGatewayForwardsExplicitOriginHeader covers the cross-origin case:
+// the browser sends an explicit Origin header. The gateway should pass it
+// through (extracting just scheme+host) to backend services.
+func TestGatewayForwardsExplicitOriginHeader(t *testing.T) {
+	const browserOrigin = "https://web-production-9a697.up.railway.app"
+	// Some browsers may add a path; the gateway should strip it.
+	const browserOriginWithPath = "https://web-production-9a697.up.railway.app/some/page"
+	const wantOrigin = "https://web-production-9a697.up.railway.app"
+
+	var (
+		platformOrigin string
+		matchOrigin    string
+	)
+
+	platformServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/platform/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "/api/platform/capabilities":
+			_ = json.NewEncoder(w).Encode(map[string]any{"profiles": true})
+		case "/api/platform/guest-sessions":
+			platformOrigin = r.Header.Get("Origin")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"guest": map[string]any{
+					"guestId":       "gw_explicit",
+					"displayName":   "Guest",
+					"rating":        1200,
+					"matchesPlayed": 0,
+					"wins":          0,
+					"losses":        0,
+					"draws":         0,
+					"createdAt":     "2026-01-01T00:00:00Z",
+					"lastSeenAt":    "2026-01-01T00:00:00Z",
+				},
+				"sessionSecret": "gw_secret",
+			})
+		case "/api/platform/match-claims":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"matchId":      "match_explicit_origin",
+				"guestId":      "gw_explicit",
+				"seatColor":    "white",
+				"playerId":     "white_player",
+				"playerSecret": "claim-secret",
+				"claimToken":   "claim-token",
+				"queue":        "direct",
+				"status":       "active",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer platformServer.Close()
+
+	matchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/system/status" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+			return
+		}
+		if r.URL.Path == "/api/matches" {
+			matchOrigin = r.Header.Get("Origin")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"match": map[string]any{
+					"matchId":         "match_explicit_origin",
+					"queue":           "direct",
+					"modeId":          "open_cards",
+					"status":          "waiting",
+					"whiteGuestId":    "gw_explicit",
+					"blackGuestId":    "gw_explicit",
+					"whiteName":       "White",
+					"blackName":       "Black",
+					"clockSeconds":    600,
+					"clockIncrement":  5,
+					"createdAt":       "2026-01-01T00:00:00Z",
+					"updatedAt":       "2026-01-01T00:00:00Z",
+					"moveCount":       0,
+					"version":         0,
+					"firstMoveAuthor": "",
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer matchServer.Close()
+
+	mux := buildGatewayMux(GatewayConfig{
+		MatchServiceURL:       matchServer.URL,
+		PlatformServiceURL:    platformServer.URL,
+		MatchmakingServiceURL: matchServer.URL,
+	}, matchServer.Client())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/private-matches", strings.NewReader(`{
+		"guest": {"guestId":"gw_explicit","sessionSecret":"gw_secret","displayName":"White"},
+		"queue":"direct","preferredSeat":"white"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", browserOriginWithPath)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected gateway to create match, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if platformOrigin != wantOrigin {
+		t.Fatalf("platform: expected Origin %q, got %q", wantOrigin, platformOrigin)
+	}
+	if matchOrigin != wantOrigin {
+		t.Fatalf("match: expected Origin %q, got %q", wantOrigin, matchOrigin)
 	}
 }

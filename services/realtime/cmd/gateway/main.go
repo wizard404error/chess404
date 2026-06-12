@@ -495,6 +495,61 @@ func sourceRequestMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// reconstructPublicOrigin returns the public-facing origin (scheme + host)
+// for an incoming request, taking reverse-proxy headers into account. This
+// mirrors the logic the CSRF middleware uses in
+// internal/rate_limit.trustedSelfOrigin, applied to the source request
+// rather than the current request.
+//
+// The browser sends an Origin header only for cross-origin requests, and
+// the Referer it sends for same-origin POSTs includes the request path
+// (e.g., https://example.com/play), which does not match a bare origin in
+// a CSRF allow-list. Reconstructing the origin from the source's host
+// information gives the gateway a clean origin to forward to backend
+// services.
+func reconstructPublicOrigin(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+		// Browser sent Origin (e.g., cross-origin POST). Parse it and
+		// return just scheme://host[:port] so the destination's CSRF
+		// allow-list (which contains bare origins) can match.
+		if u, err := url.Parse(origin); err == nil && u.Scheme != "" && u.Host != "" {
+			return u.Scheme + "://" + u.Host
+		}
+	}
+	host := r.Host
+	scheme := "https://"
+	if r.TLS == nil {
+		scheme = "http://"
+		if forwardedProto := firstForwardedValue(r.Header, "X-Forwarded-Proto"); forwardedProto != "" {
+			scheme = forwardedProto + "://"
+		}
+		if forwardedHost := firstForwardedValue(r.Header, "X-Forwarded-Host"); forwardedHost != "" {
+			host = forwardedHost
+		}
+	}
+	if host == "" {
+		return ""
+	}
+	return scheme + host
+}
+
+func firstForwardedValue(h http.Header, name string) string {
+	raw := h.Get(name)
+	if raw == "" {
+		return ""
+	}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			return part
+		}
+	}
+	return ""
+}
+
 func collectGatewayStatus(config GatewayConfig, client *http.Client, r *http.Request) GatewaySystemStatus {
 	services := map[string]GatewayServiceHealth{
 		"match":       fetchGatewayJSON(r, client, config.MatchServiceURL+"/api/system/status"),
@@ -1535,19 +1590,19 @@ func fetchGatewayJSONRequestWithContext(ctx context.Context, client *http.Client
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	// Forward the original incoming request's Origin/Referer headers to
-	// backend services so the destination's CSRF middleware can validate
-	// the request as same-origin or against its allow-list. Without this,
-	// server-to-server POSTs from the gateway arrive with no Origin/Referer
-	// and are rejected with 403 (CSRF check failed: origin header required).
-	// The source request is propagated via context by the gateway's
-	// sourceRequestMiddleware.
+	// Set the Origin header on the outgoing request to match the public
+	// origin of the incoming request. The destination service's CSRF
+	// middleware compares the Origin against its allow-list, so it needs a
+	// clean origin (no path) to match. Without this, server-to-server
+	// POSTs from the gateway arrive with no Origin and are rejected with
+	// 403 (CSRF check failed: origin header required). Note: the browser
+	// does not send Origin for same-origin requests (only Referer with a
+	// path), and Referer-with-path does not equal the bare origin in the
+	// allow-list, so we always reconstruct the origin from the source
+	// request's host information.
 	if source := sourceRequestFromContext(ctx); source != nil {
-		if origin := source.Header.Get("Origin"); origin != "" {
+		if origin := reconstructPublicOrigin(source); origin != "" {
 			request.Header.Set("Origin", origin)
-		}
-		if referer := source.Header.Get("Referer"); referer != "" {
-			request.Header.Set("Referer", referer)
 		}
 	}
 
