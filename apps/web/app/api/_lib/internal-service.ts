@@ -16,7 +16,7 @@ export async function proxyInternalService(request: Request, path: string, confi
   const url = `${resolved.baseUrl}${path}`;
   const init: RequestInit = {
     method: request.method,
-    headers: filterHeaders(request.headers),
+    headers: buildUpstreamHeaders(request),
     cache: 'no-store',
   };
 
@@ -45,7 +45,7 @@ export async function proxyInternalServiceStream(request: Request, path: string,
   const url = `${resolved.baseUrl}${path}`;
   const init: RequestInit = {
     method: request.method,
-    headers: filterHeaders(request.headers),
+    headers: buildUpstreamHeaders(request),
     cache: 'no-store',
   };
 
@@ -124,7 +124,7 @@ function requiresPortFallback(url: URL): boolean {
   return hostname.endsWith('.railway.internal') || hostname === 'localhost' || hostname === '127.0.0.1';
 }
 
-function filterHeaders(headers: Headers): Headers {
+export function filterHeaders(headers: Headers): Headers {
   const next = new Headers();
   headers.forEach((value, key) => {
     const lower = key.toLowerCase();
@@ -138,6 +138,36 @@ function filterHeaders(headers: Headers): Headers {
     next.set(key, value);
   });
   return next;
+}
+
+// buildUpstreamHeaders prepares the headers for the outgoing request to an
+// internal backend service. It does two things on top of filterHeaders:
+//
+//   1. Injects X-Forwarded-Proto and X-Forwarded-Host from the incoming
+//      request, so the backend can reconstruct the public origin for its
+//      CSRF/origin checks. The browser does NOT send an Origin header for
+//      same-origin POSTs (only a Referer with a path), and the gateway's
+//      CSRF check uses X-Forwarded-* to compute the expected origin.
+//
+//   2. Sets the Origin header to the public origin when the browser did
+//      not provide one (same-origin POST). Without this, server-to-server
+//      POSTs from the gateway arrive at the backend with no Origin and
+//      are rejected with 403 "CSRF check failed: origin header required".
+export function buildUpstreamHeaders(request: Request): Headers {
+  const headers = filterHeaders(request.headers);
+  const url = new URL(request.url);
+  const forwardedHost = headers.get('x-forwarded-host') ?? url.host;
+  const forwardedProto = headers.get('x-forwarded-proto') ?? url.protocol.replace(':', '');
+  if (!headers.has('x-forwarded-host')) {
+    headers.set('x-forwarded-host', forwardedHost);
+  }
+  if (!headers.has('x-forwarded-proto')) {
+    headers.set('x-forwarded-proto', forwardedProto);
+  }
+  if (!headers.has('origin') && forwardedHost) {
+    headers.set('origin', `${forwardedProto}://${forwardedHost}`);
+  }
+  return headers;
 }
 
 function filterResponseHeaders(headers: Headers): Headers {
