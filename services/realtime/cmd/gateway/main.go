@@ -282,6 +282,20 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		httputil.WriteJSON(w, http.StatusOK, collectGatewayStatus(config, client, r))
 	})
 
+	mux.HandleFunc("/api/gateway/debug", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
+			"config":                  config,
+			"env_MATCH_SERVICE_INTERNAL_URL":       os.Getenv("MATCH_SERVICE_INTERNAL_URL"),
+			"env_PLATFORM_SERVICE_INTERNAL_URL":    os.Getenv("PLATFORM_SERVICE_INTERNAL_URL"),
+			"env_MATCHMAKING_SERVICE_INTERNAL_URL": os.Getenv("MATCHMAKING_SERVICE_INTERNAL_URL"),
+			"env_ALLOWED_ORIGINS":                  os.Getenv("ALLOWED_ORIGINS"),
+		})
+	})
+
 	mux.Handle("/metrics", metrics.Handler())
 
 	mux.HandleFunc("/api/session/bootstrap", func(w http.ResponseWriter, r *http.Request) {
