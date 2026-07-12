@@ -632,10 +632,15 @@ func resolveSocketClaim(matchID, claimToken string) (platform.MatchSeatClaim, er
 		return platform.MatchSeatClaim{}, fmt.Errorf("claim resolve failed with %d", response.StatusCode)
 	}
 
-	var claim platform.MatchSeatClaim
-	if err := json.NewDecoder(response.Body).Decode(&claim); err != nil {
+	// Decode into IssuedMatchSeatClaim because the resolve endpoint
+	// returns PlayerSecret via the IssuedView wrapper; the base
+	// MatchSeatClaim has json:"-" on PlayerSecret and would be empty.
+	var issued platform.IssuedMatchSeatClaim
+	if err := json.NewDecoder(response.Body).Decode(&issued); err != nil {
 		return platform.MatchSeatClaim{}, err
 	}
+	claim := issued.MatchSeatClaim
+	claim.PlayerSecret = issued.PlayerSecret
 	if strings.TrimSpace(claim.PlayerID) == "" || strings.TrimSpace(claim.PlayerSecret) == "" {
 		return platform.MatchSeatClaim{}, errors.New("claim missing player credentials")
 	}

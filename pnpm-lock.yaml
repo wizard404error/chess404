@@ -10,7 +10,62 @@ overrides:
 importers:
 
   .:
+    dependencies:
+      caniuse-lite:
+        specifier: ^1.0.30001791
+        version: 1.0.30001791
+      client-only:
+        specifier: ^0.0.1
+        version: 0.0.1
+      csstype:
+        specifier: ^3.2.3
+        version: 3.2.3
+      detect-libc:
+        specifier: ^2.1.2
+        version: 2.1.2
+      nanoid:
+        specifier: ^3.3.12
+        version: 3.3.12
+      next:
+        specifier: ^15.5.15
+        version: 15.5.15(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
+      postcss:
+        specifier: ^8.5.10
+        version: 8.5.14
+      react:
+        specifier: ^19.2.5
+        version: 19.2.5
+      react-dom:
+        specifier: ^19.2.5
+        version: 19.2.5(react@19.2.5)
+      scheduler:
+        specifier: ^0.27.0
+        version: 0.27.0
+      semver:
+        specifier: ^7.7.4
+        version: 7.7.4
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
+      source-map-js:
+        specifier: ^1.2.1
+        version: 1.2.1
+      styled-jsx:
+        specifier: ^5.1.6
+        version: 5.1.6(react@19.2.5)
+      tslib:
+        specifier: ^2.8.1
+        version: 2.8.1
+      undici-types:
+        specifier: ^7.16.0
+        version: 7.16.0
     devDependencies:
+      playwright:
+        specifier: ^1.61.1
+        version: 1.61.1
       turbo:
         specifier: ^2.1.0
         version: 2.9.9
@@ -307,6 +362,11 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
+  fsevents@2.3.2:
+    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
+    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
+    os: [darwin]
+
   nanoid@3.3.12:
     resolution: {integrity: sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
@@ -335,6 +395,16 @@ packages:
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
+
+  playwright-core@1.61.1:
+    resolution: {integrity: sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg==}
+    engines: {node: '>=18'}
+    hasBin: true
+
+  playwright@1.61.1:
+    resolution: {integrity: sha512-DWnY5o3YbLWK4GovuAVwpqL+1VwGNdUGrRr++8j8PtQQzvAVZUIMjKQ90fY689sEJZJBbZVw1rXaOKSTitkzPQ==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   postcss@8.5.14:
     resolution: {integrity: sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==}
@@ -400,8 +470,7 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@img/colour@1.1.0':
-    optional: true
+  '@img/colour@1.1.0': {}
 
   '@img/sharp-darwin-arm64@0.34.5':
     optionalDependencies:
@@ -563,7 +632,9 @@ snapshots:
 
   csstype@3.2.3: {}
 
-  detect-libc@2.1.2:
+  detect-libc@2.1.2: {}
+
+  fsevents@2.3.2:
     optional: true
 
   nanoid@3.3.12: {}
@@ -593,6 +664,14 @@ snapshots:
 
   picocolors@1.1.1: {}
 
+  playwright-core@1.61.1: {}
+
+  playwright@1.61.1:
+    dependencies:
+      playwright-core: 1.61.1
+    optionalDependencies:
+      fsevents: 2.3.2
+
   postcss@8.5.14:
     dependencies:
       nanoid: 3.3.12
@@ -608,8 +687,7 @@ snapshots:
 
   scheduler@0.27.0: {}
 
-  semver@7.7.4:
-    optional: true
+  semver@7.7.4: {}
 
   sharp@0.34.5:
     dependencies:
@@ -641,7 +719,6 @@ snapshots:
       '@img/sharp-win32-arm64': 0.34.5
       '@img/sharp-win32-ia32': 0.34.5
       '@img/sharp-win32-x64': 0.34.5
-    optional: true
 
   source-map-js@1.2.1: {}
 
