@@ -485,6 +485,7 @@ func (c *httpMatchCreator) CreateMatch(assignment matchmaking.MatchAssignment) e
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.baseURL)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("[matchmaking] ERROR: failed to send match creation request for room %s: %v", assignment.RoomID, err)
