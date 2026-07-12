@@ -8,7 +8,7 @@ RUN go mod download -x
 COPY services/realtime ./
 
 RUN go vet ./cmd/gateway/... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /out/gateway ./cmd/gateway
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags pgx5driver -ldflags="-s -w" -o /out/gateway ./cmd/gateway
 
 FROM alpine:3.20
 
@@ -25,3 +25,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/readyz || exit 1
 
 CMD ["/usr/local/bin/gateway"]
+
