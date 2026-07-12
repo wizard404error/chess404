@@ -17,7 +17,7 @@ const (
 	DefaultAuthWindow   = 10 * time.Minute
 	DefaultAuthLimit    = 20
 	DefaultQueueWindow  = 30 * time.Second
-	DefaultQueueLimit   = 10
+	DefaultQueueLimit   = 30
 )
 
 type bucket struct {

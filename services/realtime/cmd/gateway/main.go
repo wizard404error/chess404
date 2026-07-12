@@ -589,8 +589,16 @@ func buildGatewayBootstrapPayload(config GatewayConfig, client *http.Client, req
 	capabilities := fetchGatewayJSON(r, client, config.PlatformServiceURL+"/api/platform/capabilities")
 	defaultQueue := fetchGatewayJSON(r, client, config.MatchmakingServiceURL+"/api/queues/default")
 	guestSessions, sessionErrors := bootstrapGuestSessions(config, client, request, r)
-	syncMatchSnapshotToPlatformServiceIfActive(config, client, request.MatchID, r)
+	matchSnapshot := syncMatchSnapshotToPlatformServiceIfActive(config, client, request.MatchID, r)
 	matchClaims, claimErrors := bootstrapMatchClaims(config, client, request.MatchID, guestSessions, r)
+	if (matchClaims == nil || (matchClaims.White == nil && matchClaims.Black == nil)) && matchSnapshot != nil {
+		fallback := buildFallbackMatchClaims(matchSnapshot, guestSessions)
+		if fallback != nil {
+			log.Printf("gw:bootstrap: using fallback match claims from snapshot for matchID=%s", request.MatchID)
+			matchClaims = fallback
+			claimErrors = nil
+		}
+	}
 	accountSessions, accountErrors := bootstrapAccountSessions(config, client, request, guestSessions, r)
 	queueTickets, queueErrors := bootstrapQueueTickets(config, client, guestSessions, accountSessions, r)
 	recoveredMatch, recoveredMatchErrors := bootstrapRecoveredMatch(config, client, guestSessions, queueTickets, r)
@@ -755,20 +763,77 @@ func syncMatchSnapshotToPlatformService(config GatewayConfig, client *http.Clien
 	log.Printf("gw:sync-match: ok matchID=%s", snapshot.Match.MatchID)
 }
 
-func syncMatchSnapshotToPlatformServiceIfActive(config GatewayConfig, client *http.Client, matchID string, r *http.Request) {
+func syncMatchSnapshotToPlatformServiceIfActive(config GatewayConfig, client *http.Client, matchID string, r *http.Request) *contracts.MatchSnapshotResponse {
 	if strings.TrimSpace(matchID) == "" || strings.TrimSpace(config.MatchServiceURL) == "" {
-		return
+		return nil
 	}
 	result := fetchGatewayJSON(r, client, config.MatchServiceURL+"/api/matches/"+matchID)
 	if !result.Healthy {
-		return
+		return nil
 	}
 	snapshot, err := decodeGatewayPayload[contracts.MatchSnapshotResponse](result.Payload)
 	if err != nil {
 		log.Printf("gw:sync-match: failed to decode match-service snapshot for matchID=%s: %v", matchID, err)
-		return
+		return nil
 	}
 	syncMatchSnapshotToPlatformService(config, client, snapshot, r)
+	return &snapshot
+}
+
+func buildFallbackMatchClaims(snapshot *contracts.MatchSnapshotResponse, sessions *GatewayBootstrapGuestSessions) *GatewayBootstrapMatchClaims {
+	if snapshot == nil || sessions == nil {
+		return nil
+	}
+	claims := &GatewayBootstrapMatchClaims{}
+	m := snapshot.Match
+
+	buildClaim := func(session *platform.GuestSession) *GatewaySeatClaim {
+		if session == nil || session.Guest.GuestID == "" {
+			return nil
+		}
+		gid := session.Guest.GuestID
+		switch gid {
+		case m.WhiteGuestID:
+			return &GatewaySeatClaim{
+				MatchID:      m.MatchID,
+				GuestID:      gid,
+				SeatColor:    "white",
+				PlayerID:     gid,
+				PlayerSecret: m.WhitePlayerSecret,
+				Queue:        m.Queue,
+				ModeID:       m.ModeID,
+				WhiteGuestID: m.WhiteGuestID,
+				BlackGuestID: m.BlackGuestID,
+				WhiteName:    m.WhiteName,
+				BlackName:    m.BlackName,
+				Status:       m.Status,
+			}
+		case m.BlackGuestID:
+			return &GatewaySeatClaim{
+				MatchID:      m.MatchID,
+				GuestID:      gid,
+				SeatColor:    "black",
+				PlayerID:     gid,
+				PlayerSecret: m.BlackPlayerSecret,
+				Queue:        m.Queue,
+				ModeID:       m.ModeID,
+				WhiteGuestID: m.WhiteGuestID,
+				BlackGuestID: m.BlackGuestID,
+				WhiteName:    m.WhiteName,
+				BlackName:    m.BlackName,
+				Status:       m.Status,
+			}
+		}
+		return nil
+	}
+
+	claims.White = buildClaim(sessions.White)
+	claims.Black = buildClaim(sessions.Black)
+
+	if claims.White == nil && claims.Black == nil {
+		return nil
+	}
+	return claims
 }
 
 func bootstrapAccountSessions(config GatewayConfig, client *http.Client, request GatewayBootstrapRequest, guestSessions *GatewayBootstrapGuestSessions, r *http.Request) (*GatewayBootstrapAccountSessions, *GatewayBootstrapErrors) {

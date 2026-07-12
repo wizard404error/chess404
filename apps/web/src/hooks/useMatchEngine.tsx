@@ -2229,10 +2229,17 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       setViewerSeat(null);
       setMatchSeatMeta(null);
       return;
-    }
 
     stopAbortCountdown(true);
     const streamIdentity = hostedRuntime && viewerSeat ? authoritativeActorForColor(viewerSeat) : null;
+
+    if (hostedRuntime && viewerSeat && !streamIdentity?.playerSecret && !streamIdentity?.playerClaimToken) {
+      setAuthoritativeLive(false);
+      setStreamDisconnected(true);
+      setCardMsg('Cannot connect: missing player credentials. Try re-entering the match.');
+      return;
+    }
+
 
     const { disconnect, retry } = connectToMatchStream(authoritativeMatchId, {
       onSnapshot: (snapshot) => {
