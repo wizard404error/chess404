@@ -7,8 +7,8 @@ RUN go mod download -x
 
 COPY services/realtime ./
 
-RUN go vet ./cmd/gateway/... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /out/gateway ./cmd/gateway
+RUN go vet -tags pgx5driver ./cmd/gateway/... && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags pgx5driver -ldflags="-s -w" -o /out/gateway ./cmd/gateway
 
 FROM alpine:3.20
 

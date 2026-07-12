@@ -1,8 +1,8 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /build
 COPY services/realtime/ .
-RUN go vet ./cmd/analysis-worker/... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /build/analysis-worker ./cmd/analysis-worker/
+RUN go vet -tags pgx5driver ./cmd/analysis-worker/... && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags pgx5driver -ldflags="-s -w" -o /build/analysis-worker ./cmd/analysis-worker/
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata stockfish

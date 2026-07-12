@@ -90,7 +90,43 @@ var kingEndTable = [8][8]int{
 	{-50, -30, -30, -30, -30, -30, -30, -50},
 }
 
+// isLavaSquare checks if a given square has an active lava trap.
+func isLavaSquare(lavas []contracts.LavaSquare, row, col int) bool {
+	for _, lava := range lavas {
+		if lava.Row == row && lava.Col == col {
+			return true
+		}
+	}
+	return false
+}
+
+// inFriendlyFortress checks if a square is inside a fortress zone owned by color.
+func inFriendlyFortress(zones []contracts.FortressZone, color string, row, col int) bool {
+	for _, z := range zones {
+		if z.OwnerColor != color {
+			continue
+		}
+		if row >= z.TopRow && row <= z.TopRow+1 && col >= z.LeftCol && col <= z.LeftCol+1 {
+			return true
+		}
+	}
+	return false
+}
+
 func Evaluate(board [][]*contracts.Piece, turn string) int {
+	return EvaluateWithModifiers(board, turn, nil, nil, nil)
+}
+
+// EvaluateWithModifiers extends Evaluate with board-modifier scoring (lava, fortress, bombs).
+// Uses NNUE if weights are loaded, otherwise falls back to hand-crafted evaluation.
+func EvaluateWithModifiers(board [][]*contracts.Piece, turn string, lavas []contracts.LavaSquare, fortresses []contracts.FortressZone, bombs []contracts.BombPiece) int {
+	if defaultNNUE != nil && defaultNNUE.Loaded() {
+		nnue := defaultNNUE.Evaluate(board, lavas, fortresses, bombs, nil, nil)
+		if turn == "black" {
+			nnue = -nnue
+		}
+		return nnue
+	}
 	score := 0
 	whiteMaterial := 0
 	blackMaterial := 0
@@ -171,6 +207,57 @@ func Evaluate(board [][]*contracts.Piece, turn string) int {
 			score -= blackKingShield
 		} else {
 			score += blackKingShield
+		}
+	}
+
+	// --- Board-modifier scoring ---
+
+	// Lava squares: penalize own pieces standing on lava, reward enemy pieces on lava.
+	for _, lava := range lavas {
+		if lava.Row < 0 || lava.Row > 7 || lava.Col < 0 || lava.Col > 7 {
+			continue
+		}
+		piece := board[lava.Row][lava.Col]
+		if piece == nil {
+			continue
+		}
+		penalty := pieceValue(piece.Type) / 3
+		if piece.Color == turn {
+			score -= penalty
+		} else {
+			score += penalty
+		}
+	}
+
+	// Fortress zones: bonus for own fortress control.
+	for _, z := range fortresses {
+		if z.OwnerColor == turn {
+			score += 30
+		} else {
+			score -= 30
+		}
+	}
+
+	// Bomb pieces: friendly-fire risk vs. enemy-bait upside.
+	for _, bomb := range bombs {
+		ownBomb := bomb.OwnerColor == turn
+		for dr := -1; dr <= 1; dr++ {
+			for dc := -1; dc <= 1; dc++ {
+				r := bomb.Row + dr
+				c := bomb.Col + dc
+				if !inBounds(r, c) || (dr == 0 && dc == 0) {
+					continue
+				}
+				p := board[r][c]
+				if p == nil || p.Type == "king" {
+					continue
+				}
+				if ownBomb && p.Color == turn {
+					score -= pieceValue(p.Type) / 4
+				} else if ownBomb && p.Color != turn {
+					score += pieceValue(p.Type) / 4
+				}
+			}
 		}
 	}
 

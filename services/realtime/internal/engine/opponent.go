@@ -107,6 +107,19 @@ func (co *ComputerOpponent) MakeMove(state *contracts.MatchState) *contracts.Pla
 		}
 	}
 
+	// Probe opening book first (only in opening phase).
+	if state.FullMoveNum <= 10 {
+		bookMove := defaultBook.Probe(state, co.Color == "white")
+		if bookMove != nil && bookMove.From != bookMove.To {
+			return &contracts.PlayerIntent{
+				Type:    "make_move",
+				MatchID: state.MatchID,
+				From:    &bookMove.From,
+				To:      &bookMove.To,
+			}
+		}
+	}
+
 	searchDepth := co.Difficulty.SearchDepth()
 	result := Search(state, searchDepth, co.tt)
 

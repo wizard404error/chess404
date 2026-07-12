@@ -276,7 +276,12 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 				moves = append(moves, contracts.Square{Row: r, Col: c})
 			}
 		}
-		if _, movedKing := moved[keyForSquareGo(from)]; !movedKing && !isAttackedWithFusion(board, from, oppositeColor(piece.Color)) {
+		// Use the king's starting column (4) rather than its current column so that
+		// a king that has already moved (e.g. e1→g1) is correctly detected as moved
+		// even though its current square (g1, key "0-6") differs from its starting
+		// square (e1, key "0-4").
+		kingStartKey := keyForCoordsGo(from.Row, 4)
+		if _, movedKing := moved[kingStartKey]; !movedKing && !isAttackedWithFusion(board, from, oppositeColor(piece.Color)) {
 			if _, rookMoved := moved[keyForCoordsGo(from.Row, 7)]; !rookMoved &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 7}) != nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 7}).Type == "rook" &&
@@ -302,6 +307,20 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 	}
 
 	return moves
+}
+
+// fortressEntryBlocked returns true if an enemy fortress zone blocks the mover
+// from entering the target square.
+func fortressEntryBlocked(zones []contracts.FortressZone, moverColor string, target contracts.Square) bool {
+	for _, z := range zones {
+		if z.OwnerColor == moverColor {
+			continue
+		}
+		if target.Row >= z.TopRow && target.Row <= z.TopRow+1 && target.Col >= z.LeftCol && target.Col <= z.LeftCol+1 {
+			return true
+		}
+	}
+	return false
 }
 
 func keyForSquareGo(sq contracts.Square) string {

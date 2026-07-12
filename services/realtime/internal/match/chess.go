@@ -206,7 +206,10 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 				moves = append(moves, contracts.Square{Row: r, Col: c})
 			}
 		}
-		if _, movedKing := moved[keyForSquare(from)]; !movedKing && !isAttackedWithFusion(board, from, opposite(piece.Color)) {
+		// Use the king's starting column (4) so a king that has already moved
+		// (e.g. e1→g1) is correctly detected as moved even from its new square.
+		kingStartKey := keyForCoords(from.Row, 4)
+		if _, movedKing := moved[kingStartKey]; !movedKing && !isAttackedWithFusion(board, from, opposite(piece.Color)) {
 			if _, rookMoved := moved[keyForCoords(from.Row, 7)]; !rookMoved &&
 				isRookPiece(pieceAt(board, contracts.Square{Row: from.Row, Col: 7}), piece.Color) &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 5}) == nil &&
