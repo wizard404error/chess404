@@ -2229,6 +2229,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       setViewerSeat(null);
       setMatchSeatMeta(null);
       return;
+    }
 
     stopAbortCountdown(true);
     const streamIdentity = hostedRuntime && viewerSeat ? authoritativeActorForColor(viewerSeat) : null;
