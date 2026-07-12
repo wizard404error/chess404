@@ -253,7 +253,7 @@ func main() {
 		// carry the proper Access-Control-Allow-* headers. Otherwise the
 		// browser reports "blocked by CORS policy" on legitimate cross-origin
 		// POSTs whose Origin happens to mismatch the same-origin self check.
-		Handler:           httputil.WithRecovery(httputil.WithLogging("match-service", httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins()))))),
+		Handler:           httputil.WithRecovery(httputil.WithLogging("match-service", httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins(), ""))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -618,6 +618,10 @@ func resolveSocketClaim(matchID, claimToken string) (platform.MatchSeatClaim, er
 		return platform.MatchSeatClaim{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://platform-service:8080")
+	if token := internalServiceToken(); token != "" {
+		request.Header.Set("X-Chess404-Service-Token", token)
+	}
 
 	response, err := (&http.Client{Timeout: 3 * time.Second}).Do(request)
 	if err != nil {

@@ -20,5 +20,39 @@
   "devDependencies": {
     "turbo": "^2.1.0",
     "typescript": "^5.6.3"
-  }
+  },
+  "version": "1.0.0",
+  "description": "Chess404 is a realtime chess variant platform with card mechanics, an authoritative Go backend, and a Next.js web client.",
+  "main": "index.js",
+  "dependencies": {
+    "caniuse-lite": "^1.0.30001791",
+    "client-only": "^0.0.1",
+    "csstype": "^3.2.3",
+    "detect-libc": "^2.1.2",
+    "nanoid": "^3.3.12",
+    "next": "^15.5.15",
+    "picocolors": "^1.1.1",
+    "postcss": "^8.4.31",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "scheduler": "^0.27.0",
+    "semver": "^7.7.4",
+    "sharp": "^0.34.5",
+    "source-map-js": "^1.2.1",
+    "styled-jsx": "^5.1.6",
+    "tslib": "^2.8.1",
+    "undici-types": "^7.16.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wizard404error/chess404.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/wizard404error/chess404/issues"
+  },
+  "homepage": "https://github.com/wizard404error/chess404#readme"
 }

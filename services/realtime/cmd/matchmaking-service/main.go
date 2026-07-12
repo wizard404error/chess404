@@ -245,7 +245,7 @@ func main() {
 	addr := httputil.ListenAddr("MATCHMAKING_ADDR", 8084)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httputil.WithRecovery(httputil.WithLogging("matchmaking-service", httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultQueueWindow, rate_limit.DefaultQueueLimit)(mux), nil)))),
+		Handler:           httputil.WithRecovery(httputil.WithLogging("matchmaking-service", httputil.LimitBody(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultQueueWindow, rate_limit.DefaultQueueLimit)(mux), nil, "")))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

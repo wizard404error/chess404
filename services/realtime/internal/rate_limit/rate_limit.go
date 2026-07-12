@@ -1,6 +1,7 @@
 package rate_limit
 
 import (
+	"crypto/subtle"
 	"math"
 	"net"
 	"net/http"
@@ -114,12 +115,30 @@ func (l *Limiter) Middleware(window time.Duration, limit int) func(http.Handler)
 	}
 }
 
-func CSRFMiddleware(next http.Handler, allowedOrigins []string) http.Handler {
+func CSRFMiddleware(next http.Handler, allowedOrigins []string, internalToken string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		// Allow internal service-to-service requests with a valid token
+		// to bypass the Origin/Referer CSRF check.
+		if internalToken != "" {
+			provided := strings.TrimSpace(r.Header.Get("X-Chess404-Service-Token"))
+			if provided == "" {
+				const prefix = "Bearer "
+				auth := strings.TrimSpace(r.Header.Get("Authorization"))
+				if strings.HasPrefix(auth, prefix) {
+					provided = strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+				}
+			}
+			if provided != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(internalToken)) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		origin := r.Header.Get("Origin")
 		referer := r.Header.Get("Referer")
 		if origin == "" && referer == "" {
