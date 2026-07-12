@@ -1,10 +1,13 @@
 package httputil
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -50,6 +53,13 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 	n, err := r.ResponseWriter.Write(b)
 	r.size += n
 	return n, err
+}
+
+func (r *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("responseRecorder: wrapped ResponseWriter does not implement http.Hijacker")
 }
 
 func WithLogging(serviceName string, next http.Handler) http.Handler {

@@ -13,7 +13,7 @@ import (
 
 const (
 	DefaultAPIWindow    = time.Minute
-	DefaultAPILimit     = 60
+	DefaultAPILimit     = 120
 	DefaultAuthWindow   = 10 * time.Minute
 	DefaultAuthLimit    = 20
 	DefaultQueueWindow  = 30 * time.Second

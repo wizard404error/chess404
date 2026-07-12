@@ -133,11 +133,18 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
 
   // ── Responsive board size ─────────────────────────────────────────────────
   const MAX_BOARD_PX = 8 * IMPORTED_SQ;
-  const [boardPx, setBoardPx] = React.useState(() =>
-    typeof window !== 'undefined'
-      ? Math.min(MAX_BOARD_PX, Math.floor((window.innerWidth * 0.9) / 8) * 8)
-      : MAX_BOARD_PX
-  );
+  const [boardPx, setBoardPx] = React.useState(MAX_BOARD_PX);
+
+  React.useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const parent = canvas.parentElement;
+    if (!parent) return;
+    const w = parent.clientWidth;
+    if (w > 0) {
+      setBoardPx(Math.min(MAX_BOARD_PX, Math.floor(w / 8) * 8));
+    }
+  }, []);
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
