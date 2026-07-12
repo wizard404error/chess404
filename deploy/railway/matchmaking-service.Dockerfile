@@ -8,7 +8,7 @@ RUN go mod download -x
 COPY services/realtime ./
 
 RUN go vet ./cmd/matchmaking-service/... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /out/matchmaking-service ./cmd/matchmaking-service
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags pgx5driver -ldflags="-s -w" -o /out/matchmaking-service ./cmd/matchmaking-service
 
 FROM alpine:3.20
 
