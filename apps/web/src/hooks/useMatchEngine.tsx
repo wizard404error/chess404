@@ -669,10 +669,10 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const buildGatewayBootstrapRequest = React.useCallback((matchId?: string | null) => ({
     matchId: matchId ?? undefined,
     white: readStoredGuestIdentity('white'),
-    black: hostedRuntime ? undefined : readStoredGuestIdentity('black'),
+    black: readStoredGuestIdentity('black'),
     whiteAccount: readStoredAccountIdentity('white'),
-    blackAccount: hostedRuntime ? undefined : readStoredAccountIdentity('black'),
-  }), [hostedRuntime]);
+    blackAccount: readStoredAccountIdentity('black'),
+  }), []);
 
   const applyGatewayMatchClaims = React.useCallback((matchId: string | null | undefined, matchClaims?: {
     white?: MatchSeatClaim;
@@ -685,7 +685,12 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     const storedRoomMeta = readStoredRoomMeta(matchId);
     const whiteClaim = [matchClaims.white, matchClaims.black].find(claim => claim?.seatColor === 'white');
     const blackClaim = [matchClaims.white, matchClaims.black].find(claim => claim?.seatColor === 'black');
-    const ownedClaim = whiteClaim ?? blackClaim ?? null;
+    const whiteIdentity = readStoredGuestIdentity('white');
+    const blackIdentity = readStoredGuestIdentity('black');
+    const ownedClaim =
+      (whiteClaim && whiteClaim.guestId === whiteIdentity.guestId ? whiteClaim : null) ??
+      (blackClaim && blackClaim.guestId === blackIdentity.guestId ? blackClaim : null) ??
+      whiteClaim ?? blackClaim ?? null;
     const isCurrentMatch = authoritativeMatchIdRef.current === matchId;
     const currentBootstrapClaims = gatewayBootstrapClaimsRef.current.matchId === matchId
       ? gatewayBootstrapClaimsRef.current
@@ -1106,9 +1111,9 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     void fetchGatewayBootstrap({
       matchId: requestedMatchIdRef.current ?? undefined,
       white: readStoredGuestIdentity('white'),
-      black: nextHosted ? undefined : readStoredGuestIdentity('black'),
+      black: readStoredGuestIdentity('black'),
       whiteAccount: readStoredAccountIdentity('white'),
-      blackAccount: nextHosted ? undefined : readStoredAccountIdentity('black'),
+      blackAccount: readStoredAccountIdentity('black'),
     })
       .then(bootstrap => {
         if (cancelled) return;

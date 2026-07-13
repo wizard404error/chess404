@@ -307,7 +307,7 @@ export function connectToMatchStream(
       authPromise = fetchAuthToken(matchId, playerIdentity.playerId.trim(), playerIdentity.playerSecret.trim())
         .then(token => ({ claimToken: token }));
     } else {
-      console.error('Cannot connect to match: no auth token available');
+      console.log('Spectate mode: no player identity for WebSocket auth');
       handlers.onStatusChange?.('disconnected');
       return;
     }

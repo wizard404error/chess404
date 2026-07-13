@@ -140,27 +140,17 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     if (!canvas) return;
     const parent = canvas.parentElement;
     if (!parent) return;
-    const w = parent.clientWidth;
-    if (w > 0) {
-      setBoardPx(Math.min(MAX_BOARD_PX, Math.floor(w / 8) * 8));
-    }
-  }, []);
 
-  React.useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const w = entry.contentBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
-        if (w > 0) {
-          setBoardPx(prev => {
-            const next = Math.min(MAX_BOARD_PX, Math.floor(w / 8) * 8);
-            return next >= 32 * 8 ? next : prev;
-          });
-        }
+    const measure = () => {
+      const w = parent.clientWidth;
+      if (w > 0) {
+        setBoardPx(Math.min(MAX_BOARD_PX, Math.floor(w / 8) * 8));
       }
-    });
-    ro.observe(canvas);
+    };
+    measure();
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(parent);
     return () => ro.disconnect();
   }, []);
 
