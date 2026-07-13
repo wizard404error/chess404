@@ -13,7 +13,7 @@ async function runPlayer(browser, name, donePromise) {
   page.on('console', msg => {
     const text = msg.text();
     logs.push(`[${msg.type()}] ${text}`);
-    if (!text.includes('AudioContext') && (msg.type() === 'error' || text.includes('500') || text.includes('WebSocket') || text.includes('Failed'))) {
+    if (!text.includes('AudioContext') && (msg.type() === 'error' || text.includes('500') || text.includes('WebSocket') || text.includes('Failed') || text.includes('[DEBUG]'))) {
       console.log(`  [${name}] ${text}`);
     }
   });
