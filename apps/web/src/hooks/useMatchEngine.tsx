@@ -1495,13 +1495,12 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       white: match.whiteGuestId ?? null,
       black: match.blackGuestId ?? null,
     };
-    const hostedGuestId = hostedRuntime
-      ? (whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId ?? null)
-      : null;
+    const localWhiteGuestId = whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId ?? null;
+    const localBlackGuestId = blackProfileRef.current?.guestId ?? readStoredGuestIdentity('black').guestId ?? null;
     const derivedViewerSeat: PieceColor | null = hostedRuntime
       ? (
-          hostedGuestId && match.whiteGuestId === hostedGuestId ? 'white'
-          : hostedGuestId && match.blackGuestId === hostedGuestId ? 'black'
+          localWhiteGuestId && match.whiteGuestId === localWhiteGuestId ? 'white'
+          : localBlackGuestId && match.blackGuestId === localBlackGuestId ? 'black'
           : storedRoomMeta?.viewerSeat ?? null
         )
       : null;
@@ -1713,9 +1712,10 @@ export function useMatchEngine(props: UseMatchEngineProps) {
         try {
           snapshot = await fetchMatch(restoredMatchId);
           if (hostedRuntime && explicitMatchId && snapshot.match.status === 'waiting') {
-            const hostedIdentity = readStoredGuestIdentity('white');
+            const hostedWhiteIdentity = readStoredGuestIdentity('white');
+            const hostedBlackIdentity = readStoredGuestIdentity('black');
             const hostedAccountIdentity = readStoredAccountIdentity('white');
-            const hostedGuestId = whiteProfileRef.current?.guestId ?? hostedIdentity.guestId ?? null;
+            const hostedGuestId = whiteProfileRef.current?.guestId ?? hostedWhiteIdentity.guestId ?? blackProfileRef.current?.guestId ?? hostedBlackIdentity.guestId ?? null;
             const alreadyOwnsSeat = Boolean(
               hostedGuestId && (
                 snapshot.match.whiteGuestId === hostedGuestId ||
@@ -1724,14 +1724,14 @@ export function useMatchEngine(props: UseMatchEngineProps) {
             );
             const openSeat: PieceColor | null =
               snapshot.match.whiteGuestId ? (snapshot.match.blackGuestId ? null : 'black') : 'white';
-            if (!alreadyOwnsSeat && openSeat && hostedIdentity.guestId) {
+            if (!alreadyOwnsSeat && openSeat && hostedWhiteIdentity.guestId) {
               try {
                 const joined = await joinPrivateMatch({
                   matchId: restoredMatchId,
                   identity: {
-                    guestId: hostedIdentity.guestId,
-                    sessionSecret: hostedIdentity.sessionSecret,
-                    sessionToken: hostedIdentity.sessionToken,
+                    guestId: hostedWhiteIdentity.guestId,
+                    sessionSecret: hostedWhiteIdentity.sessionSecret,
+                    sessionToken: hostedWhiteIdentity.sessionToken,
                     accountId: hostedAccountIdentity.accountId,
                     accountSessionToken: hostedAccountIdentity.sessionToken,
                   },
