@@ -1248,6 +1248,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const allSyncReady = profileQueryReady && historyQueryReady && matchQueryReady;
   React.useEffect(() => {
     if (!allSyncReady) return;
+    console.log('[DEBUG] syncAllQueries: activePage=', activePage, 'authoritativeMatchId=', authoritativeMatchId, 'hostedRuntime=', hostedRuntime);
     syncAllQueries({
       profileHandle: activePage === 'Profiles' ? profileFocusHandle : null,
       historyMatchId: activePage === 'History' ? historyFocusMatchId : null,
@@ -1504,6 +1505,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           : storedRoomMeta?.viewerSeat ?? null
         )
       : null;
+    console.log('[DEBUG] applyAuthoritativeSnapshot: localWhiteGuestId=', localWhiteGuestId, 'localBlackGuestId=', localBlackGuestId, 'match.whiteGuestId=', match.whiteGuestId, 'match.blackGuestId=', match.blackGuestId, 'derivedViewerSeat=', derivedViewerSeat, 'whiteProfileRef=', whiteProfileRef.current?.guestId, 'blackProfileRef=', blackProfileRef.current?.guestId);
     setViewerSeat(derivedViewerSeat);
     authoritativeSeatSecretsRef.current = {
       white: storedRoomMeta?.whitePlayerSecret ?? authoritativeSeatSecretsRef.current.white,
@@ -1686,7 +1688,9 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       const explicitMatchId = requestedMatchIdRef.current;
       const restoredMatchId = explicitMatchId
         ?? (hostedRuntime ? gatewayRecoveredMatchIdRef.current : readStoredActiveMatchId());
+      console.log('[DEBUG] bootstrapAuthoritativeMatch: explicitMatchId=', explicitMatchId, 'restoredMatchId=', restoredMatchId, 'hostedRuntime=', hostedRuntime);
       if (hostedRuntime && !explicitMatchId && !restoredMatchId) {
+        console.log('[DEBUG] bootstrapAuthoritativeMatch: no match, returning early');
         authoritativeMatchIdRef.current = null;
         setAuthoritativeMatchId(null);
         setAuthoritativeLive(false);
@@ -2219,6 +2223,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
     openedBoardMatchRef.current = authoritativeMatchId;
     const boardRouteRequested = pathname.startsWith('/match/') || Boolean(requestedMatchIdRef.current);
+    console.log('[DEBUG] effect2212: authoritativeMatchId=', authoritativeMatchId, 'pathname=', pathname, 'boardRouteRequested=', boardRouteRequested, 'hostedRuntime=', hostedRuntime, 'setting activePage to', hostedRuntime ? 'Match' : 'Play');
     if (!hostedRuntime || boardRouteRequested) {
       setActivePage(hostedRuntime ? 'Match' : 'Play');
     }
@@ -2226,6 +2231,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
   React.useEffect(() => {
     if (!authoritativeMatchId) {
+      console.log('[DEBUG] effect2227: no authoritativeMatchId, resetting viewerSeat to null');
       setAuthoritativeLive(false);
       setAuthoritativeWhiteConnected(false);
       setAuthoritativeBlackConnected(false);
@@ -2238,8 +2244,10 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
     stopAbortCountdown(true);
     const streamIdentity = hostedRuntime && viewerSeat ? authoritativeActorForColor(viewerSeat) : null;
+    console.log('[DEBUG] effect2227: connecting matchId=', authoritativeMatchId, 'viewerSeat=', viewerSeat, 'streamIdentity=', JSON.stringify(streamIdentity));
 
     if (hostedRuntime && viewerSeat && !streamIdentity?.playerSecret && !streamIdentity?.playerClaimToken) {
+      console.log('[DEBUG] effect2227: missing credentials, aborting');
       setAuthoritativeLive(false);
       setStreamDisconnected(true);
       setCardMsg('Cannot connect: missing player credentials. Try re-entering the match.');
@@ -2277,6 +2285,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     manualRetryRef.current = retry;
 
     return () => {
+      console.log('[DEBUG] effect2227: cleanup disconnect');
       disconnect();
     };
   }, [authoritativeActorForColor, authoritativeMatchId, applyAuthoritativeSnapshot, hostedRuntime, stopAbortCountdown, viewerSeat]);

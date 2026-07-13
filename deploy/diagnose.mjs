@@ -13,7 +13,7 @@ async function runPlayer(browser, name, donePromise) {
   page.on('console', msg => {
     const text = msg.text();
     logs.push(`[${msg.type()}] ${text}`);
-    if (msg.type() === 'error' || text.includes('500') || text.includes('WebSocket')) {
+    if (!text.includes('AudioContext') && (msg.type() === 'error' || text.includes('500') || text.includes('WebSocket') || text.includes('Failed'))) {
       console.log(`  [${name}] ${text}`);
     }
   });
@@ -29,40 +29,54 @@ async function runPlayer(browser, name, donePromise) {
   });
 
   // Load
-  await page.goto(`${WEB_URL}/play`, { waitUntil: 'networkidle', timeout: 60000 });
-  await page.waitForTimeout(3000);
+  await page.goto(`${WEB_URL}/play`, { waitUntil: 'load', timeout: 30000 });
+  console.log(`  [${name}] URL: ${page.url()}`);
 
-  // Wait for spinner to disappear
-  for (let i = 0; i < 10; i++) {
-    const spinner = await page.$('div[style*="animation:loadingSlide"]');
-    if (!spinner) break;
+  // Wait for hydration (buttons in DOM)
+  for (let i = 0; i < 20; i++) {
+    if (page.isClosed()) { console.log(`  [${name}] Page closed`); return { errors, logs, wsCount: 0 }; }
+    const btns = await page.$$('button').catch(() => []);
+    if (btns.length > 0) { break; }
     await page.waitForTimeout(1000);
   }
 
-  // Click "Join Casual - Open Cards"
-  const joinBtn = await page.$('button:has-text("Join Casual")');
-  if (joinBtn && await joinBtn.isVisible()) {
-    console.log(`  [${name}] Clicking "Join Casual"`);
-    await joinBtn.click();
-  } else {
-    console.log(`  [${name}] ERROR: Join Casual button not found`);
+  // Wait for Join Casual button (profile must load first - bootstrap may take a few seconds)
+  let joinBtn = null;
+  for (let i = 0; i < 60; i++) {
+    if (page.isClosed()) break;
+    joinBtn = page.locator('button').filter({ hasText: 'Join Casual' }).first();
+    if (await joinBtn.count() > 0 && await joinBtn.isVisible()) break;
+    await page.waitForTimeout(1000);
+  }
+  if (!joinBtn || await joinBtn.count() === 0) {
+    console.log(`  [${name}] ERROR: Join Casual button never appeared`);
     return { errors, logs, wsCount: 0 };
   }
 
-  // Wait for either WebSocket or "waiting" state
+  console.log(`  [${name}] Clicking "Join Casual"`);
+  await joinBtn.click();
+  await page.waitForTimeout(2000);
+  console.log(`  [${name}] URL: ${page.url()}`);
+
+  // Wait for match to be found (URL changes to /match/ or WebSocket appears)
   let wsCount = 0;
   for (let i = 0; i < 60; i++) {
     if (page.isClosed()) break;
-    const body = await page.textContent('body');
-    // Check for match found
-    if (body.includes('You are') && (body.includes('white') || body.includes('black'))) {
-      console.log(`  [${name}] MATCH FOUND!`);
+    const url = page.url();
+    if (url.includes('/match/')) {
+      console.log(`  [${name}] NAVIGATED TO MATCH: ${url}`);
+      // Wait for match page to hydrate
+      for (let j = 0; j < 20; j++) {
+        const btns = await page.$$('button').catch(() => []);
+        if (btns.length > 5) { console.log(`  [${name}] Match page hydrated, buttons: ${btns.length}`); break; }
+        await page.waitForTimeout(1000);
+      }
+      break;
     }
     await page.waitForTimeout(1000);
     wsCount = page._page?.websockets?.length || 0;
     if (i % 10 === 9) {
-      const preview = body.substring(0, 200);
-      console.log(`  [${name}] State at ${i + 1}s: ${preview.replace(/\n/g, ' ')}`);
+      console.log(`  [${name}] State at ${i + 1}s (URL: ${url.replace('https://web-production-ddc27.up.railway.app', '')})`);
     }
   }
 
@@ -84,18 +98,14 @@ async function diagnose() {
   const donePromise = new Promise(resolve => { resolveDone = resolve; });
 
   console.log('Starting Player 1 (white)...');
-  const p1Promise = runPlayer(browser, 'P1', donePromise);
+  const p1ResultPromise = runPlayer(browser, 'P1', donePromise);
 
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise(r => setTimeout(r, 10000));
 
   console.log('\nStarting Player 2 (black)...');
-  const p2Promise = runPlayer(browser, 'P2', donePromise);
+  const p2ResultPromise = runPlayer(browser, 'P2', donePromise);
 
-  // Wait for both to complete (60s timeout)
-  const results = await Promise.all([
-    p1Promise,
-    p2Promise,
-  ]);
+  const results = await Promise.all([p1ResultPromise, p2ResultPromise]);
 
   resolveDone();
 
