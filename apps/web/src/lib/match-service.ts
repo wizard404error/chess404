@@ -503,5 +503,9 @@ function deriveWebSocketBaseUrlFromHttpBase(input: string): string | null {
   if (normalized.startsWith('http://')) {
     return normalized.replace(/^http:\/\//i, 'ws://').replace(/\/api(?:\/realtime)?$/i, '');
   }
+  if (normalized.startsWith('/')) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}${normalized.replace(/\/api(?:\/realtime)?$/i, '')}`;
+  }
   return null;
 }

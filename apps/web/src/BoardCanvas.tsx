@@ -133,7 +133,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
 
   // ── Responsive board size ─────────────────────────────────────────────────
   const MAX_BOARD_PX = 8 * IMPORTED_SQ;
-  const [boardPx, setBoardPx] = React.useState(MAX_BOARD_PX);
+  const [boardPx, setBoardPx] = React.useState(0);
 
   React.useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -267,10 +267,11 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
       ctx.clearRect(0, 0, W, H);
 
       // ── Draw squares ──────────────────────────────────────────────────────
+      const isFlipped = viewerColor === 'black';
       for (let ri = 0; ri < 8; ri++) {
         for (let ci = 0; ci < 8; ci++) {
-          const row = 7 - ri;
-          const col = ci;
+          const row = isFlipped ? ri : 7 - ri;
+          const col = isFlipped ? 7 - ci : ci;
           const light = (row + col) % 2 !== 0;
           const x = col * SQ, y = ri * SQ;
 
@@ -480,16 +481,17 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
       ctx.font = 'bold 11px sans-serif';
       ctx.textBaseline = 'top';
       for (let ri = 0; ri < 8; ri++) {
-        const row = 7 - ri;
-        const lightAtCol0 = (row + 0) % 2 !== 0;
+        const displayRank = isFlipped ? ri + 1 : 8 - ri;
+        const lightAtCol0 = ((isFlipped ? 7 - ri : 7 - ri) + 0) % 2 !== 0;
         ctx.fillStyle = lightAtCol0 ? '#B58863' : '#F0D9B5';
-        ctx.fillText(String(row + 1), 3, ri * SQ + 3);
+        ctx.fillText(String(displayRank), 3, ri * SQ + 3);
       }
       ctx.textBaseline = 'bottom';
       for (let ci = 0; ci < 8; ci++) {
-        const lightAtRow0 = (0 + ci) % 2 !== 0;
+        const displayFile = isFlipped ? FILES[7 - ci] : FILES[ci];
+        const lightAtRow0 = (0 + (isFlipped ? 7 - ci : ci)) % 2 !== 0;
         ctx.fillStyle = lightAtRow0 ? '#B58863' : '#F0D9B5';
-        ctx.fillText(FILES[ci], ci * SQ + SQ - 10, H - 2);
+        ctx.fillText(displayFile, ci * SQ + SQ - 10, H - 2);
       }
       ctx.textBaseline = 'alphabetic';
 
@@ -1808,6 +1810,10 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     }
     setFocusedSquare({ row, col });
   };
+
+  if (boardPx === 0) {
+    return <div style={{ width: '100%', aspectRatio: '1' }} />;
+  }
 
   return (
     <>

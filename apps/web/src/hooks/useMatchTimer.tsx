@@ -99,9 +99,9 @@ export function useMatchTimer({
         const ticking = tickingRef.current;
         if (ticking === null) return;
         if (ticking === 'white') {
-          setTimeW(t => Math.max(0, t - 100));
+          setTimeW(t => Math.max(0, t - 0.1));
         } else {
-          setTimeB(t => Math.max(0, t - 100));
+          setTimeB(t => Math.max(0, t - 0.1));
         }
       }, 100);
     } else {
