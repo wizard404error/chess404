@@ -1713,7 +1713,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
         white: roomMeta?.whitePlayerSecret ?? null,
         black: roomMeta?.blackPlayerSecret ?? null,
       };
-      let snapshot: MatchSnapshotMessage;
+      let snapshot: MatchSnapshotMessage | undefined;
       if (restoredMatchId) {
         try {
           snapshot = await fetchMatch(restoredMatchId);
@@ -1763,7 +1763,40 @@ export function useMatchEngine(props: UseMatchEngineProps) {
           }
         } catch (err) {
           if ((explicitMatchId || roomMeta) && err instanceof Error && /404|not found/i.test(err.message)) {
-            if (hostedRuntime) {
+            if (hostedRuntime && restoredMatchId) {
+              let retries = 0;
+              const maxRetries = 10;
+              for (; retries < maxRetries; retries++) {
+                await new Promise(r => setTimeout(r, 1000));
+                try {
+                  snapshot = await fetchMatch(restoredMatchId);
+                  break;
+                } catch (retryErr) {
+                  if (!(retryErr instanceof Error) || !/404|not found/i.test(retryErr.message)) {
+                    throw retryErr;
+                  }
+                }
+              }
+              if (!snapshot) {
+                writeStoredActiveMatchId(null);
+                gatewayRecoveredMatchIdRef.current = null;
+                clearRequestedMatchQuery();
+                requestedMatchIdRef.current = null;
+                authoritativeMatchIdRef.current = null;
+                setAuthoritativeMatchId(null);
+                setAuthoritativeLive(false);
+                setAuthoritativeStatus(null);
+                setAuthoritativeFinishReason(null);
+                setAuthoritativeWhiteConnected(false);
+                setAuthoritativeBlackConnected(false);
+                setAuthoritativeDisconnectGraceFor(null);
+                setAuthoritativeDisconnectGraceDeadline(null);
+                setViewerSeat(null);
+                setMatchSeatMeta(null);
+                setActivePage('Play');
+                return;
+              }
+            } else if (hostedRuntime) {
               writeStoredActiveMatchId(null);
               gatewayRecoveredMatchIdRef.current = null;
               clearRequestedMatchQuery();
@@ -1782,31 +1815,33 @@ export function useMatchEngine(props: UseMatchEngineProps) {
               setActivePage('Play');
               return;
             }
-            roomMeta = buildStoredRoomMeta(
-              roomMeta,
-              whiteProfileRef.current,
-              blackProfileRef.current,
-              guestSessionSecretsRef.current.white,
-              guestSessionSecretsRef.current.black,
-              { ensureSecrets: true }
-            );
-            nextSeatSecrets = {
-              white: roomMeta.whitePlayerSecret ?? null,
-              black: roomMeta.blackPlayerSecret ?? null,
-            };
-            snapshot = await ensureMatch({
-              matchId: restoredMatchId,
-              clockSeconds: CLOCK_START,
-              starterHandMode: 'starter_three',
-              queue: roomMeta.queue,
-              modeId: roomMeta.modeId,
-              whiteGuestId: roomMeta.whiteGuestId,
-              blackGuestId: roomMeta.blackGuestId,
-              whiteName: roomMeta.whiteName,
-              blackName: roomMeta.blackName,
-              whitePlayerSecret: roomMeta.whitePlayerSecret,
-              blackPlayerSecret: roomMeta.blackPlayerSecret,
-            });
+            if (!snapshot) {
+              roomMeta = buildStoredRoomMeta(
+                roomMeta,
+                whiteProfileRef.current,
+                blackProfileRef.current,
+                guestSessionSecretsRef.current.white,
+                guestSessionSecretsRef.current.black,
+                { ensureSecrets: true }
+              );
+              nextSeatSecrets = {
+                white: roomMeta.whitePlayerSecret ?? null,
+                black: roomMeta.blackPlayerSecret ?? null,
+              };
+              snapshot = await ensureMatch({
+                matchId: restoredMatchId,
+                clockSeconds: CLOCK_START,
+                starterHandMode: 'starter_three',
+                queue: roomMeta.queue,
+                modeId: roomMeta.modeId,
+                whiteGuestId: roomMeta.whiteGuestId,
+                blackGuestId: roomMeta.blackGuestId,
+                whiteName: roomMeta.whiteName,
+                blackName: roomMeta.blackName,
+                whitePlayerSecret: roomMeta.whitePlayerSecret,
+                blackPlayerSecret: roomMeta.blackPlayerSecret,
+              });
+            }
           } else if (!explicitMatchId && err instanceof Error && /404|not found/i.test(err.message)) {
             writeStoredActiveMatchId(null);
             gatewayRecoveredMatchIdRef.current = null;

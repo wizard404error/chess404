@@ -133,7 +133,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
 
   // ── Responsive board size ─────────────────────────────────────────────────
   const MAX_BOARD_PX = 8 * IMPORTED_SQ;
-  const [boardPx, setBoardPx] = React.useState(0);
+  const [boardPx, setBoardPx] = React.useState(MAX_BOARD_PX);
 
   React.useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -1810,10 +1810,6 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     }
     setFocusedSquare({ row, col });
   };
-
-  if (boardPx === 0) {
-    return <div style={{ width: '100%', aspectRatio: '1' }} />;
-  }
 
   return (
     <>
