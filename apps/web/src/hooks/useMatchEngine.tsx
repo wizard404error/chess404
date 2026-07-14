@@ -1496,14 +1496,18 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       white: match.whiteGuestId ?? null,
       black: match.blackGuestId ?? null,
     };
+    const storedMeta = storedRoomMeta?.viewerSeat;
     const localWhiteGuestId = whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId ?? null;
     const localBlackGuestId = blackProfileRef.current?.guestId ?? readStoredGuestIdentity('black').guestId ?? null;
     const matchWhiteOk = Boolean(localWhiteGuestId) && match.whiteGuestId === localWhiteGuestId;
     const matchBlackOk = Boolean(localBlackGuestId) && match.blackGuestId === localBlackGuestId;
-    const derivedViewerSeat: PieceColor | null = hostedRuntime
-      ? (matchWhiteOk ? 'white' : matchBlackOk ? 'black' : storedRoomMeta?.viewerSeat ?? null)
-      : null;
-    console.log('[DEBUG] applyAuthoritativeSnapshot: hostedRuntime=', hostedRuntime, 'matchWhiteOk=', matchWhiteOk, 'matchBlackOk=', matchBlackOk, 'localWhite=', localWhiteGuestId, 'localBlack=', localBlackGuestId, 'match.white=', match.whiteGuestId, 'match.black=', match.blackGuestId, 'derived=', derivedViewerSeat, 'storedRoomMeta.viewerSeat=', storedRoomMeta?.viewerSeat);
+    let derivedViewerSeat: PieceColor | null = null;
+    if (hostedRuntime) {
+      derivedViewerSeat = matchWhiteOk ? 'white' : matchBlackOk ? 'black' : storedMeta ?? null;
+    }
+    if (!derivedViewerSeat && storedMeta) {
+      derivedViewerSeat = storedMeta;
+    }
     setViewerSeat(derivedViewerSeat);
     authoritativeSeatSecretsRef.current = {
       white: storedRoomMeta?.whitePlayerSecret ?? authoritativeSeatSecretsRef.current.white,
@@ -1655,7 +1659,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     setClockActive(nextClockActive);
     setTicking(nextTicking);
     finalPositionRef.current = nextOver ? { fen: nextFen, turn: nextTurn } : null;
-  }, [buildMoveRows, buildPendingCardFromSnapshot, setTicking]);
+  }, [buildMoveRows, buildPendingCardFromSnapshot, setTicking, hostedRuntime]);
 
   const prevTurnRef = React.useRef<PieceColor>('white');
   const premoveActorRef = React.useRef<(color: PieceColor) => { playerId: string; playerSecret?: string; playerClaimToken?: string }>(() => ({ playerId: '' }));
@@ -1970,16 +1974,12 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       };
       authoritativeSeatSecretsRef.current = nextSeatSecrets;
       applyAuthoritativeSnapshot(snapshot);
-      console.log('[DEBUG] bootstrap fallback: hostedRuntime=', hostedRuntime, 'viewerSeat=', viewerSeat, 'whiteProfileRef=', whiteProfileRef.current?.guestId, 'match.white=', snapshot.match.whiteGuestId, 'match.black=', snapshot.match.blackGuestId);
       if (hostedRuntime && !viewerSeat) {
         const hostedId = whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId;
-        console.log('[DEBUG] bootstrap fallback: viewerSeat null, hostedId=', hostedId);
         if (hostedId) {
           if (snapshot.match.whiteGuestId === hostedId) {
-            console.log('[DEBUG] bootstrap fallback: setting viewerSeat=white');
             setViewerSeat('white');
           } else if (snapshot.match.blackGuestId === hostedId) {
-            console.log('[DEBUG] bootstrap fallback: setting viewerSeat=black');
             setViewerSeat('black');
           }
         }
@@ -2233,7 +2233,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
   React.useEffect(() => {
     if (!authoritativeMatchId) {
-      console.log('[DEBUG] effect2227: no authoritativeMatchId, resetting viewerSeat to null');
       setAuthoritativeLive(false);
       setAuthoritativeWhiteConnected(false);
       setAuthoritativeBlackConnected(false);
@@ -2246,10 +2245,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
     stopAbortCountdown(true);
     const streamIdentity = hostedRuntime && viewerSeat ? authoritativeActorForColor(viewerSeat) : null;
-    console.log('[DEBUG] effect2227: hostedRuntime=', hostedRuntime, 'matchId=', authoritativeMatchId, 'viewerSeat=', viewerSeat, 'viewerSeatRef=', viewerSeatRef.current, 'streamIdentity=', JSON.stringify(streamIdentity));
-
     if (hostedRuntime && viewerSeat && !streamIdentity?.playerSecret && !streamIdentity?.playerClaimToken) {
-      console.log('[DEBUG] effect2227: missing credentials, aborting');
       setAuthoritativeLive(false);
       setStreamDisconnected(true);
       setCardMsg('Cannot connect: missing player credentials. Try re-entering the match.');
@@ -2287,7 +2283,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     manualRetryRef.current = retry;
 
     return () => {
-      console.log('[DEBUG] effect2227: cleanup disconnect');
       disconnect();
     };
   }, [authoritativeActorForColor, authoritativeMatchId, applyAuthoritativeSnapshot, hostedRuntime, stopAbortCountdown, viewerSeat]);

@@ -750,7 +750,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     clearRequestedMatchQuery,
     requestedMatchIdRef,
     readStoredGuestIdentity,
-    copyLiveMatchLink: (matchId: string) => { void copyLiveMatchLink(matchId); },
+    copyLiveMatchLink,
   }), [
     hostedRuntime, setHostedRuntime,
     whiteProfile, blackProfile,

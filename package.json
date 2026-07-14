@@ -20,7 +20,8 @@
   "devDependencies": {
     "playwright": "^1.61.1",
     "turbo": "^2.1.0",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^3.0.0"
   },
   "version": "1.0.0",
   "description": "Chess404 is a realtime chess variant platform with card mechanics, an authoritative Go backend, and a Next.js web client.",

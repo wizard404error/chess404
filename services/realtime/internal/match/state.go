@@ -899,8 +899,7 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 		return contracts.MatchSnapshotResponse{}, ErrMatchNotFound
 	}
 
-	unlockMatch := s.lockMatch(intent.MatchID)
-	defer unlockMatch()
+
 
 	if intent.ClientMoveID != "" {
 		for _, id := range state.SeenClientMoveIDs {
@@ -1335,18 +1334,6 @@ func (s *Service) restoreArchivedMatchesLocked(loader MatchArchiveBootstrapper) 
 		}
 		s.loadArchivedMatchLocked(matchID, restored, events)
 	}
-}
-
-func (s *Service) lockMatch(matchID string) func() {
-	s.mu.Lock()
-	mu, ok := s.matchMu[matchID]
-	if !ok {
-		mu = &sync.Mutex{}
-		s.matchMu[matchID] = mu
-	}
-	s.mu.Unlock()
-	mu.Lock()
-	return mu.Unlock
 }
 
 func (s *Service) loadArchivedMatchLocked(matchID string, restored contracts.MatchState, events []contracts.ResolvedEvent) *contracts.MatchState {
