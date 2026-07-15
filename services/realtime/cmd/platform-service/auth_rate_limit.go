@@ -4,6 +4,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,25 +177,33 @@ func requestClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-		if idx := strings.IndexByte(forwardedFor, ','); idx > 0 {
-			return strings.TrimSpace(forwardedFor[:idx])
+	trustForwarded := trustAuthForwardedHeaders()
+	if trustForwarded {
+		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+			if idx := strings.IndexByte(forwardedFor, ','); idx > 0 {
+				return strings.TrimSpace(forwardedFor[:idx])
+			}
+			return strings.TrimSpace(forwardedFor)
 		}
-		return strings.TrimSpace(forwardedFor)
-	}
-	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-		return strings.TrimSpace(realIP)
-	}
-	if flyIP := r.Header.Get("Fly-Client-IP"); flyIP != "" {
-		return strings.TrimSpace(flyIP)
-	}
-	if railwayIP := r.Header.Get("X-Railway-Client-Ip"); railwayIP != "" {
-		return strings.TrimSpace(railwayIP)
+		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			return strings.TrimSpace(realIP)
+		}
+		if flyIP := r.Header.Get("Fly-Client-IP"); flyIP != "" {
+			return strings.TrimSpace(flyIP)
+		}
+		if railwayIP := r.Header.Get("X-Railway-Client-Ip"); railwayIP != "" {
+			return strings.TrimSpace(railwayIP)
+		}
 	}
 	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
 		return strings.TrimSpace(host)
 	}
 	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func trustAuthForwardedHeaders() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("TRUST_FORWARDED_HEADERS")))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func writeAuthRateLimitError(w http.ResponseWriter, retryAfter time.Duration) {

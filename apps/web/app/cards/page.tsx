@@ -1,12 +1,9 @@
 'use client';
 import React from 'react';
+import CardsPage from '../../src/CardsPage';
 import { usePlatform } from '../../src/contexts/PlatformContext';
 
-export default function Route() {
-  const platform = usePlatform();
-  React.useEffect(() => {
-    platform.setActivePage('Cards');
-  }, [platform.setActivePage]);
-  return null;
+export default function CardsRoute() {
+  const p = usePlatform();
+  return <CardsPage embedded={false} onNavigate={(page: string) => p.setActivePage(page as any)} />;
 }
-

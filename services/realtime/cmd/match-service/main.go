@@ -212,8 +212,12 @@ func main() {
 		}
 
 		if len(parts) == 2 && parts[1] == "token" && (r.Method == http.MethodPost || r.Method == http.MethodGet) {
-			playerID := strings.TrimSpace(r.URL.Query().Get("i"))
-			playerSecret := strings.TrimSpace(r.URL.Query().Get("s"))
+			playerID := strings.TrimSpace(r.Header.Get("X-Player-ID"))
+			playerSecret := strings.TrimSpace(r.Header.Get("X-Player-Secret"))
+			if playerID == "" {
+				playerID = strings.TrimSpace(r.URL.Query().Get("i"))
+				playerSecret = strings.TrimSpace(r.URL.Query().Get("s"))
+			}
 			if playerID == "" {
 				httputil.WriteError(w, http.StatusBadRequest, "playerId is required")
 				return

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import HistoryPage from '../../src/HistoryPage';
 import { usePlatform } from '../../src/contexts/PlatformContext';
 
 interface HistoryRouteClientProps {
@@ -12,19 +13,24 @@ export default function HistoryRouteClient({
   replayMatchId,
   guestId,
 }: HistoryRouteClientProps) {
-  const platform = usePlatform();
+  const p = usePlatform();
 
   React.useLayoutEffect(() => {
-    platform.setHistoryFocusMatchId(replayMatchId);
-    platform.setHistoryFocusGuestId(guestId);
-    platform.setActivePage('History');
-  }, [
-    guestId,
-    platform.setActivePage,
-    platform.setHistoryFocusGuestId,
-    platform.setHistoryFocusMatchId,
-    replayMatchId,
-  ]);
+    p.setHistoryFocusMatchId(replayMatchId);
+    p.setHistoryFocusGuestId(guestId);
+  }, [guestId, p.setHistoryFocusGuestId, p.setHistoryFocusMatchId, replayMatchId]);
 
-  return null;
+  return (
+    <HistoryPage
+      focusMatchId={p.historyFocusMatchId}
+      focusGuestId={p.historyFocusGuestId}
+      onSelectMatchId={p.setHistoryFocusMatchId}
+      onOpenGuest={(id) => {
+        p.setCommunityFocusGuestId(id);
+        p.setActivePage('Community');
+      }}
+      onClearGuestFocus={() => p.setHistoryFocusGuestId(null)}
+      onWatchLiveMatch={p.openLiveMatch}
+    />
+  );
 }

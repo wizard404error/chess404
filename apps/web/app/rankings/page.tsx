@@ -1,12 +1,17 @@
 'use client';
 import React from 'react';
+import RankingsPage from '../../src/RankingsPage';
 import { usePlatform } from '../../src/contexts/PlatformContext';
 
-export default function Route() {
-  const platform = usePlatform();
-  React.useEffect(() => {
-    platform.setActivePage('Rankings');
-  }, [platform.setActivePage]);
-  return null;
+export default function RankingsRoute() {
+  const p = usePlatform();
+  return (
+    <RankingsPage
+      onViewGuest={(guestId) => {
+        p.setCommunityFocusGuestId(guestId);
+        p.setActivePage('Community');
+      }}
+      onViewAccount={p.openProfileHandle}
+    />
+  );
 }
-

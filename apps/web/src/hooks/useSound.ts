@@ -5,35 +5,43 @@ import React from 'react';
 type SoundType = 'move' | 'capture' | 'check' | 'timer_warning' | 'game_over' | 'card_play' | 'chat' | 'error';
 
 let audioCtx: AudioContext | null = null;
-let initAttempted = false;
+let userGestured = false;
 
-function getAudioCtx(): AudioContext {
+function markUserGesture() {
+  if (!userGestured) {
+    userGestured = true;
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+  }
+}
+
+function getAudioCtx(): AudioContext | null {
+  if (!userGestured) return null;
   if (!audioCtx) {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    try {
+      audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    } catch {
+      return null;
+    }
   }
   if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
+    audioCtx.resume().catch(() => {});
   }
   return audioCtx;
 }
 
-// Initialize audio context on first user gesture (required for iOS)
 if (typeof document !== 'undefined') {
-  const initAudio = () => {
-    if (!initAttempted) {
-      initAttempted = true;
-      const ctx = getAudioCtx();
-      if (ctx.state === 'suspended') ctx.resume();
-    }
-  };
-  document.addEventListener('click', initAudio, { once: true });
-  document.addEventListener('touchstart', initAudio, { once: true });
-  document.addEventListener('keydown', initAudio, { once: true });
+  const gestureEvents = ['click', 'touchstart', 'keydown', 'pointerdown'];
+  for (const ev of gestureEvents) {
+    document.addEventListener(ev, markUserGesture, { once: true });
+  }
 }
 
 function playTone(freq: number, duration: number, type: OscillatorType = 'sine', volume = 0.08) {
   try {
     const ctx = getAudioCtx();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;
@@ -50,6 +58,7 @@ function playTone(freq: number, duration: number, type: OscillatorType = 'sine',
 function playNoise(duration: number, volume = 0.04) {
   try {
     const ctx = getAudioCtx();
+    if (!ctx) return;
     const bufferSize = ctx.sampleRate * duration;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);

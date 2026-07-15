@@ -78,8 +78,9 @@ export async function createMatch(input: CreateMatchInput = {}): Promise<MatchSn
 
 export async function fetchAuthToken(matchId: string, playerId: string, playerSecret: string): Promise<string | null> {
   try {
-    const response = await fetch(`${httpBaseUrl}/matches/${matchId}/token?i=${encodeURIComponent(playerId)}&s=${encodeURIComponent(playerSecret)}`, {
+    const response = await fetch(`${httpBaseUrl}/matches/${matchId}/token`, {
       method: 'GET',
+      headers: { 'X-Player-ID': playerId, 'X-Player-Secret': playerSecret },
     });
     if (!response.ok) {
       return null;

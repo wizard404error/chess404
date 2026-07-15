@@ -2,7 +2,6 @@
 
 import React, { createContext, useContext } from 'react';
 import type { GuestProfile } from '../lib/platform-service';
-import type { QueueTicket } from '../lib/matchmaking-service';
 import type { StoredRoomMeta } from '../lib/match-service';
 
 export type AppPage = 'Play' | 'Watch' | 'Rankings' | 'History' | 'Cards' | 'Friends' | 'Inbox' | 'Community' | 'Account' | 'Status' | 'Admin' | 'Match' | 'Profiles' | 'Modes' | 'Queue' | 'Lobbies';
@@ -20,6 +19,7 @@ export interface PlatformContextShape {
   boardStatusLabel: string;
   viewerSeat: 'white' | 'black' | null;
   matchDestinationNotice: string | null;
+  activePage: AppPage;
   setActivePage: (page: AppPage) => void;
   openLiveMatch: (id: string) => void;
   openReplayMatch: (id: string) => void;
@@ -33,6 +33,7 @@ export interface PlatformContextShape {
   setCommunityFocusGuestId: (id: string | null) => void;
   socialLiveToken: number | null;
   setInboxUnreadCount: (count: number) => void;
+  setFriendsAttentionCount: (count: number) => void;
   profileFocusHandle: string | null;
   shellAccountNotice: string | null;
   hasPrimaryAccountSession: boolean;
@@ -40,11 +41,19 @@ export interface PlatformContextShape {
   handlePrimaryShellAuthenticated: (...args: any[]) => void;
   handleSeatAuthenticated: (...args: any[]) => void;
   syncPrimaryAccountIdentity: () => void;
-  writeStoredActiveMatchId: (id: string) => void;
+  writeStoredActiveMatchId: (id: string | null) => void;
   clearRequestedMatchQuery: () => void;
   requestedMatchIdRef: { current: string | null };
   readStoredGuestIdentity: (color: 'white' | 'black') => { guestId?: string; sessionSecret?: string; sessionToken?: string; sessionExpiresAt?: string } | null;
   copyLiveMatchLink: (matchId: string) => void;
+  showReturnToMatch: boolean;
+  setShellAccountNotice: React.Dispatch<React.SetStateAction<string>>;
+  setQueueLaunchIntent: React.Dispatch<React.SetStateAction<any>>;
+  setBootstrapQueueRecovery: React.Dispatch<React.SetStateAction<any>>;
+  setMatchDestinationNotice: React.Dispatch<React.SetStateAction<string>>;
+  openAuthoritativeMatch: (matchId: string) => void;
+  activeMatchQueue: string | null;
+  activeMatchModeId: string | null;
 }
 
 export const PlatformContext = createContext<PlatformContextShape | null>(null);

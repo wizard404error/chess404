@@ -729,18 +729,16 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     boardStatusLabel,
     viewerSeat,
     matchDestinationNotice,
-    setActivePage,
-    openLiveMatch,
-    openReplayMatch,
-    openProfileHandle,
-    openGuestHistory,
+    activePage, setActivePage,
+    openLiveMatch, openReplayMatch,
+    openProfileHandle, openGuestHistory,
     historyFocusMatchId, setHistoryFocusMatchId,
     historyFocusGuestId, setHistoryFocusGuestId,
     communityFocusGuestId, setCommunityFocusGuestId,
     socialLiveToken,
-    setInboxUnreadCount,
+    setInboxUnreadCount, setFriendsAttentionCount,
     profileFocusHandle,
-    shellAccountNotice,
+    shellAccountNotice, setShellAccountNotice,
     hasPrimaryAccountSession,
     accountActionQueryDetected,
     handlePrimaryShellAuthenticated,
@@ -751,6 +749,13 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     requestedMatchIdRef,
     readStoredGuestIdentity,
     copyLiveMatchLink,
+    showReturnToMatch,
+    activeMatchQueue: activeMatchRoomMeta?.queue ?? null,
+    activeMatchModeId: activeMatchRoomMeta?.modeId ?? null,
+    setQueueLaunchIntent,
+    setMatchDestinationNotice,
+    setBootstrapQueueRecovery,
+    openAuthoritativeMatch: openLiveMatch,
   }), [
     hostedRuntime, setHostedRuntime,
     whiteProfile, blackProfile,
@@ -761,18 +766,16 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     boardStatusLabel,
     viewerSeat,
     matchDestinationNotice,
-    setActivePage,
-    openLiveMatch,
-    openReplayMatch,
-    openProfileHandle,
-    openGuestHistory,
+    activePage, setActivePage,
+    openLiveMatch, openReplayMatch,
+    openProfileHandle, openGuestHistory,
     historyFocusMatchId, setHistoryFocusMatchId,
     historyFocusGuestId, setHistoryFocusGuestId,
     communityFocusGuestId, setCommunityFocusGuestId,
     socialLiveToken,
-    setInboxUnreadCount,
+    setInboxUnreadCount, setFriendsAttentionCount,
     profileFocusHandle,
-    shellAccountNotice,
+    shellAccountNotice, setShellAccountNotice,
     hasPrimaryAccountSession,
     accountActionQueryDetected,
     handlePrimaryShellAuthenticated,
@@ -783,6 +786,11 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
     requestedMatchIdRef,
     readStoredGuestIdentity,
     copyLiveMatchLink,
+    showReturnToMatch,
+    activeMatchRoomMeta,
+    setQueueLaunchIntent,
+    setMatchDestinationNotice,
+    setBootstrapQueueRecovery,
   ]);
 
   // â”€â”€ Loading skeleton â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1090,7 +1098,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
           }
         }}
       >
-      <div style={{ display: 'none' }}>{children}</div>
+      {children}
       <ErrorBoundary>
       {showPlayHub ? (
         <PlayHubPage
@@ -1121,84 +1129,6 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
           }}
           onCopyMatchLink={(matchId) => { void copyLiveMatchLink(matchId); }}
         />
-      ) : activePage === 'History' ? (
-        <HistoryPage
-          focusMatchId={historyFocusMatchId}
-          focusGuestId={historyFocusGuestId}
-          onSelectMatchId={setHistoryFocusMatchId}
-          onOpenGuest={(guestId) => {
-            setCommunityFocusGuestId(guestId);
-            setActivePage('Community');
-          }}
-          onClearGuestFocus={() => setHistoryFocusGuestId(null)}
-          onWatchLiveMatch={openLiveMatch}
-        />
-      ) : activePage === 'Friends' ? (
-        <FriendsPage
-          identity={{
-            guestId: readStoredGuestIdentity('white').guestId,
-            sessionSecret: readStoredGuestIdentity('white').sessionSecret,
-            sessionToken: readStoredGuestIdentity('white').sessionToken,
-            accountId: primaryAccountIdentity.accountId,
-            accountSessionToken: primaryAccountIdentity.sessionToken,
-          }}
-          accountId={primaryAccountIdentity.accountId ?? null}
-          sessionToken={primaryAccountIdentity.sessionToken ?? null}
-          liveRefreshToken={socialLiveToken}
-          onOpenProfile={openProfileHandle}
-          onOpenAccount={() => setActivePage('Account')}
-        />
-      ) : activePage === 'Inbox' ? (
-        <InboxPage
-          accountId={primaryAccountIdentity.accountId ?? null}
-          sessionToken={primaryAccountIdentity.sessionToken ?? null}
-          liveRefreshToken={socialLiveToken}
-          onOpenProfile={openProfileHandle}
-          onOpenFriends={() => setActivePage('Friends')}
-          onUnreadCountChange={setInboxUnreadCount}
-        />
-      ) : activePage === 'Profiles' ? (
-        <ProfilesPage
-          focusHandle={profileFocusHandle}
-          viewerHandle={null}
-          accountId={primaryAccountIdentity.accountId ?? null}
-          sessionToken={primaryAccountIdentity.sessionToken ?? null}
-          onSelectHandle={openProfileHandle}
-          onOpenAccount={() => setActivePage('Account')}
-          onOpenReplay={openReplayMatch}
-        />
-      ) : activePage === 'Watch' ? (
-        <WatchPage
-          onWatchMatch={openLiveMatch}
-          onOpenReplay={openReplayMatch}
-        />
-      ) : activePage === 'Cards' ? (
-        <CardsPage embedded onNavigate={(page: string) => setActivePage(page as AppPage)} />
-      ) : activePage === 'Rankings' ? (
-        <RankingsPage
-          onViewGuest={(guestId) => {
-            setCommunityFocusGuestId(guestId);
-            setActivePage('Community');
-          }}
-          onViewAccount={openProfileHandle}
-        />
-      ) : activePage === 'Community' ? (
-        <CommunityPage
-          whiteProfile={whiteProfile}
-          blackProfile={blackProfile}
-          focusGuestId={communityFocusGuestId}
-          onOpenAccount={openProfileHandle}
-          onOpenMatch={openReplayMatch}
-          onOpenGuestHistory={openGuestHistory}
-        />
-      ) : activePage === 'Admin' ? (
-        <AdminModerationPage
-          accountId={primaryAccountIdentity.accountId ?? null}
-          sessionToken={primaryAccountIdentity.sessionToken ?? null}
-          onOpenProfile={openProfileHandle}
-        />
-      ) : activePage === 'Status' ? (
-        <StatusPage />
       ) : activePage === 'Account' ? (
         !hasPrimaryAccountSession && !accountActionQueryDetected ? (
           <AuthPage
