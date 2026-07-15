@@ -216,7 +216,7 @@ func main() {
 	addr := httputil.ListenAddr("GATEWAY_ADDR", 8080)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httputil.WithRecovery(httputil.WithLogging("gateway", rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(rate_limit.ContentTypeMiddleware(mux)), httputil.ParseAllowedOrigins(), ""))),
+		Handler:           rate_limit.NewHeaderStrippingMiddleware("X-Powered-By")(httputil.WithRecovery(httputil.WithLogging("gateway", rate_limit.SecurityHeadersMiddleware(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(rate_limit.ContentTypeMiddleware(mux)), httputil.ParseAllowedOrigins(), ""))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

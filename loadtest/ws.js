@@ -9,7 +9,7 @@ const wsDuration = new Trend('ws_duration', true);
 const wsErrors = new Rate('ws_errors');
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
-const WS_URL = __ENV.WS_URL || 'ws://localhost:8082';
+const WS_URL = __ENV.WS_URL || 'ws://localhost:8081';
 
 export const options = {
   stages: [
@@ -25,53 +25,51 @@ export const options = {
   },
 };
 
-function createMatch() {
-  const res = http.post(`${BASE_URL}/api/realtime/matches`, JSON.stringify({
+function createMatch(vu) {
+  const guestId = `loadtest_white_${vu}`;
+  const res = http.post(`${BASE_URL}/api/matches`, JSON.stringify({
     modeId: 'open_cards',
     clockSeconds: 600,
+    whiteGuestId: guestId,
+    whiteName: `White Player ${vu}`,
   }), {
     headers: { 'Content-Type': 'application/json' },
   });
 
-  if (res.status !== 200) return null;
+  if (res.status !== 201) return null;
 
   try {
     const body = JSON.parse(res.body);
-    return body.match?.matchId;
+    return {
+      matchId: body.match?.matchId,
+      playerId: guestId,
+      playerSecret: body.match?.whitePlayerSecret,
+    };
   } catch {
     return null;
   }
 }
 
-function joinMatch(matchId) {
-  const res = http.post(`${BASE_URL}/api/realtime/matches/${matchId}/join`, JSON.stringify({
-    preferredSeat: 'black',
-  }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-  return res.status === 200;
-}
-
 export default function () {
-  const matchId = createMatch();
-  if (!matchId) {
+  const vu = __VU;
+  const match = createMatch(vu);
+  if (!match) {
     wsErrors.add(1);
     return;
   }
 
-  joinMatch(matchId);
-
   const startTime = Date.now();
   let messageCount = 0;
+  let authed = false;
 
-  const ws = new WebSocket(`${WS_URL}/api/realtime/matches/${matchId}/stream`);
+  const ws = new WebSocket(`${WS_URL}/api/matches/${match.matchId}/ws`);
 
   ws.onopen = () => {
     wsConnected.add(1);
 
     ws.send(JSON.stringify({
-      type: 'subscribe',
-      matchId: matchId,
+      playerId: match.playerId,
+      playerSecret: match.playerSecret,
     }));
 
     sleep(0.5);
@@ -81,8 +79,10 @@ export default function () {
         type: 'intent',
         intent: {
           type: 'chat',
-          matchId: matchId,
-          message: `Load test move ${i}`,
+          matchId: match.matchId,
+          playerId: match.playerId,
+          playerSecret: match.playerSecret,
+          text: `Load test message ${i}`,
         },
       }));
       sleep(0.2);
@@ -92,6 +92,12 @@ export default function () {
   ws.onmessage = (e) => {
     messageCount++;
     wsMessages.add(1);
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'auth.success') {
+        authed = true;
+      }
+    } catch {}
   };
 
   ws.onerror = (e) => {

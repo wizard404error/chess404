@@ -1099,8 +1099,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     } else if (!requestedMatchId && requestedProfileHandle?.trim()) {
       setProfileFocusHandle(requestedProfileHandle.trim().toLowerCase());
       setActivePage('Profiles');
-    } else if (!requestedMatchId && nextHosted) {
-      setActivePage('Play');
     }
     setProfileQueryReady(true);
     setHistoryQueryReady(true);

@@ -94,8 +94,6 @@ func (l *Limiter) Allow(key string, window time.Duration, limit int) (bool, time
 func (l *Limiter) Middleware(window time.Duration, limit int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
 			ip := ClientIP(r)
 			key := "rl:" + ip
 			allowed, retryAfter := l.Allow(key, window, limit)
@@ -272,6 +270,42 @@ func ClientIP(r *http.Request) string {
 		return strings.TrimSpace(host)
 	}
 	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
+type headerStrippingResponseWriter struct {
+	http.ResponseWriter
+	stripped map[string]struct{}
+}
+
+func (w *headerStrippingResponseWriter) WriteHeader(code int) {
+	for h := range w.stripped {
+		w.ResponseWriter.Header().Del(h)
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func NewHeaderStrippingMiddleware(headers ...string) func(http.Handler) http.Handler {
+	stripped := make(map[string]struct{}, len(headers))
+	for _, h := range headers {
+		stripped[http.CanonicalHeaderKey(h)] = struct{}{}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(&headerStrippingResponseWriter{
+				ResponseWriter: w,
+				stripped:       stripped,
+			}, r)
+		})
+	}
 }
 
 func trustForwardedHeaders() bool {

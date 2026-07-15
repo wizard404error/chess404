@@ -153,12 +153,22 @@ export default function QueuePage({
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [restoringTickets, setRestoringTickets] = React.useState(true);
+  const [ratedAllowed, setRatedAllowed] = React.useState(true);
   const hostedAutoOpenMatchRef = React.useRef<string | null>(null);
   const whiteStoredAccount = readStoredAccountSession('white');
   const blackStoredAccount = readStoredAccountSession('black');
   const whiteRatedReady = Boolean((whiteStoredAccount.accountId ?? '').trim() && (whiteStoredAccount.sessionToken ?? '').trim());
   const blackRatedReady = Boolean((blackStoredAccount.accountId ?? '').trim() && (blackStoredAccount.sessionToken ?? '').trim());
   const hostedRatedReady = whiteRatedReady;
+
+  React.useEffect(() => {
+    fetch('/api/platform/capabilities').then(r => r.json()).then(caps => {
+      if (!caps.publicBetaReady || !caps.trustedFinalization) {
+        setRatedAllowed(false);
+        if (queue === 'rated') setQueue('casual');
+      }
+    }).catch(() => {});
+  }, []);
 
   const refreshQueue = React.useCallback(async (queueName: QueueName, nextModeId: MatchModeId) => {
     const [tickets, snapshotPayload] = await Promise.all([
@@ -717,7 +727,7 @@ export default function QueuePage({
               <button
                 key={name}
                 onClick={() => setQueue(name)}
-                disabled={restoringTickets}
+                disabled={restoringTickets || (name === 'rated' && !ratedAllowed)}
                 style={{
                   flex: 1,
                   padding: '9px 12px',
@@ -798,6 +808,11 @@ export default function QueuePage({
                 >
                   Sign in to join rated
                 </button>
+              ) : null}
+              {!ratedAllowed ? (
+                <div style={{ marginTop: '10px', color: '#ffb088', fontSize: '11px' }}>
+                  Rated play is not available yet — server capabilities not fully ready. Casual queues are open.
+                </div>
               ) : null}
             </div>
           )}

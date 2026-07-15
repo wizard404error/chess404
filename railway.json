@@ -34,7 +34,11 @@
         "healthcheckPath": "/readyz",
         "healthcheckTimeout": 10,
         "restartPolicyType": "ON_FAILURE",
-        "restartPolicyMaxRetries": 3
+        "restartPolicyMaxRetries": 3,
+        "variables": {
+          "MATCH_CLAIM_STORE_BACKEND": "redis",
+          "MATCH_CLAIM_STORE_REDIS_URL": "${{Redis.REDIS_URL}}"
+        }
       }
     },
     "matchmaking-service": {
@@ -46,7 +50,11 @@
         "healthcheckPath": "/readyz",
         "healthcheckTimeout": 10,
         "restartPolicyType": "ON_FAILURE",
-        "restartPolicyMaxRetries": 3
+        "restartPolicyMaxRetries": 3,
+        "variables": {
+          "MATCHMAKING_TICKET_STORE_BACKEND": "redis",
+          "MATCHMAKING_TICKET_STORE_REDIS_URL": "${{Redis.REDIS_URL}}"
+        }
       }
     },
     "analysis-worker": {
