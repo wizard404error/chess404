@@ -8,52 +8,23 @@ import { GamePanel } from '../components/match/GamePanel';
 import type { MatchFinishReason, MatchModeId, MatchSnapshotMessage, MatchState as AuthoritativeMatchState, PlayerIntent } from '@chess404/contracts';
 import { DEFAULT_MATCH_MODE_ID, OFFICIAL_MATCH_MODES } from '@chess404/contracts';
 import { useStockfish } from '../usestockfish';
-import type { Board, PieceType, PieceColor, Piece, Sq, GameCard, CardMechanic, CardPendingState, DoubleMove, BombPiece, LavaSquare, Snapshot, Rarity, CardAnimType } from '../types';
+import type { Board, PieceType, PieceColor, Piece, Sq, GameCard, CardMechanic, CardPendingState, DoubleMove, BombPiece, LavaSquare, Snapshot, Rarity } from '../types';
 import { makeBoard, cloneBoard, findKing, isAttacked, inB, legalMoves, gameStatus, insuffMat, positionKey, threefold, toFEN, moveNotation, uciToSan } from '../chessEngine';
 import { CARD_POOL, drawRandomCard, incrementCardSeq } from '../cardPool';
 import { RARITY_STYLE, RARITY_WEIGHTS, OPP, FILES, RANKS, SQ, MAX_HAND_SIZE, CLOCK_START, ABORT_SECS, DRAW_FROM, DRAW_EVERY, INITIAL_DEAL_ROUND, PIECE_VALUE, UPGRADE, DOWNGRADE, TARGETING_CARDS, CARD_TARGET_MESSAGES } from '../constants';
 import { GLOBAL_STYLES } from '../styles';
-import { BoardCanvas, type TransformAnim, type SniperAnim, type TeleportAnim, type JumpAnim, type SacrificeAnim, type MindControlAnim, type FuseAnim, type BoardArrow } from '../BoardCanvas';
-import { CardAnimOverlay } from '../CardAnimOverlay';
-import AdminModerationPage from '../AdminModerationPage';
-import AuthPage from '../AuthPage';
-import CardsPage from '../CardsPage';
-import FriendsPage from '../FriendsPage';
-import HistoryPage from '../HistoryPage';
-import InboxPage from '../InboxPage';
-import PlayHubPage from '../PlayHubPage';
-import ProfilesPage from '../ProfilesPage';
-import WatchPage from '../WatchPage';
-import RankingsPage from '../RankingsPage';
-import CommunityPage from '../CommunityPage';
-import StatusPage from '../StatusPage';
-import AccountPage from '../AccountPage';
-import AppShell, { type ShellNavGroup, type ShellNavItem, type ShellPageMeta } from '../components/layout/AppShell';
-import {
-  AdminIcon,
-  CardsIcon,
-  CommunityIcon,
-  FriendsIcon,
-  HistoryIcon,
-  InboxIcon,
-  PlayIcon,
-  ProfileIcon,
-  StatusIcon,
-  TrophyIcon,
-  WatchIcon,
-} from '../components/layout/icons';
+
+
 import { fetchGatewayBootstrap } from '../lib/system-service';
-import { joinPrivateMatch, rematchPrivateMatch } from '../lib/private-match-service';
+import { joinPrivateMatch } from '../lib/private-match-service';
 import {
   applyIntent,
   configureMatchServiceRuntime,
-  connectToMatchStream,
   createMatch,
   ensureMatch,
   fetchMatch,
   readStoredRoomMeta,
   resolveSeatSecret,
-  sendMatchPresenceHeartbeat,
   writeStoredRoomMeta,
   type MatchServiceRuntimeConfig,
   type StoredRoomMeta,
@@ -108,11 +79,6 @@ const AUTHORITATIVE_JOKER_MECHANICS = new Set<CardMechanic>([
 
 import {
   ACTIVE_MATCH_STORAGE_KEY,
-  CLAIM_REFRESH_CHECK_INTERVAL_MS,
-  CLAIM_REFRESH_LEAD_MS,
-  MATCH_PRESENCE_HEARTBEAT_INTERVAL_MS,
-  STREAM_RECONNECT_MESSAGE,
-  PRESENCE_RETRY_MESSAGE,
   readStoredActiveMatchId,
   writeStoredActiveMatchId,
   readStoredGuestIdentity,
@@ -137,6 +103,11 @@ import {
 } from '../lib/match-labels';
 import { useMatchTimer } from './useMatchTimer';
 import { useMatchReplay } from './useMatchReplay';
+import { usePlatformState } from './usePlatformState';
+import { useMatchConnection } from './useMatchConnection';
+import { useBoardInteraction } from './useBoardInteraction';
+import { useMatchNav } from './useMatchNav';
+import { useMatchAnimations } from './useMatchAnimations';
 
 function buildStoredRoomMeta(
   base: StoredRoomMeta | null | undefined,
@@ -263,35 +234,88 @@ const useFocusTrap = (ref: React.RefObject<HTMLElement | null>, active: boolean)
 export function useMatchEngine(props: UseMatchEngineProps) {
   const { accountActionQueryDetected, activePage, authoritativeRematchBusy, blackProfile, communityFocusGuestId, friendsAttentionCount, guestProfilesReady, historyFocusGuestId, historyFocusMatchId, historyQueryReady, hostedRuntime, inboxUnreadCount, matchDestinationNotice, matchQueryReady, matchSeatMeta, openedBoardMatchRef, pathname, profileFocusHandle, profileQueryReady, queueLaunchIntent, router, setAccountActionQueryDetected, setActivePage, setAuthoritativeRematchBusy, setBlackProfile, setFriendsAttentionCount, setGuestProfilesReady, setHistoryFocusGuestId, setHistoryFocusMatchId, setHistoryQueryReady, setHostedRuntime, setInboxUnreadCount, setMatchDestinationNotice, setMatchQueryReady, setMatchSeatMeta, setProfileFocusHandle, setProfileQueryReady, setBootstrapQueueRecovery, setQueueLaunchIntent, setSecondaryMenuOpen, setSocialAlert, setSocialLiveToken, setViewerSeat, setWhiteProfile, socialAlert, socialLiveToken, viewerSeat, whiteProfile } = props;
 
-  const [board,     setBoard]     = React.useState<Board>(makeBoard);
-  const [turn,      setTurn]      = React.useState<PieceColor>('white');
-  const [sel,       setSel]       = React.useState<Sq | null>(null);
-  const [hints,     setHints]     = React.useState<Sq[]>([]);
-  const [premove,   setPremove]   = React.useState<{ from: Sq; to: Sq } | null>(null);
-  const [moved,     setMoved]     = React.useState<Set<string>>(new Set());
-  const [lm,        setLm]        = React.useState<{ from: Sq; to: Sq } | null>(null);
-  const [drag,      setDrag]      = React.useState<Sq | null>(null);
-  const [dragPos,   setDragPos]   = React.useState<{ x: number; y: number } | null>(null);
-  const [promo,     setPromo]     = React.useState<{
-    row: number; col: number; color: PieceColor; fromCol?: number;
-    from?: Sq; to?: Sq; authoritativeMatchId?: string;
-    turn?: PieceColor; note?: string; moved: Set<string>;
-    lm: { from: Sq; to: Sq } | null; hmc: number; fmn: number;
-  } | null>(null);
-  const [check,     setCheck]     = React.useState(false);
-  const [mate,      setMate]      = React.useState(false);
-  const [stale,     setStale]     = React.useState(false);
-  const [insuf,     setInsuf]     = React.useState(false);
-  const [hmc,       setHmc]       = React.useState(0);
-  const [fmn,       setFmn]       = React.useState(1);
-  const [posHist,   setPosHist]   = React.useState<string[]>([]);
-  const [drawOffer, setDrawOffer] = React.useState<PieceColor | null>(null);
-  const [over,      setOver]      = React.useState(false);
-  const [winner,    setWinner]    = React.useState<PieceColor | 'draw' | 'aborted' | null>(null);
-  const [authoritativeFinishReason, setAuthoritativeFinishReason] = React.useState<MatchFinishReason | null>(null);
-  const [movHist,   setMovHist]   = React.useState<{ n: string; w?: string; b?: string }[]>([]);
-  const [snapshots, setSnapshots] = React.useState<Snapshot[]>([]);
-  const [analysisArrows, setAnalysisArrows] = React.useState<BoardArrow[]>([]);
+  const platformState = usePlatformState({
+    hostedRuntime, setHostedRuntime,
+    activePage, setActivePage,
+    setAccountActionQueryDetected,
+    setHistoryFocusMatchId,
+    setHistoryFocusGuestId,
+    setProfileFocusHandle,
+    setProfileQueryReady, setHistoryQueryReady, setMatchQueryReady,
+    setFriendsAttentionCount, setInboxUnreadCount,
+    setSocialAlert, socialAlert,
+    setSocialLiveToken, socialLiveToken,
+    setWhiteProfile, setBlackProfile, setViewerSeat, viewerSeat,
+    whiteProfile, blackProfile,
+    setGuestProfilesReady, guestProfilesReady,
+    setBootstrapQueueRecovery,
+    setMatchSeatMeta,
+    setMatchDestinationNotice,
+    openedBoardMatchRef,
+    pathname,
+    profileFocusHandle,
+    historyFocusGuestId, historyFocusMatchId,
+  });
+  const {
+    primaryAccountIdentity,
+    setPrimaryAccountIdentity,
+    shellAccountNotice,
+    setShellAccountNotice,
+    whiteProfileRef,
+    blackProfileRef,
+    viewerSeatRef,
+    guestSessionSecretsRef,
+    authoritativeSeatIdsRef,
+    authoritativeSeatSecretsRef,
+    authoritativeClaimExpiresAtRef,
+    authoritativeClaimTokensRef,
+    gatewayBootstrapClaimsRef,
+    gatewayRecoveredMatchIdRef,
+    requestedMatchIdRef,
+    authoritativeMatchIdRef,
+    dismissedSocialAlertIdsRef,
+    intentInFlight,
+    setIntentInFlight,
+    syncPrimaryAccountIdentity,
+    clearPrimaryAccountRestriction,
+    pulseSocialLive,
+    handleSeatAuthenticated,
+    handlePrimaryShellAuthenticated,
+    applyGatewayGuestSessions,
+    applyGatewayAccountSessions,
+    buildGatewayBootstrapRequest,
+    applyGatewayMatchClaims,
+    applyGatewayRecoveredMatch,
+    applyGatewayQueueRecovery,
+  } = platformState;
+
+  const {
+    board, setBoard,
+    turn, setTurn,
+    sel, setSel,
+    hints, setHints,
+    premove, setPremove,
+    moved, setMoved,
+    lm, setLm,
+    drag, setDrag,
+    dragPos, setDragPos,
+    promo, setPromo,
+    check, setCheck,
+    mate, setMate,
+    stale, setStale,
+    insuf, setInsuf,
+    hmc, setHmc,
+    fmn, setFmn,
+    posHist, setPosHist,
+    drawOffer, setDrawOffer,
+    over, setOver,
+    winner, setWinner,
+    authoritativeFinishReason, setAuthoritativeFinishReason,
+    movHist, setMovHist,
+    snapshots, setSnapshots,
+    analysisArrows, setAnalysisArrows,
+    boardRef, turnRef, movedRef, lmRef, hmcRef, fmnRef, posHistRef, overRef, premoveRef,
+  } = useBoardInteraction();
 
   const openProfileHandle = React.useCallback((handle: string) => {
     const normalized = handle.trim().toLowerCase();
@@ -352,66 +376,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
   }, []);
 
-  const dismissedSocialAlertIdsRef = React.useRef<Set<string>>(new Set());
-  const [primaryAccountIdentity, setPrimaryAccountIdentity] = React.useState(() => readStoredAccountIdentity('white'));
-  const [shellAccountNotice, setShellAccountNotice] = React.useState('');
-
-  const syncPrimaryAccountIdentity = React.useCallback(() => {
-    React.startTransition(() => {
-      setPrimaryAccountIdentity(readStoredAccountIdentity('white'));
-    });
-  }, []);
-
-  const clearPrimaryAccountRestriction = React.useCallback((message: string) => {
-    clearStoredAccountIdentity('white');
-    React.startTransition(() => {
-      setPrimaryAccountIdentity({});
-      setShellAccountNotice(message);
-      setFriendsAttentionCount(0);
-      setInboxUnreadCount(0);
-      setSocialAlert(null);
-      if (hostedRuntime) {
-        setActivePage('Account');
-      }
-    });
-  }, [hostedRuntime]);
-
-  const pulseSocialLive = React.useCallback(() => {
-    React.startTransition(() => {
-      setSocialLiveToken((current: number) => current + 1);
-    });
-  }, []);
-
-  const handleSeatAuthenticated = React.useCallback((side: 'white' | 'black', guestSession: PlatformGuestSession, accountSession: PlatformAccountSession) => {
-    guestSessionSecretsRef.current[side] = guestSession.sessionSecret;
-    writeStoredGuestIdentity(side, guestSession.guest.guestId, guestSession.sessionSecret, {
-      sessionToken: guestSession.sessionToken ?? null,
-      sessionExpiresAt: guestSession.expiresAt ?? null,
-    });
-    writeStoredAccountIdentity(side, { accountId: accountSession.account.accountId }, {
-      sessionToken: accountSession.sessionToken,
-      expiresAt: accountSession.expiresAt,
-    });
-    if (side === 'white') {
-      syncPrimaryAccountIdentity();
-      setShellAccountNotice('');
-    }
-    if (side === 'white') {
-      setWhiteProfile(guestSession.guest);
-      if (hostedRuntime) {
-        setViewerSeat('white');
-      }
-    } else {
-      setBlackProfile(guestSession.guest);
-    }
-    setGuestProfilesReady(true);
-  }, [hostedRuntime, syncPrimaryAccountIdentity]);
-
-  const handlePrimaryShellAuthenticated = React.useCallback((guestSession: PlatformGuestSession, accountSession: PlatformAccountSession) => {
-    handleSeatAuthenticated('white', guestSession, accountSession);
-    setActivePage('Play');
-  }, [handleSeatAuthenticated, hostedRuntime]);
-
   // Card state
   const [whiteHand,    setWhiteHand]    = React.useState<GameCard[]>([]);
   const [blackHand,    setBlackHand]    = React.useState<GameCard[]>([]);
@@ -434,139 +398,47 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const jokerRef = React.useRef<HTMLDivElement>(null);
   useFocusTrap(jokerRef, jokerPicker !== null);
 
-  // ── Card animation state ───────────────────────────────────────────────────
-  const [cardAnim,    setCardAnim]    = React.useState<CardAnimType>(null);
-  const [cardAnimLbl, setCardAnimLbl] = React.useState('');
-  const fireCardAnim = React.useCallback((type: CardAnimType, lbl = '') => {
-    setCardAnim(type);
-    setCardAnimLbl(lbl);
-  }, []);
-
-  // ── NEW: Bomb state ────────────────────────────────────────────────────────
-  const [bombPieces,    setBombPieces]    = React.useState<BombPiece[]>([]);
-  const [bombExploding, setBombExploding] = React.useState<Sq[]>([]); // squares currently in explosion animation
-  const bombPiecesRef = React.useRef<BombPiece[]>([]);
-  React.useEffect(() => { bombPiecesRef.current = bombPieces; }, [bombPieces]);
-
-  // ── NEW: Swap animation state ──────────────────────────────────────────────
-  const [swapAnim, setSwapAnim] = React.useState<{
-    sq1: Sq; sq2: Sq;
-    color1: string; color2: string; // accent colors for the two pieces
-  } | null>(null);
-  const swapAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const manualRetryRef = React.useRef<(() => void) | null>(null);
-
-  const triggerSwapAnim = React.useCallback((sq1: Sq, sq2: Sq, color1 = '#4ade80', color2 = '#60a5fa') => {
-    if (swapAnimTimerRef.current) clearTimeout(swapAnimTimerRef.current);
-    setSwapAnim({ sq1, sq2, color1, color2 });
-    swapAnimTimerRef.current = setTimeout(() => setSwapAnim(null), 800);
-  }, []);
-
-  // ── Transform animation state (promote/demote) ─────────────────────────────
-  const [transformAnim, setTransformAnim] = React.useState<TransformAnim | null>(null);
-  const transformAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const triggerTransformAnim = React.useCallback((
-    sq: Sq,
-    direction: 'up' | 'down',
-    fromType: PieceType,
-    toType: PieceType,
-    color: PieceColor,
-  ) => {
-    if (transformAnimTimerRef.current) clearTimeout(transformAnimTimerRef.current);
-    setTransformAnim({ sq, direction, fromType, toType, color, startTime: performance.now() });
-    transformAnimTimerRef.current = setTimeout(() => setTransformAnim(null), 1600);
-  }, []);
-
-  // ── Sniper animation state ──────────────────────────────────────────────────
-  const [sniperAnim, setSniperAnim]     = React.useState<SniperAnim | null>(null);
-  const sniperAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [teleportAnim, setTeleportAnim]   = React.useState<TeleportAnim | null>(null);
-  const teleportAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [jumpAnim, setJumpAnim] = React.useState<JumpAnim | null>(null);
-  const jumpAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [sacrificeAnim, setSacrificeAnim] = React.useState<SacrificeAnim | null>(null);
-  const sacrificeAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const triggerSacrificeAnim = React.useCallback((squares: { row: number; col: number }[]) => {
-    if (sacrificeAnimTimerRef.current) clearTimeout(sacrificeAnimTimerRef.current);
-    setSacrificeAnim({ squares, startTime: performance.now() });
-    sacrificeAnimTimerRef.current = setTimeout(() => setSacrificeAnim(null), 1700);
-  }, []);
-
-  const [mindControlAnim, setMindControlAnim] = React.useState<MindControlAnim | null>(null);
-  const mindControlAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const triggerMindControlAnim = React.useCallback((
-    targetSq: import('../types').Sq,
-    playerColor: import('../types').PieceColor,
-    pieceType: import('../types').PieceType,
-  ) => {
-    if (mindControlAnimTimerRef.current) clearTimeout(mindControlAnimTimerRef.current);
-    setMindControlAnim({ targetSq, playerColor, pieceType, startTime: performance.now() });
-    mindControlAnimTimerRef.current = setTimeout(() => setMindControlAnim(null), 2100);
-  }, []);
-
-  const [fuseAnim, setFuseAnim] = React.useState<FuseAnim | null>(null);
-  const fuseAnimTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const triggerFuseAnim = React.useCallback((params: Omit<FuseAnim, 'startTime'>) => {
-    if (fuseAnimTimerRef.current) clearTimeout(fuseAnimTimerRef.current);
-    setFuseAnim({ ...params, startTime: performance.now() });
-    fuseAnimTimerRef.current = setTimeout(() => setFuseAnim(null), 1900);
-  }, []);
-
-  const triggerJumpAnim = React.useCallback((
-    fromSq: Sq,
-    toSq: Sq,
-    pieceType: import('../types').PieceType,
-    pieceColor: import('../types').PieceColor,
-    captured: boolean,
-  ) => {
-    if (jumpAnimTimerRef.current) clearTimeout(jumpAnimTimerRef.current);
-    setJumpAnim({ fromSq, toSq, pieceType, pieceColor, captured, startTime: performance.now() });
-    jumpAnimTimerRef.current = setTimeout(() => setJumpAnim(null), 1200);
-  }, []);
-
-  const triggerSniperAnim = React.useCallback((
-    sq: Sq, pieceType: PieceType, pieceColor: PieceColor, variant: 'sniper' | 'badsniper'
-  ) => {
-    if (sniperAnimTimerRef.current) clearTimeout(sniperAnimTimerRef.current);
-    setSniperAnim({ sq, pieceType, pieceColor, variant, startTime: performance.now() });
-    sniperAnimTimerRef.current = setTimeout(() => setSniperAnim(null), 1200);
-  }, []);
-
-  const triggerTeleportAnim = React.useCallback((
-    fromSq: { row: number; col: number },
-    toSq: { row: number; col: number },
-    pieceType: import('../types').PieceType,
-    pieceColor: import('../types').PieceColor,
-  ) => {
-    if (teleportAnimTimerRef.current) clearTimeout(teleportAnimTimerRef.current);
-    setTeleportAnim({ fromSq, toSq, pieceType, pieceColor, startTime: performance.now() });
-    teleportAnimTimerRef.current = setTimeout(() => setTeleportAnim(null), 1400);
-  }, []);
-
-  React.useEffect(() => {
-    return () => {
-      if (swapAnimTimerRef.current) clearTimeout(swapAnimTimerRef.current);
-      if (transformAnimTimerRef.current) clearTimeout(transformAnimTimerRef.current);
-      if (sniperAnimTimerRef.current) clearTimeout(sniperAnimTimerRef.current);
-      if (teleportAnimTimerRef.current) clearTimeout(teleportAnimTimerRef.current);
-      if (jumpAnimTimerRef.current) clearTimeout(jumpAnimTimerRef.current);
-      if (sacrificeAnimTimerRef.current) clearTimeout(sacrificeAnimTimerRef.current);
-      if (mindControlAnimTimerRef.current) clearTimeout(mindControlAnimTimerRef.current);
-      if (fuseAnimTimerRef.current) clearTimeout(fuseAnimTimerRef.current);
-      if (cardMsgTimerRef.current) clearTimeout(cardMsgTimerRef.current);
-    };
-  }, []);
+  const {
+    cardAnim, setCardAnim,
+    cardAnimLbl, setCardAnimLbl,
+    fireCardAnim,
+    bombPieces, setBombPieces,
+    bombExploding, setBombExploding,
+    bombPiecesRef,
+    swapAnim, setSwapAnim,
+    swapAnimTimerRef,
+    triggerSwapAnim,
+    transformAnim, setTransformAnim,
+    transformAnimTimerRef,
+    triggerTransformAnim,
+    sniperAnim, setSniperAnim,
+    sniperAnimTimerRef,
+    teleportAnim, setTeleportAnim,
+    teleportAnimTimerRef,
+    jumpAnim, setJumpAnim,
+    jumpAnimTimerRef,
+    sacrificeAnim, setSacrificeAnim,
+    sacrificeAnimTimerRef,
+    triggerSacrificeAnim,
+    mindControlAnim, setMindControlAnim,
+    mindControlAnimTimerRef,
+    triggerMindControlAnim,
+    fuseAnim, setFuseAnim,
+    fuseAnimTimerRef,
+    triggerFuseAnim,
+    triggerJumpAnim,
+    triggerSniperAnim,
+    triggerTeleportAnim,
+  } = useMatchAnimations();
 
   const pendingCardUseRef = React.useRef<Set<string>>(new Set());
   const cardUsedByRef     = React.useRef<{ white: boolean; black: boolean }>({ white: false, black: false });
   const cardMsgTimerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => {
+    return () => {
+      if (cardMsgTimerRef.current) clearTimeout(cardMsgTimerRef.current);
+    };
+  }, []);
 
   const resetCardUsed = React.useCallback((nextTurn: PieceColor) => {
     cardUsedByRef.current = { ...cardUsedByRef.current, [nextTurn]: false };
@@ -590,617 +462,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const chatRef = React.useRef<HTMLDivElement>(null);
 
 
-  const whiteProfileRef = React.useRef<GuestProfile | null>(null);
-  const blackProfileRef = React.useRef<GuestProfile | null>(null);
-  const viewerSeatRef = React.useRef<PieceColor | null>(null);
-  const guestSessionSecretsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
-  const authoritativeSeatIdsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
-  const authoritativeSeatSecretsRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
-  const authoritativeClaimExpiresAtRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
-  const authoritativeClaimTokensRef = React.useRef<{ white: string | null; black: string | null }>({ white: null, black: null });
-  const [intentInFlight, setIntentInFlight] = React.useState(false);
-  const gatewayRecoveredMatchIdRef = React.useRef<string | null>(null);
-  const gatewayBootstrapClaimsRef = React.useRef<{
-    matchId: string | null;
-    whiteSecret: string | null;
-    blackSecret: string | null;
-    whiteToken: string | null;
-    blackToken: string | null;
-    whiteExpiresAt: string | null;
-    blackExpiresAt: string | null;
-  }>({
-    matchId: null,
-    whiteSecret: null,
-    blackSecret: null,
-    whiteToken: null,
-    blackToken: null,
-    whiteExpiresAt: null,
-    blackExpiresAt: null,
-  });
-
-  const applyGatewayGuestSessions = React.useCallback((guestSessions?: {
-    white?: { guest: GuestProfile; sessionSecret: string; sessionToken?: string; expiresAt?: string };
-    black?: { guest: GuestProfile; sessionSecret: string; sessionToken?: string; expiresAt?: string };
-  }) => {
-    if (guestSessions?.white) {
-      guestSessionSecretsRef.current.white = guestSessions.white.sessionSecret;
-      writeStoredGuestIdentity('white', guestSessions.white.guest.guestId, guestSessions.white.sessionSecret, {
-        sessionToken: guestSessions.white.sessionToken ?? null,
-        sessionExpiresAt: guestSessions.white.expiresAt ?? null,
-      });
-      setWhiteProfile(guestSessions.white.guest);
-    }
-    if (guestSessions?.black) {
-      if (hostedRuntime) {
-        setBlackProfile((current: any) => current ?? guestSessions.black?.guest ?? null);
-      } else {
-        guestSessionSecretsRef.current.black = guestSessions.black.sessionSecret;
-        writeStoredGuestIdentity('black', guestSessions.black.guest.guestId, guestSessions.black.sessionSecret, {
-          sessionToken: guestSessions.black.sessionToken ?? null,
-          sessionExpiresAt: guestSessions.black.expiresAt ?? null,
-        });
-        setBlackProfile(guestSessions.black.guest);
-      }
-    }
-  }, [hostedRuntime]);
-
-  const applyGatewayAccountSessions = React.useCallback((accountSessions?: {
-    white?: { account: { accountId: string }; sessionToken: string; expiresAt?: string };
-    black?: { account: { accountId: string }; sessionToken: string; expiresAt?: string };
-  }) => {
-    if (accountSessions?.white) {
-      writeStoredAccountIdentity('white', accountSessions.white.account, {
-        sessionToken: accountSessions.white.sessionToken,
-        expiresAt: accountSessions.white.expiresAt ?? null,
-      });
-      setShellAccountNotice('');
-      syncPrimaryAccountIdentity();
-    }
-    if (accountSessions?.black) {
-      if (!hostedRuntime) {
-        writeStoredAccountIdentity('black', accountSessions.black.account, {
-          sessionToken: accountSessions.black.sessionToken,
-          expiresAt: accountSessions.black.expiresAt ?? null,
-        });
-      }
-    }
-  }, [hostedRuntime, syncPrimaryAccountIdentity]);
-
-  const buildGatewayBootstrapRequest = React.useCallback((matchId?: string | null) => ({
-    matchId: matchId ?? undefined,
-    white: readStoredGuestIdentity('white'),
-    black: readStoredGuestIdentity('black'),
-    whiteAccount: readStoredAccountIdentity('white'),
-    blackAccount: readStoredAccountIdentity('black'),
-  }), []);
-
-  const applyGatewayMatchClaims = React.useCallback((matchId: string | null | undefined, matchClaims?: {
-    white?: MatchSeatClaim;
-    black?: MatchSeatClaim;
-  } | null) => {
-    if (!matchId || !matchClaims) {
-      return;
-    }
-
-    const storedRoomMeta = readStoredRoomMeta(matchId);
-    const whiteClaim = [matchClaims.white, matchClaims.black].find(claim => claim?.seatColor === 'white');
-    const blackClaim = [matchClaims.white, matchClaims.black].find(claim => claim?.seatColor === 'black');
-    const whiteIdentity = readStoredGuestIdentity('white');
-    const blackIdentity = readStoredGuestIdentity('black');
-    const ownedClaim =
-      (whiteClaim && whiteClaim.guestId === whiteIdentity.guestId ? whiteClaim : null) ??
-      (blackClaim && blackClaim.guestId === blackIdentity.guestId ? blackClaim : null) ??
-      whiteClaim ?? blackClaim ?? null;
-    const isCurrentMatch = authoritativeMatchIdRef.current === matchId;
-    const currentBootstrapClaims = gatewayBootstrapClaimsRef.current.matchId === matchId
-      ? gatewayBootstrapClaimsRef.current
-      : null;
-
-    const nextWhiteSecret =
-      whiteClaim?.playerSecret ??
-      storedRoomMeta?.whitePlayerSecret ??
-      currentBootstrapClaims?.whiteSecret ??
-      (isCurrentMatch ? authoritativeSeatSecretsRef.current.white : null);
-    const nextBlackSecret =
-      blackClaim?.playerSecret ??
-      storedRoomMeta?.blackPlayerSecret ??
-      currentBootstrapClaims?.blackSecret ??
-      (isCurrentMatch ? authoritativeSeatSecretsRef.current.black : null);
-    const nextWhiteToken =
-      whiteClaim?.claimToken ??
-      storedRoomMeta?.whiteClaimToken ??
-      currentBootstrapClaims?.whiteToken ??
-      (isCurrentMatch ? authoritativeClaimTokensRef.current.white : null);
-    const nextBlackToken =
-      blackClaim?.claimToken ??
-      storedRoomMeta?.blackClaimToken ??
-      currentBootstrapClaims?.blackToken ??
-      (isCurrentMatch ? authoritativeClaimTokensRef.current.black : null);
-    const nextWhiteExpiresAt =
-      whiteClaim?.expiresAt ??
-      storedRoomMeta?.whiteClaimExpiresAt ??
-      currentBootstrapClaims?.whiteExpiresAt ??
-      (isCurrentMatch ? authoritativeClaimExpiresAtRef.current.white : null);
-    const nextBlackExpiresAt =
-      blackClaim?.expiresAt ??
-      storedRoomMeta?.blackClaimExpiresAt ??
-      currentBootstrapClaims?.blackExpiresAt ??
-      (isCurrentMatch ? authoritativeClaimExpiresAtRef.current.black : null);
-
-    authoritativeSeatSecretsRef.current = {
-      white: nextWhiteSecret ?? null,
-      black: nextBlackSecret ?? null,
-    };
-    authoritativeClaimTokensRef.current = {
-      white: nextWhiteToken ?? null,
-      black: nextBlackToken ?? null,
-    };
-    authoritativeClaimExpiresAtRef.current = {
-      white: nextWhiteExpiresAt ?? null,
-      black: nextBlackExpiresAt ?? null,
-    };
-    gatewayBootstrapClaimsRef.current = {
-      matchId,
-      whiteSecret: nextWhiteSecret ?? null,
-      blackSecret: nextBlackSecret ?? null,
-      whiteToken: nextWhiteToken ?? null,
-      blackToken: nextBlackToken ?? null,
-      whiteExpiresAt: nextWhiteExpiresAt ?? null,
-      blackExpiresAt: nextBlackExpiresAt ?? null,
-    };
-    if (ownedClaim?.seatColor) {
-      setViewerSeat(ownedClaim.seatColor);
-    }
-
-    const nextRoomMeta: StoredRoomMeta = {
-      ...storedRoomMeta,
-      viewerSeat: ownedClaim?.seatColor ?? storedRoomMeta?.viewerSeat ?? null,
-    };
-
-    if (!hostedRuntime || (ownedClaim?.seatColor ?? storedRoomMeta?.viewerSeat) === 'white') {
-      nextRoomMeta.whitePlayerSecret = nextWhiteSecret ?? storedRoomMeta?.whitePlayerSecret;
-      nextRoomMeta.whiteClaimToken = nextWhiteToken ?? storedRoomMeta?.whiteClaimToken;
-      nextRoomMeta.whiteClaimExpiresAt = nextWhiteExpiresAt ?? storedRoomMeta?.whiteClaimExpiresAt;
-    } else {
-      delete nextRoomMeta.whitePlayerSecret;
-      delete nextRoomMeta.whiteClaimToken;
-      delete nextRoomMeta.whiteClaimExpiresAt;
-    }
-
-    if (!hostedRuntime || (ownedClaim?.seatColor ?? storedRoomMeta?.viewerSeat) === 'black') {
-      nextRoomMeta.blackPlayerSecret = nextBlackSecret ?? storedRoomMeta?.blackPlayerSecret;
-      nextRoomMeta.blackClaimToken = nextBlackToken ?? storedRoomMeta?.blackClaimToken;
-      nextRoomMeta.blackClaimExpiresAt = nextBlackExpiresAt ?? storedRoomMeta?.blackClaimExpiresAt;
-    } else {
-      delete nextRoomMeta.blackPlayerSecret;
-      delete nextRoomMeta.blackClaimToken;
-      delete nextRoomMeta.blackClaimExpiresAt;
-    }
-
-    writeStoredRoomMeta(matchId, nextRoomMeta);
-  }, [hostedRuntime]);
-
-  const applyGatewayRecoveredMatch = React.useCallback((input?: {
-    matchId: string;
-    queue?: string;
-    modeId?: MatchModeId;
-    viewerSeat?: PieceColor | null;
-    whiteGuestId?: string;
-    blackGuestId?: string;
-    whiteName?: string;
-    blackName?: string;
-    claims?: {
-      white?: MatchSeatClaim;
-      black?: MatchSeatClaim;
-    };
-  } | null) => {
-    if (!input?.matchId) {
-      return;
-    }
-
-    const storedRoomMeta = readStoredRoomMeta(input.matchId);
-    const nextRoomMeta: StoredRoomMeta = {
-      ...storedRoomMeta,
-      queue: input.queue === 'rated' || input.queue === 'casual' || input.queue === 'direct'
-        ? input.queue
-        : storedRoomMeta?.queue,
-      modeId: input.modeId ?? storedRoomMeta?.modeId ?? DEFAULT_MATCH_MODE_ID,
-      viewerSeat: input.viewerSeat ?? storedRoomMeta?.viewerSeat ?? null,
-      whiteGuestId: input.whiteGuestId ?? storedRoomMeta?.whiteGuestId,
-      blackGuestId: input.blackGuestId ?? storedRoomMeta?.blackGuestId,
-      whiteName: input.whiteName ?? storedRoomMeta?.whiteName,
-      blackName: input.blackName ?? storedRoomMeta?.blackName,
-    };
-
-    writeStoredActiveMatchId(input.matchId);
-    writeStoredRoomMeta(input.matchId, nextRoomMeta);
-    gatewayRecoveredMatchIdRef.current = input.matchId;
-    if (input.viewerSeat) {
-      setViewerSeat(input.viewerSeat);
-    }
-    if (input.claims) {
-      applyGatewayMatchClaims(input.matchId, input.claims);
-    }
-  }, [applyGatewayMatchClaims]);
-
-  const applyGatewayQueueRecovery = React.useCallback((input: {
-    queueTickets?: {
-      white?: QueueTicket;
-      black?: QueueTicket;
-    };
-    recoveredMatch?: {
-      matchId: string;
-      queue?: string;
-      modeId?: MatchModeId;
-      viewerSeat?: PieceColor | null;
-      whiteGuestId?: string;
-      blackGuestId?: string;
-      whiteName?: string;
-      blackName?: string;
-      claims?: {
-        white?: MatchSeatClaim;
-        black?: MatchSeatClaim;
-      };
-    } | null;
-  } | undefined, options: { hosted: boolean; requestedMatchId?: string | null }) => {
-    if (!input) {
-      return;
-    }
-
-    if (input.recoveredMatch?.matchId) {
-      applyGatewayRecoveredMatch(input.recoveredMatch);
-      return;
-    }
-
-    if (options.hosted && !options.requestedMatchId) {
-      gatewayRecoveredMatchIdRef.current = null;
-      writeStoredActiveMatchId(null);
-    }
-  }, [applyGatewayRecoveredMatch, setBootstrapQueueRecovery]);
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const hostname = window.location.hostname.toLowerCase();
-    const nextHosted = hostname !== 'localhost' && hostname !== '127.0.0.1';
-    setHostedRuntime(nextHosted);
-    if (nextHosted) {
-      setActivePage((current: any) => {
-        if (current !== 'Play') {
-          return current;
-        }
-        const identity = readStoredAccountIdentity('white');
-        return identity.accountId && identity.sessionToken ? 'Play' : 'Account';
-      });
-    }
-  }, []);
-
-  React.useEffect(() => {
-    if (!hostedRuntime) {
-      return;
-    }
-    clearStoredGuestIdentity('black');
-    clearStoredAccountIdentity('black');
-    guestSessionSecretsRef.current.black = null;
-    authoritativeSeatSecretsRef.current.black = null;
-    authoritativeClaimTokensRef.current.black = null;
-    authoritativeClaimExpiresAtRef.current.black = null;
-    setBlackProfile(null);
-  }, [hostedRuntime]);
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    let cancelled = false;
-
-    const emitRefresh = () => {
-      if (cancelled || document.visibilityState === 'hidden') {
-        return;
-      }
-      pulseSocialLive();
-    };
-
-    const handleWake = () => {
-      if (document.visibilityState === 'visible') {
-        emitRefresh();
-      }
-    };
-
-    emitRefresh();
-    const intervalId = window.setInterval(() => {
-      emitRefresh();
-    }, activePage === 'Friends' || activePage === 'Inbox' ? 15_000 : 45_000);
-
-    window.addEventListener('focus', handleWake);
-    document.addEventListener('visibilitychange', handleWake);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', handleWake);
-      document.removeEventListener('visibilitychange', handleWake);
-    };
-  }, [activePage, pulseSocialLive]);
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!primaryAccountIdentity.accountId || !primaryAccountIdentity.sessionToken) {
-      return;
-    }
-
-    return connectAccountNotificationStream({
-      accountId: primaryAccountIdentity.accountId,
-      sessionToken: primaryAccountIdentity.sessionToken,
-      onEvent: () => {
-        pulseSocialLive();
-      },
-    });
-  }, [primaryAccountIdentity.accountId, primaryAccountIdentity.sessionToken, pulseSocialLive]);
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    let cancelled = false;
-    let heartbeatInFlight = false;
-
-    const sendPresenceHeartbeat = async () => {
-      if (cancelled || heartbeatInFlight || document.visibilityState === 'hidden') {
-        return;
-      }
-      const identity = readStoredAccountIdentity('white');
-      if (!identity.accountId || !identity.sessionToken) {
-        return;
-      }
-
-      heartbeatInFlight = true;
-      try {
-        const session = await touchAccountPresence({
-          accountId: identity.accountId,
-          sessionToken: identity.sessionToken,
-        });
-        if (cancelled) {
-          return;
-        }
-        writeStoredAccountIdentity('white', session.account, {
-          sessionToken: session.sessionToken,
-          expiresAt: session.expiresAt,
-        });
-        syncPrimaryAccountIdentity();
-      } catch (err) {
-        if (isAccountRestrictionError(err)) {
-          clearPrimaryAccountRestriction(formatAccountRestrictionNotice(err.restriction));
-        }
-      } finally {
-        heartbeatInFlight = false;
-      }
-    };
-
-    const handleWake = () => {
-      void sendPresenceHeartbeat();
-    };
-
-    void sendPresenceHeartbeat();
-    const intervalId = window.setInterval(() => {
-      void sendPresenceHeartbeat();
-    }, 45_000);
-    window.addEventListener('focus', handleWake);
-    document.addEventListener('visibilitychange', handleWake);
-
-    return () => {
-      cancelled = true;
-      heartbeatInFlight = false;
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', handleWake);
-      document.removeEventListener('visibilitychange', handleWake);
-    };
-  }, [clearPrimaryAccountRestriction, syncPrimaryAccountIdentity]);
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    let cancelled = false;
-
-    const refreshSocialSignals = async () => {
-      if (cancelled || document.visibilityState === 'hidden') {
-        return;
-      }
-      const identity = readStoredAccountIdentity('white');
-      if (!identity.accountId || !identity.sessionToken) {
-        setFriendsAttentionCount(0);
-        setInboxUnreadCount(0);
-        setSocialAlert(null);
-        return;
-      }
-
-      try {
-        const [notificationOverview, friendOverview, challengeOverview]: [
-          Awaited<ReturnType<typeof fetchAccountNotificationOverview>>,
-          FriendOverview,
-          DirectChallengeOverview,
-        ] = await Promise.all([
-          fetchAccountNotificationOverview({
-            accountId: identity.accountId,
-            sessionToken: identity.sessionToken,
-            limit: 12,
-          }),
-          fetchFriendOverview({
-            accountId: identity.accountId,
-            sessionToken: identity.sessionToken,
-          }),
-          fetchDirectChallengeOverview({
-            accountId: identity.accountId,
-            sessionToken: identity.sessionToken,
-          }),
-        ]);
-        if (!cancelled) {
-          setInboxUnreadCount(notificationOverview.unreadCount);
-          setFriendsAttentionCount(friendOverview.incoming.length + challengeOverview.incoming.length);
-          const nextAlert = notificationOverview.notifications
-            .filter((notification) => !notification.readAt)
-            .map(buildSocialAlert)
-            .find((candidate) => {
-              if (!candidate) {
-                return false;
-              }
-              if (dismissedSocialAlertIdsRef.current.has(candidate.id)) {
-                return false;
-              }
-              if (candidate.action === 'match' && candidate.matchId && candidate.matchId === authoritativeMatchIdRef.current) {
-                return false;
-              }
-              return true;
-            }) ?? null;
-          setSocialAlert(nextAlert);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setFriendsAttentionCount(0);
-          setInboxUnreadCount(0);
-          setSocialAlert(null);
-          if (isAccountRestrictionError(err)) {
-            clearPrimaryAccountRestriction(formatAccountRestrictionNotice(err.restriction));
-          }
-        }
-      }
-    };
-
-    void refreshSocialSignals();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [clearPrimaryAccountRestriction, socialLiveToken]);
-
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const hostname = window.location.hostname.toLowerCase();
-    const nextHosted = hostname !== 'localhost' && hostname !== '127.0.0.1';
-    const pathMatch = window.location.pathname.match(/^\/match\/([^/]+)$/);
-    const requestedPathMatchId = pathMatch?.[1] ? decodeURIComponent(pathMatch[1]) : null;
-    const query = new URLSearchParams(window.location.search);
-    const requestedMatchId = requestedPathMatchId ?? query.get('match');
-    const requestedReplayMatchId = query.get('replay');
-    const requestedGuestId = query.get('guest');
-    const requestedProfileHandle = query.get('profile');
-    const requestedAuthAction = query.get('auth');
-    const requestedAuthToken = query.get('token');
-    const requestedAuthLink =
-      (requestedAuthAction === 'verify-email' || requestedAuthAction === 'reset-password') &&
-      (requestedAuthToken?.trim() ?? '') !== '';
-    setAccountActionQueryDetected(requestedAuthLink);
-    requestedMatchIdRef.current = requestedMatchId ?? (nextHosted ? null : readStoredActiveMatchId());
-    if (requestedAuthLink) {
-      setActivePage('Account');
-    } else if (requestedMatchId?.trim()) {
-      setActivePage(nextHosted || requestedPathMatchId ? 'Match' : 'Play');
-    } else if (!requestedMatchId && ((requestedReplayMatchId?.trim() ?? '') || (requestedGuestId?.trim() ?? ''))) {
-      setHistoryFocusMatchId(requestedReplayMatchId?.trim() ? requestedReplayMatchId.trim() : null);
-      setHistoryFocusGuestId(requestedGuestId?.trim() ? requestedGuestId.trim() : null);
-      setActivePage('History');
-    } else if (!requestedMatchId && requestedProfileHandle?.trim()) {
-      setProfileFocusHandle(requestedProfileHandle.trim().toLowerCase());
-      setActivePage('Profiles');
-    }
-    setProfileQueryReady(true);
-    setHistoryQueryReady(true);
-    setMatchQueryReady(true);
-
-    let cancelled = false;
-
-    void fetchGatewayBootstrap({
-      matchId: requestedMatchIdRef.current ?? undefined,
-      white: readStoredGuestIdentity('white'),
-      black: readStoredGuestIdentity('black'),
-      whiteAccount: readStoredAccountIdentity('white'),
-      blackAccount: readStoredAccountIdentity('black'),
-    })
-      .then(bootstrap => {
-        if (cancelled) return;
-        const bootstrapRestriction = parseAccountRestrictionMessage(bootstrap.accountErrors?.white);
-        if (nextHosted && bootstrapRestriction) {
-          clearPrimaryAccountRestriction(formatAccountRestrictionNotice(bootstrapRestriction));
-          return;
-        }
-        applyGatewayGuestSessions(bootstrap.guestSessions);
-        applyGatewayMatchClaims(bootstrap.requestedMatchId ?? requestedMatchIdRef.current, bootstrap.matchClaims);
-        applyGatewayAccountSessions(bootstrap.accountSessions);
-        applyGatewayQueueRecovery({
-          queueTickets: bootstrap.queueTickets,
-          recoveredMatch: bootstrap.recoveredMatch ?? null,
-        }, {
-          hosted: nextHosted,
-          requestedMatchId: requestedMatchIdRef.current,
-        });
-      })
-      .catch(() => {
-        // Keep fallback labels if the platform or gateway service is unavailable.
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setGuestProfilesReady(true);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, applyGatewayQueueRecovery, clearPrimaryAccountRestriction]);
-
-  React.useEffect(() => {
-    whiteProfileRef.current = whiteProfile;
-  }, [whiteProfile]);
-
-  React.useEffect(() => {
-    blackProfileRef.current = blackProfile;
-  }, [blackProfile]);
-
-  React.useEffect(() => {
-    viewerSeatRef.current = viewerSeat;
-  }, [viewerSeat]);
-
-  React.useEffect(() => {
-    if (!guestProfilesReady) return;
-
-    let cancelled = false;
-
-    const ensureGuestSeat = async (side: 'white' | 'black') => {
-      const stored = readStoredGuestIdentity(side);
-      const session = await createGuestSession({
-        guestId: stored.guestId,
-        sessionSecret: stored.sessionSecret,
-        sessionToken: stored.sessionToken,
-      });
-      if (cancelled) return;
-      guestSessionSecretsRef.current[side] = session.sessionSecret;
-      writeStoredGuestIdentity(side, session.guest.guestId, session.sessionSecret, {
-        sessionToken: session.sessionToken ?? null,
-        sessionExpiresAt: session.expiresAt ?? null,
-      });
-      if (side === 'white') {
-        setWhiteProfile(session.guest);
-      } else {
-        setBlackProfile(session.guest);
-      }
-    };
-
-    const tasks: Promise<void>[] = [];
-    if (!whiteProfile) {
-      tasks.push(ensureGuestSeat('white'));
-    }
-    if (!hostedRuntime && !blackProfile) {
-      tasks.push(ensureGuestSeat('black'));
-    }
-    if (tasks.length === 0) {
-      return;
-    }
-    void Promise.all(tasks).catch(() => {
-      // Keep the UI usable; queue page will surface join failures if platform calls still fail.
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [guestProfilesReady, hostedRuntime, whiteProfile, blackProfile]);
-
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
     const matchId = authoritativeMatchIdRef.current;
@@ -1223,6 +484,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     timeB, setTimeB,
     clockActive, setClockActive,
     tickingState, tickingRef, setTicking, setTickingState,
+    freezeUntilSnapshot, setFreezeUntilSnapshot,
     abortCountdown, setAbortCountdown,
     abortActive, setAbortActive,
     startAbortCountdown, stopAbortCountdown, resetTimer,
@@ -1241,6 +503,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
       setOver(true);
     },
   });
+  React.useEffect(() => { stopAbortRef.current = stopAbortCountdown; });
 
   const [authoritativeMatchId, setAuthoritativeMatchId] = React.useState<string | null>(null);
   const allSyncReady = profileQueryReady && historyQueryReady && matchQueryReady;
@@ -1259,61 +522,55 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const [authoritativeBlackConnected, setAuthoritativeBlackConnected] = React.useState(false);
   const [authoritativeDisconnectGraceFor, setAuthoritativeDisconnectGraceFor] = React.useState<PieceColor | null>(null);
   const [authoritativeDisconnectGraceDeadline, setAuthoritativeDisconnectGraceDeadline] = React.useState<string | null>(null);
-  const createAuthoritativeRematchRoom = React.useCallback(async () => {
-    if (!authoritativeMatchId) {
-      return;
-    }
-    const roomMeta = readStoredRoomMeta(authoritativeMatchId);
-    if (roomMeta?.queue !== 'direct') {
-      return;
-    }
-    const guestIdentity = readStoredGuestIdentity('white');
-    if (!guestIdentity.guestId) {
-      setMatchDestinationNotice('Hosted player session is still loading, so rematch room creation is not ready yet.');
-      return;
-    }
 
-    setAuthoritativeRematchBusy(true);
-    setMatchDestinationNotice('');
-    try {
-      const result = await rematchPrivateMatch({
-        matchId: authoritativeMatchId,
-        identity: {
-          guestId: guestIdentity.guestId,
-          sessionSecret: guestIdentity.sessionSecret,
-          sessionToken: guestIdentity.sessionToken,
-          accountId: primaryAccountIdentity.accountId,
-          accountSessionToken: primaryAccountIdentity.sessionToken,
-        },
-        clockSeconds: roomMeta?.clockSeconds ?? 600,
-      });
-      writeStoredRoomMeta(result.matchId, {
-        queue: 'direct',
-        modeId: result.snapshot.match.modeId ?? roomMeta?.modeId,
-        clockSeconds: roomMeta?.clockSeconds ?? 600,
-        viewerSeat: result.seatColor,
-        whiteGuestId: result.snapshot.match.whiteGuestId,
-        blackGuestId: result.snapshot.match.blackGuestId,
-        whiteAccountId: result.snapshot.match.whiteAccountId,
-        blackAccountId: result.snapshot.match.blackAccountId,
-        whiteName: result.snapshot.match.whiteName,
-        blackName: result.snapshot.match.blackName,
-        whitePlayerSecret: result.seatColor === 'white' ? result.claim?.playerSecret : undefined,
-        blackPlayerSecret: result.seatColor === 'black' ? result.claim?.playerSecret : undefined,
-        whiteClaimToken: result.seatColor === 'white' ? result.claim?.claimToken : undefined,
-        blackClaimToken: result.seatColor === 'black' ? result.claim?.claimToken : undefined,
-        whiteClaimExpiresAt: result.seatColor === 'white' ? result.claim?.expiresAt : undefined,
-        blackClaimExpiresAt: result.seatColor === 'black' ? result.claim?.expiresAt : undefined,
-      });
-      writeStoredActiveMatchId(result.matchId);
-      setMatchDestinationNotice('Rematch room created. Opening it now...');
-      openLiveMatch(result.matchId);
-    } catch (err) {
-      setMatchDestinationNotice(err instanceof Error ? err.message : 'Failed to create private rematch room.');
-    } finally {
-      setAuthoritativeRematchBusy(false);
-    }
-  }, [authoritativeMatchId, openLiveMatch, primaryAccountIdentity.accountId, primaryAccountIdentity.sessionToken]);
+  // Refs for late-bound callbacks used by useMatchConnection
+  const onSnapshotRef = React.useRef<((snapshot: MatchSnapshotMessage) => void) | null>(null);
+  const stopAbortRef = React.useRef<((manual?: boolean) => void) | null>(null);
+  const actorForColorRef = React.useRef<((color: PieceColor) => {
+    playerId: string;
+    playerSecret?: string;
+    playerClaimToken?: string;
+  }) | null>(null);
+
+  const matchConnection = useMatchConnection({
+    sets: {
+      setAuthoritativeMatchId,
+      setAuthoritativeLive,
+      setStreamDisconnected,
+      setAuthoritativeStatus,
+      setAuthoritativeWhiteConnected,
+      setAuthoritativeBlackConnected,
+      setAuthoritativeDisconnectGraceFor,
+      setAuthoritativeDisconnectGraceDeadline,
+      setViewerSeat,
+      setMatchSeatMeta,
+      setCardMsg,
+      setAuthoritativeRematchBusy,
+      setMatchDestinationNotice,
+      setActivePage,
+    },
+    authoritativeMatchIdRef,
+    authoritativeClaimTokensRef,
+    authoritativeClaimExpiresAtRef,
+    hostedRuntime,
+    viewerSeat,
+    over,
+    primaryAccountIdentity,
+    openLiveMatch,
+    buildGatewayBootstrapRequest,
+    applyGatewayGuestSessions,
+    applyGatewayMatchClaims,
+    applyGatewayAccountSessions,
+    onSnapshot: (snapshot) => onSnapshotRef.current?.(snapshot),
+    stopAbortCountdown: (manual) => stopAbortRef.current?.(manual),
+    authoritativeActorForColor: (color) => actorForColorRef.current!(color),
+  });
+  const {
+    manualRetryRef,
+    createAuthoritativeRematchRoom,
+    onStreamReconnect,
+  } = matchConnection;
+
   const [cheaterTurnsLeft, setCheaterTurnsLeft] = React.useState(0);
   const [cheaterColor,     setCheaterColor]     = React.useState<PieceColor | null>(null);
   const cheaterColorRef = React.useRef<PieceColor | null>(null);
@@ -1364,27 +621,8 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
 
 
-  const boardRef   = React.useRef(board);
   const lavaSquaresRef = React.useRef(lavaSquares);
-  const turnRef    = React.useRef(turn);
-  const movedRef   = React.useRef(moved);
-  const lmRef      = React.useRef(lm);
-  const hmcRef     = React.useRef(hmc);
-  const fmnRef     = React.useRef(fmn);
-  const posHistRef = React.useRef(posHist);
-  const overRef    = React.useRef(over);
-  const premoveRef = React.useRef<{ from: Sq; to: Sq } | null>(null);
-
-  React.useEffect(() => { boardRef.current      = board;      }, [board]);
   React.useEffect(() => { lavaSquaresRef.current = lavaSquares; }, [lavaSquares]);
-  React.useEffect(() => { turnRef.current       = turn;       }, [turn]);
-  React.useEffect(() => { movedRef.current      = moved;      }, [moved]);
-  React.useEffect(() => { lmRef.current         = lm;         }, [lm]);
-  React.useEffect(() => { hmcRef.current        = hmc;        }, [hmc]);
-  React.useEffect(() => { fmnRef.current        = fmn;        }, [fmn]);
-  React.useEffect(() => { posHistRef.current    = posHist;    }, [posHist]);
-  React.useEffect(() => { overRef.current       = over;       }, [over]);
-  React.useEffect(() => { premoveRef.current    = premove;    }, [premove]);
 
   const isMountedRef = React.useRef(true);
   React.useEffect(() => {
@@ -1396,9 +634,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
   const gameIdRef = React.useRef(0);
   const [gameKey, setGameKey] = React.useState(0);
-  const authoritativeMatchIdRef = React.useRef<string | null>(null);
   const authoritativeBootstrapRef = React.useRef(0);
-  const requestedMatchIdRef = React.useRef<string | null>(null);
   const finalizedResultRef = React.useRef<string | null>(null);
   const lastAppliedSeqNumRef = React.useRef<number>(0);
 
@@ -1656,8 +892,16 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     setTimeB(Math.max(0, Math.ceil(match.clock.blackMs / 1000)));
     setClockActive(nextClockActive);
     setTicking(nextTicking);
+    setFreezeUntilSnapshot(false);
     finalPositionRef.current = nextOver ? { fen: nextFen, turn: nextTurn } : null;
-  }, [buildMoveRows, buildPendingCardFromSnapshot, setTicking, hostedRuntime]);
+  }, [buildMoveRows, buildPendingCardFromSnapshot, setTicking, setFreezeUntilSnapshot, hostedRuntime]);
+  React.useEffect(() => {
+    if (streamDisconnected) {
+      setFreezeUntilSnapshot(true);
+    }
+  }, [streamDisconnected, setFreezeUntilSnapshot]);
+
+  React.useEffect(() => { onSnapshotRef.current = applyAuthoritativeSnapshot; });
 
   const prevTurnRef = React.useRef<PieceColor>('white');
   const premoveActorRef = React.useRef<(color: PieceColor) => { playerId: string; playerSecret?: string; playerClaimToken?: string }>(() => ({ playerId: '' }));
@@ -2118,6 +1362,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     return playerSecret ? { playerId, playerSecret } : { playerId };
   }, [authoritativePlayerIdForColor, authoritativePlayerSecretForColor, authoritativePlayerClaimTokenForColor, hostedRuntime]);
   premoveActorRef.current = authoritativeActorForColor;
+  React.useEffect(() => { actorForColorRef.current = authoritativeActorForColor; });
 
   // ── NEW: Bomb explosion logic ──────────────────────────────────────────────
   // Called at start of each turn.
@@ -2265,473 +1510,111 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   }, [authoritativeMatchId, hostedRuntime, pathname, setActivePage]);
 
   React.useEffect(() => {
-    if (!authoritativeMatchId) {
-      setAuthoritativeLive(false);
-      setAuthoritativeWhiteConnected(false);
-      setAuthoritativeBlackConnected(false);
-      setAuthoritativeDisconnectGraceFor(null);
-      setAuthoritativeDisconnectGraceDeadline(null);
-      setViewerSeat(null);
-      setMatchSeatMeta(null);
-      return;
-    }
-
-    stopAbortCountdown(true);
-    const streamIdentity = hostedRuntime && viewerSeat ? authoritativeActorForColor(viewerSeat) : null;
-    if (hostedRuntime && viewerSeat && !streamIdentity?.playerSecret && !streamIdentity?.playerClaimToken) {
-      setAuthoritativeLive(false);
-      setStreamDisconnected(true);
-      setCardMsg('Cannot connect: missing player credentials. Try re-entering the match.');
-      return;
-    }
-
-
-    const { disconnect, retry } = connectToMatchStream(authoritativeMatchId, {
-      onSnapshot: (snapshot) => {
-        setCardMsg(prev => prev === STREAM_RECONNECT_MESSAGE ? '' : prev);
-        applyAuthoritativeSnapshot(snapshot);
-      },
-      onStatusChange: (status) => {
-        if (status === 'connected') {
-          setCardMsg(prev => prev === STREAM_RECONNECT_MESSAGE ? '' : prev);
-          setStreamDisconnected(false);
-          return;
-        }
-        if (status === 'reconnecting') {
-          setAuthoritativeLive(false);
-          setStreamDisconnected(false);
-          setCardMsg(STREAM_RECONNECT_MESSAGE);
-        }
-        if (status === 'disconnected') {
-          setAuthoritativeLive(false);
-          setStreamDisconnected(true);
-          setCardMsg('Live match stream lost. Click "Reconnect" to try again.');
-        }
-      },
-      onError: () => {
-        setAuthoritativeLive(false);
-      }
-    }, streamIdentity);
-
-    manualRetryRef.current = retry;
-
-    return () => {
-      disconnect();
-    };
-  }, [authoritativeActorForColor, authoritativeMatchId, applyAuthoritativeSnapshot, hostedRuntime, stopAbortCountdown, viewerSeat]);
-
-  React.useEffect(() => {
-    if (!hostedRuntime || !authoritativeMatchId || !viewerSeat || over) {
-      return;
-    }
-
-    let cancelled = false;
-    const sendHeartbeat = async () => {
-      try {
-        await sendMatchPresenceHeartbeat(authoritativeMatchId, authoritativeActorForColor(viewerSeat));
-        if (!cancelled) {
-          setCardMsg(prev => prev === PRESENCE_RETRY_MESSAGE ? '' : prev);
-        }
-      } catch {
-        if (!cancelled) {
-          setCardMsg(prev => prev || PRESENCE_RETRY_MESSAGE);
-        }
-      }
-    };
-
-    void sendHeartbeat();
-    const interval = window.setInterval(() => {
-      void sendHeartbeat();
-    }, MATCH_PRESENCE_HEARTBEAT_INTERVAL_MS);
-    const handleFocus = () => {
-      void sendHeartbeat();
-    };
-    const handleVisibility = () => {
-      if (!document.hidden) {
-        void sendHeartbeat();
-      }
-    };
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [authoritativeActorForColor, authoritativeMatchId, hostedRuntime, over, viewerSeat]);
-
-  React.useEffect(() => {
-    if (!authoritativeMatchId || over) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      void fetchMatch(authoritativeMatchId).then(snapshot => {
-        applyAuthoritativeSnapshot(snapshot);
-      }).catch(() => {
-        // Keep the current UI state; websocket/errors already handle visible failure paths.
-      });
-    }, 5000);
-
-    return () => window.clearInterval(interval);
-  }, [authoritativeMatchId, over, applyAuthoritativeSnapshot]);
-
-  React.useEffect(() => {
-    if (!authoritativeMatchId || over) {
-      return;
-    }
-
-    let cancelled = false;
-    let refreshInFlight = false;
-
-    const claimNeedsRefresh = (token?: string | null, expiresAt?: string | null): boolean => {
-      if (!token || !expiresAt) {
-        return true;
-      }
-      const expiryMs = Date.parse(expiresAt);
-      if (Number.isNaN(expiryMs)) {
-        return true;
-      }
-      return expiryMs - Date.now() <= CLAIM_REFRESH_LEAD_MS;
-    };
-
-    const maybeRefreshClaims = async () => {
-      if (refreshInFlight) {
-        return;
-      }
-
-      const storedWhite = readStoredGuestIdentity('white');
-      const storedBlack = readStoredGuestIdentity('black');
-      if ((!storedWhite.guestId && !storedWhite.sessionSecret) && (!storedBlack.guestId && !storedBlack.sessionSecret)) {
-        return;
-      }
-
-      const roomMeta = readStoredRoomMeta(authoritativeMatchId);
-      const whiteNeedsRefresh = claimNeedsRefresh(
-        authoritativeClaimTokensRef.current.white ?? roomMeta?.whiteClaimToken,
-        authoritativeClaimExpiresAtRef.current.white ?? roomMeta?.whiteClaimExpiresAt,
-      );
-      const blackNeedsRefresh = claimNeedsRefresh(
-        authoritativeClaimTokensRef.current.black ?? roomMeta?.blackClaimToken,
-        authoritativeClaimExpiresAtRef.current.black ?? roomMeta?.blackClaimExpiresAt,
-      );
-
-      if (!whiteNeedsRefresh && !blackNeedsRefresh) {
-        return;
-      }
-
-      refreshInFlight = true;
-      try {
-        const bootstrap = await fetchGatewayBootstrap(buildGatewayBootstrapRequest(authoritativeMatchId));
-        if (cancelled || authoritativeMatchIdRef.current !== authoritativeMatchId) {
-          return;
-        }
-        applyGatewayGuestSessions(bootstrap.guestSessions);
-        applyGatewayMatchClaims(authoritativeMatchId, bootstrap.matchClaims);
-        applyGatewayAccountSessions(bootstrap.accountSessions);
-      } catch {
-        // Keep the current lease state; the next interval can retry renewal.
-      } finally {
-        refreshInFlight = false;
-      }
-    };
-
-    void maybeRefreshClaims();
-    const interval = window.setInterval(() => {
-      void maybeRefreshClaims();
-    }, CLAIM_REFRESH_CHECK_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [authoritativeMatchId, over, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, buildGatewayBootstrapRequest]);
-
-  const boardStatusLabel = authoritativeMatchId
-    ? authoritativeStatus === 'waiting'
-      ? 'Private Match Waiting Room'
-      : hostedRuntime && !viewerSeat
-        ? (authoritativeLive ? 'Spectating Live Match' : 'Spectator Sync Reconnecting')
-        : (authoritativeLive ? 'Online Match Live' : 'Match Sync Reconnecting')
-    : hostedRuntime
-      ? 'Competitive Match Destination'
-      : 'Local Play Sandbox';
-  const hasPrimaryAccountSession = Boolean((primaryAccountIdentity.accountId ?? '').trim() && (primaryAccountIdentity.sessionToken ?? '').trim());
-  const showSocialNav = hasPrimaryAccountSession || activePage === 'Friends' || activePage === 'Inbox';
-  const showAdminNav = activePage === 'Admin' || activePage === 'Status';
-  const primaryNavItems: ShellNavItem[] = [
-    { key: 'Play', label: 'Play', icon: <PlayIcon /> },
-    { key: 'Watch', label: 'Watch', icon: <WatchIcon /> },
-    { key: 'Rankings', label: 'Rankings', icon: <TrophyIcon /> },
-    { key: 'Profiles', label: 'Profiles', icon: <ProfileIcon /> },
-  ];
-  const utilityGroups: ShellNavGroup[] = [
-    {
-      label: 'Library',
-      items: [
-        { key: 'History', label: 'History', icon: <HistoryIcon /> },
-        { key: 'Cards', label: 'Cards', icon: <CardsIcon /> },
-        { key: 'Community', label: 'Community', icon: <CommunityIcon /> },
-      ],
-    },
-    ...(showSocialNav
-      ? [{
-          label: 'Social',
-          items: [
-            { key: 'Friends', label: 'Friends', icon: <FriendsIcon />, badge: friendsAttentionCount > 0 ? friendsAttentionCount : null },
-            { key: 'Inbox', label: 'Inbox', icon: <InboxIcon />, badge: inboxUnreadCount > 0 ? inboxUnreadCount : null },
-          ],
-        } satisfies ShellNavGroup]
-      : []),
-    ...(showAdminNav
-      ? [{
-          label: 'Admin',
-          items: [
-            { key: 'Admin', label: 'Moderation', icon: <AdminIcon /> },
-            { key: 'Status', label: 'Status', icon: <StatusIcon /> },
-          ],
-        } satisfies ShellNavGroup]
-      : []),
-  ];
-  const secondaryNavItems = utilityGroups.flatMap((group) =>
-    group.items.map((item) => ({
-      key: item.key as AppPage,
-      label: item.label,
-      badge: item.badge,
-    }))
-  );
-  const activeSecondaryNav = secondaryNavItems.some((item) => item.key === activePage);
-  const showReturnToMatch = !!hostedRuntime && Boolean(authoritativeMatchId);
-  const showPlayHub = hostedRuntime
-    ? (activePage === 'Play' || activePage === 'Modes' || activePage === 'Queue' || activePage === 'Lobbies')
-    : (activePage === 'Modes' || activePage === 'Queue' || activePage === 'Lobbies');
-  const showBoardSurface = activePage === 'Match' || (!hostedRuntime && activePage === 'Play');
-  const controlledSeat = hostedRuntime ? viewerSeat : null;
-  const topSeat: PieceColor = controlledSeat === 'black' ? 'white' : 'black';
-  const bottomSeat: PieceColor = controlledSeat === 'black' ? 'black' : 'white';
-  const topHand = topSeat === 'white' ? whiteHand : blackHand;
-  const bottomHand = bottomSeat === 'white' ? whiteHand : blackHand;
-  const whiteSeatBadge = hostedRuntime
-    ? viewerSeat === 'white'
-      ? 'You'
-      : viewerSeat === 'black'
-        ? 'Opponent'
-        : 'Spectator'
-    : null;
-  const blackSeatBadge = hostedRuntime
-    ? viewerSeat === 'black'
-      ? 'You'
-      : viewerSeat === 'white'
-        ? 'Opponent'
-        : 'Spectator'
-    : null;
-  const showHostedSoloBanner = hostedRuntime && !authoritativeMatchId;
-  const showHostedReconnectWarning = hostedRuntime && Boolean(authoritativeMatchId) && !authoritativeLive;
-  const activeDisconnectGraceFor = authoritativeStatus === 'active' ? authoritativeDisconnectGraceFor : null;
-  const disconnectGraceDeadlineLabel = authoritativeDisconnectGraceDeadline
-    ? new Date(authoritativeDisconnectGraceDeadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : null;
-  const whitePresenceLabel = authoritativeMatchId ? (authoritativeWhiteConnected ? 'Online' : 'Disconnected') : null;
-  const blackPresenceLabel = authoritativeMatchId ? (authoritativeBlackConnected ? 'Online' : 'Disconnected') : null;
-  const activeFinishReason = over
-    ? authoritativeFinishReason
-      ?? (winner === 'aborted'
-        ? 'abort'
-        : winner === 'draw'
-          ? (hmc >= 100 ? 'fifty_move_rule' : stale ? 'stalemate' : insuf ? 'insufficient_material' : null)
-          : mate
-            ? 'checkmate'
-            : null)
-    : null;
-  const activeFinishReasonLabel = finishReasonLabel(activeFinishReason);
-  const displayedWhiteName = hostedRuntime && authoritativeMatchId
-    ? (matchSeatMeta?.whiteName ?? (viewerSeat === 'white' ? whiteProfile?.displayName : undefined) ?? 'White')
-    : (whiteProfile?.displayName ?? 'Player');
-  const displayedBlackName = hostedRuntime && authoritativeMatchId
-    ? (matchSeatMeta?.blackName ?? (viewerSeat === 'black' ? whiteProfile?.displayName : undefined) ?? 'Black')
-    : (blackProfile?.displayName ?? 'Opponent');
-  const disconnectGraceBanner = activeDisconnectGraceFor
-    ? viewerSeat === activeDisconnectGraceFor
-      ? `Your seat is in reconnect grace. Rejoin before ${disconnectGraceDeadlineLabel ?? 'the timer expires'} or the match will be forfeited.`
-      : `${activeDisconnectGraceFor === 'white' ? displayedWhiteName : displayedBlackName} disconnected. The match will forfeit if they do not return by ${disconnectGraceDeadlineLabel ?? 'the end of the grace window'}.`
-    : null;
-  const displayedWhiteRating = hostedRuntime && authoritativeMatchId
-    ? ((viewerSeat === 'white' ? whiteProfile?.rating : blackProfile?.rating) ?? 1200)
-    : (whiteProfile?.rating ?? 1200);
-  const displayedBlackRating = hostedRuntime && authoritativeMatchId
-    ? ((viewerSeat === 'black' ? whiteProfile?.rating : blackProfile?.rating) ?? 1200)
-    : (blackProfile?.rating ?? 1200);
-  const activeMatchRoomMeta = authoritativeMatchId ? readStoredRoomMeta(authoritativeMatchId) : null;
-  const activeMatchModeLabel = modeLabel(activeMatchRoomMeta?.modeId);
-  const activeMatchQueueLabel = queueLabel(activeMatchRoomMeta?.queue);
-  const canCreateDirectRematch = Boolean(authoritativeMatchId && activeMatchRoomMeta?.queue === 'direct');
-  const canQueueSameLane = Boolean(
-    authoritativeMatchId &&
-    hostedRuntime &&
-    (activeMatchRoomMeta?.queue === 'casual' || activeMatchRoomMeta?.queue === 'rated'),
-  );
-  const activeMatchRoleLabel = !authoritativeMatchId
-    ? null
-    : authoritativeStatus === 'waiting'
-      ? 'Reserved seat waiting for the second player'
-      : !hostedRuntime
-        ? 'Local operator view'
-        : viewerSeat === 'white'
-          ? 'Playing as White'
-          : viewerSeat === 'black'
-            ? 'Playing as Black'
-            : 'Spectating read-only';
-  const activeMatchRouteLabel = authoritativeStatus === 'finished' || over ? 'Replay page' : 'Archive detail';
-  const finishedPrimaryActionLabel = canCreateDirectRematch
-    ? (authoritativeRematchBusy ? 'Creating...' : '🔄 Rematch Room')
-    : canQueueSameLane
-      ? '↩ Play Same Lane'
-      : authoritativeMatchId
-        ? (hostedRuntime ? '↩ Queue' : '♟ New Game')
-        : '🔄 Rematch';
-  const finishedSecondaryActionLabel = hostedRuntime
-    ? '↩ Queue'
-    : '♟ New Game';
-  const activeLiveMatchUrl = authoritativeMatchId ? buildLiveMatchUrl(authoritativeMatchId) : null;
-  const activeReplayPageUrl = authoritativeMatchId ? buildReplayPageUrl(authoritativeMatchId) : null;
-  const topSeatBadge = topSeat === 'white' ? whiteSeatBadge : blackSeatBadge;
-  const bottomSeatBadge = bottomSeat === 'white' ? whiteSeatBadge : blackSeatBadge;
-  const topPlayerName = topSeat === 'white' ? displayedWhiteName : displayedBlackName;
-  const bottomPlayerName = bottomSeat === 'white' ? displayedWhiteName : displayedBlackName;
-  const topPlayerRating = topSeat === 'white' ? displayedWhiteRating : displayedBlackRating;
-  const bottomPlayerRating = bottomSeat === 'white' ? displayedWhiteRating : displayedBlackRating;
-  const topPlayerClock = topSeat === 'white' ? timeW : timeB;
-  const bottomPlayerClock = bottomSeat === 'white' ? timeW : timeB;
-  const topClockTicking = tickingState === topSeat && clockActive && !over;
-  const bottomClockTicking = tickingState === bottomSeat && clockActive && !over;
-  React.useEffect(() => {
     setMatchDestinationNotice('');
   }, [activePage, authoritativeMatchId, authoritativeStatus, viewerSeat]);
-  const shellPageMeta: ShellPageMeta = (() => {
-    switch (activePage) {
-      case 'Match':
-        return {
-          eyebrow: 'Match',
-          title: authoritativeMatchId ? boardStatusLabel : 'Live match',
-          description: authoritativeMatchId
-            ? `${activeMatchQueueLabel} · ${activeMatchModeLabel}${activeMatchRoleLabel ? ` · ${activeMatchRoleLabel}` : ''}`
-            : 'Live matches open here once a real room exists.',
-        };
-      case 'Watch':
-        return {
-          eyebrow: 'Watch',
-          title: 'Live games and replays',
-          description: 'Spectate active public matches, browse recent replays, and jump into stable match destinations.',
-        };
-      case 'Rankings':
-        return {
-          eyebrow: 'Rankings',
-          title: 'Competitive ladders',
-          description: 'Track official mode leaders, seasonal momentum, and player progression across the platform.',
-        };
-      case 'Profiles':
-        return {
-          eyebrow: 'Profiles',
-          title: 'Public player identity',
-          description: 'Search claimed handles, inspect competitive snapshots, and open shareable profile destinations.',
-        };
-      case 'History':
-        return {
-          eyebrow: 'History',
-          title: 'Replay archive',
-          description: 'Review finished games through curated player-facing summaries instead of raw platform state.',
-        };
-      case 'Friends':
-        return {
-          eyebrow: 'Friends',
-          title: 'Friend graph',
-          description: 'Manage persistent friendships and direct challenge relationships tied to your account.',
-        };
-      case 'Inbox':
-        return {
-          eyebrow: 'Inbox',
-          title: 'Account inbox',
-          description: 'See social notifications, challenge updates, and unread account events in one place.',
-        };
-      case 'Cards':
-        return {
-          eyebrow: 'Cards',
-          title: 'Card compendium',
-          description: 'Browse curated card powers and learn the mechanics that make Chess404 different from standard chess.',
-        };
-      case 'Community':
-        return {
-          eyebrow: 'Community',
-          title: 'Player activity',
-          description: 'Explore guest and account activity across the broader Chess404 platform.',
-        };
-      case 'Admin':
-        return {
-          eyebrow: 'Admin',
-          title: 'Moderation console',
-          description: 'Review reports and trust actions through the internal moderation workflow.',
-        };
-      case 'Status':
-        return {
-          eyebrow: 'Status',
-          title: 'Operational status',
-          description: 'Internal backend health and routing visibility for signed-in operators.',
-        };
-      case 'Account':
-        return {
-          eyebrow: hasPrimaryAccountSession ? 'Account' : 'Sign In',
-          title: hasPrimaryAccountSession ? 'Account security and identity' : 'Create your Chess404 account',
-          description: 'Chess404 is competitive online chess with curated card powers. Sign in once, recover easily, and carry your identity across devices.',
-        };
-      case 'Modes':
-      case 'Queue':
-      case 'Lobbies':
-      case 'Play':
-      default:
-        return {
-          eyebrow: 'Play',
-          title: 'Competitive play hub',
-          description: 'Quick pair into official modes or create a private invite room. The board opens only when a real match exists.',
-        };
-    }
-  })();
-  const actorSeatForHostedControls: PieceColor | null = hostedRuntime ? viewerSeat : turn;
-  const actorSeatPlainLabel = actorSeatForHostedControls
-    ? (actorSeatForHostedControls === 'white' ? 'White' : 'Black')
-    : 'Spectator';
-  const controlSender: PieceColor = actorSeatForHostedControls ?? turn;
-  const hostedActionLocked = !!hostedRuntime && !viewerSeat;
-  const canRespondToDrawOffer = !hostedRuntime || (!!viewerSeat && viewerSeat === turn);
-  const actorSeatLabel = actorSeatForHostedControls
-    ? (actorSeatForHostedControls === 'white' ? '⚪ White' : '⚫ Black')
-    : 'Spectator';
-  const hostedSpectator = hostedRuntime && !viewerSeat;
-  const visibleSocialAlert = socialAlert && !(socialAlert.action === 'friends' && (activePage === 'Friends' || activePage === 'Inbox'))
-    ? socialAlert
-    : null;
 
-  const dismissSocialAlert = React.useCallback(() => {
-    if (!socialAlert) {
-      return;
-    }
-    dismissedSocialAlertIdsRef.current.add(socialAlert.id);
-    setSocialAlert(null);
-  }, [socialAlert]);
-
-  const handleSocialAlertAction = React.useCallback(() => {
-    if (!socialAlert) {
-      return;
-    }
-    dismissedSocialAlertIdsRef.current.add(socialAlert.id);
-    if (socialAlert.action === 'match' && socialAlert.matchId && typeof window !== 'undefined') {
-      openLiveMatch(socialAlert.matchId);
-      return;
-    }
-    setActivePage('Friends');
-    setSocialAlert(null);
-  }, [openLiveMatch, socialAlert]);
+  const {
+    boardStatusLabel,
+    hasPrimaryAccountSession,
+    showSocialNav,
+    showAdminNav,
+    primaryNavItems,
+    utilityGroups,
+    secondaryNavItems,
+    activeSecondaryNav,
+    showReturnToMatch,
+    showPlayHub,
+    showBoardSurface,
+    controlledSeat,
+    topSeat,
+    bottomSeat,
+    topHand,
+    bottomHand,
+    whiteSeatBadge,
+    blackSeatBadge,
+    showHostedSoloBanner,
+    showHostedReconnectWarning,
+    activeDisconnectGraceFor,
+    disconnectGraceDeadlineLabel,
+    whitePresenceLabel,
+    blackPresenceLabel,
+    activeFinishReason,
+    activeFinishReasonLabel,
+    displayedWhiteName,
+    displayedBlackName,
+    disconnectGraceBanner,
+    displayedWhiteRating,
+    displayedBlackRating,
+    activeMatchRoomMeta,
+    activeMatchModeLabel,
+    activeMatchQueueLabel,
+    canCreateDirectRematch,
+    canQueueSameLane,
+    activeMatchRoleLabel,
+    activeMatchRouteLabel,
+    finishedPrimaryActionLabel,
+    finishedSecondaryActionLabel,
+    activeLiveMatchUrl,
+    activeReplayPageUrl,
+    topSeatBadge,
+    bottomSeatBadge,
+    topPlayerName,
+    bottomPlayerName,
+    topPlayerRating,
+    bottomPlayerRating,
+    topPlayerClock,
+    bottomPlayerClock,
+    topClockTicking,
+    bottomClockTicking,
+    shellPageMeta,
+    actorSeatForHostedControls,
+    actorSeatPlainLabel,
+    controlSender,
+    hostedActionLocked,
+    canRespondToDrawOffer,
+    actorSeatLabel,
+    hostedSpectator,
+    visibleSocialAlert,
+    dismissSocialAlert,
+    handleSocialAlertAction,
+  } = useMatchNav({
+    authoritativeMatchId,
+    authoritativeStatus,
+    hostedRuntime,
+    viewerSeat,
+    authoritativeLive,
+    authoritativeRematchBusy,
+    primaryAccountIdentity,
+    activePage,
+    friendsAttentionCount,
+    inboxUnreadCount,
+    whiteHand,
+    blackHand,
+    over,
+    winner,
+    authoritativeFinishReason,
+    hmc,
+    stale,
+    insuf,
+    mate,
+    whiteProfile,
+    blackProfile,
+    matchSeatMeta,
+    authoritativeDisconnectGraceFor,
+    authoritativeDisconnectGraceDeadline,
+    authoritativeWhiteConnected,
+    authoritativeBlackConnected,
+    timeW,
+    timeB,
+    tickingState,
+    clockActive,
+    socialAlert,
+    dismissedSocialAlertIdsRef,
+    turn,
+    openLiveMatch,
+    setActivePage,
+    setSocialAlert,
+  });
 
   // Card draw logic
   React.useEffect(() => {
@@ -5391,7 +4274,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
                   : `0 6px 18px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.12)`,
                 background:`linear-gradient(160deg, ${card.color} 0%, color-mix(in srgb, ${card.color} 60%, #000) 100%)`,
                 border: isJokerCard && canUse ? `1px solid ${card.accent}99` : `1px solid ${card.accent}55`,
-                overflow:'hidden',
+                overflow:'visible',
                 animation: isJokerCard && canUse ? 'jokerFloat 3s ease-in-out infinite' : 'none',
               }}
               onClick={() => {
@@ -5403,11 +4286,15 @@ export function useMatchEngine(props: UseMatchEngineProps) {
                 const el = e.currentTarget as HTMLDivElement;
                 el.style.transform = `rotate(${angle}deg) translateY(-20px) scale(1.08)`;
                 el.style.zIndex = '99';
+                const tip = el.querySelector('.card-tooltip') as HTMLElement;
+                if (tip) tip.style.display = 'block';
               }}
               onMouseLeave={e => {
                 const el = e.currentTarget as HTMLDivElement;
                 el.style.transform = `rotate(${angle}deg)`;
                 el.style.zIndex = String(isSelected ? 99 : i + 1);
+                const tip = el.querySelector('.card-tooltip') as HTMLElement;
+                if (tip) tip.style.display = 'none';
               }}
             >
               <div style={{ width:'100%', height:'38px', background:`radial-gradient(ellipse at 50% 30%, ${card.accent}44 0%, transparent 70%)`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'20px', borderBottom:`1px solid ${card.accent}33`, position:'relative' }}>
@@ -5445,6 +4332,41 @@ export function useMatchEngine(props: UseMatchEngineProps) {
                   <span style={{ fontSize:'14px', opacity:0.7 }}>{alreadyUsedThisTurn ? '✓' : card.type === 'trap' ? '' : '🔒'}</span>
                 </div>
               )}
+              <div className="card-tooltip" style={{
+                display:'none', position:'absolute', bottom:'calc(100% + 8px)', left:'50%',
+                transform:'translateX(-50%)', minWidth:'180px', maxWidth:'240px',
+                padding:'10px 12px', borderRadius:'10px', zIndex:999,
+                background:'linear-gradient(180deg, rgba(10,14,26,0.98) 0%, rgba(6,8,16,0.99) 100%)',
+                border:`1px solid ${RARITY_STYLE[card.rarity].accent}88`,
+                boxShadow:`0 8px 32px rgba(0,0,0,0.7), 0 0 16px ${RARITY_STYLE[card.rarity].glow}`,
+                pointerEvents:'none',
+              }}>
+                <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'6px' }}>
+                  <span style={{ fontSize:'18px' }}>{card.icon}</span>
+                  <div style={{ fontWeight:800, fontSize:'12px', color:'#fff' }}>{card.name}</div>
+                </div>
+                <div style={{ display:'flex', gap:'4px', marginBottom:'5px', flexWrap:'wrap' }}>
+                  <span style={{
+                    padding:'1px 6px', borderRadius:'3px', fontSize:'8px', fontWeight:800,
+                    color: RARITY_STYLE[card.rarity].accent,
+                    background:`${RARITY_STYLE[card.rarity].accent}22`,
+                    border:`1px solid ${RARITY_STYLE[card.rarity].accent}55`,
+                    textTransform:'uppercase', letterSpacing:'0.5px',
+                  }}>
+                    {RARITY_STYLE[card.rarity].label}
+                  </span>
+                  <span style={{
+                    padding:'1px 6px', borderRadius:'3px', fontSize:'8px', fontWeight:700,
+                    color:card.accent, background:`${card.accent}22`,
+                    border:`1px solid ${card.accent}55`, textTransform:'capitalize',
+                  }}>
+                    {card.mechanic}
+                  </span>
+                </div>
+                <div style={{ fontSize:'10px', color:'rgba(200,210,230,0.9)', lineHeight:1.5, fontWeight:500 }}>
+                  {card.desc}
+                </div>
+              </div>
             </div>
           );
         })}
@@ -5790,9 +4712,7 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     authoritativeLive,
     setAuthoritativeLive,
     streamDisconnected,
-    onStreamReconnect: React.useCallback(() => {
-      manualRetryRef.current?.();
-    }, []),
+    onStreamReconnect,
             authoritativeStatus,
     setAuthoritativeStatus,
     authoritativeWhiteConnected,

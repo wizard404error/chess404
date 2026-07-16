@@ -65,26 +65,58 @@ function buildAbsoluteUrl(pathname: string, params?: URLSearchParams): string | 
 }
 
 // ── Obfuscation helpers ───────────────────────────────────────────────────────
+// NOTE: This is client-side obfuscation only, not true encryption.
+// XSS can read all stored tokens. Full mitigation requires HttpOnly
+// Secure SameSite cookies on auth endpoints.
 
-function obfuscate(value: string): string {
-  try { return btoa(value); } catch { return value; }
+const STORAGE_KEY = 'cs404'; // XOR key
+
+function xorObfuscate(value: string): string {
+  try {
+    const bytes = new TextEncoder().encode(value);
+    const keyBytes = new TextEncoder().encode(STORAGE_KEY);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] ^= keyBytes[i % keyBytes.length];
+    }
+    return btoa(String.fromCharCode(...new Uint8Array(bytes)));
+  } catch { return value; }
 }
 
-function deobfuscate(value: string): string {
-  try { return atob(value); } catch { return value; }
+function xorDeobfuscate(value: string): string {
+  try {
+    const raw = atob(value);
+    const bytes = new Uint8Array(raw.length);
+    const keyBytes = new TextEncoder().encode(STORAGE_KEY);
+    for (let i = 0; i < raw.length; i++) {
+      bytes[i] = raw.charCodeAt(i) ^ keyBytes[i % keyBytes.length];
+    }
+    return new TextDecoder().decode(bytes);
+  } catch { return value; }
+}
+
+function isExpired(expiresAt: string | undefined): boolean {
+  if (!expiresAt) return false;
+  try {
+    return Date.parse(expiresAt) <= Date.now();
+  } catch { return false; }
+}
+
+function clearStorageKey(key: string): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(key);
 }
 
 // ── Active match ID ───────────────────────────────────────────────────────────
 
 export function readStoredActiveMatchId(): string | null {
   if (typeof window === 'undefined') return null;
-  return deobfuscate(window.localStorage.getItem(ACTIVE_MATCH_STORAGE_KEY) ?? '');
+  return xorDeobfuscate(window.localStorage.getItem(ACTIVE_MATCH_STORAGE_KEY) ?? '') || null;
 }
 
 export function writeStoredActiveMatchId(matchId: string | null): void {
   if (typeof window === 'undefined') return;
   if (matchId) {
-    window.localStorage.setItem(ACTIVE_MATCH_STORAGE_KEY, obfuscate(matchId));
+    window.localStorage.setItem(ACTIVE_MATCH_STORAGE_KEY, xorObfuscate(matchId));
   } else {
     window.localStorage.removeItem(ACTIVE_MATCH_STORAGE_KEY);
   }
@@ -99,17 +131,21 @@ export function readStoredGuestIdentity(side: 'white' | 'black'): {
   sessionExpiresAt?: string;
 } {
   if (typeof window === 'undefined') return {};
-  const guestId = deobfuscate(window.localStorage.getItem(
+  const sessionExpiresAt = xorDeobfuscate(window.localStorage.getItem(
+    side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
+  ) ?? '') || undefined;
+  if (isExpired(sessionExpiresAt)) {
+    clearStoredGuestIdentity(side);
+    return {};
+  }
+  const guestId = xorDeobfuscate(window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY,
   ) ?? '') || undefined;
-  const sessionSecret = deobfuscate(window.localStorage.getItem(
+  const sessionSecret = xorDeobfuscate(window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
   ) ?? '') || undefined;
-  const sessionToken = deobfuscate(window.localStorage.getItem(
+  const sessionToken = xorDeobfuscate(window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-  ) ?? '') || undefined;
-  const sessionExpiresAt = deobfuscate(window.localStorage.getItem(
-    side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
   ) ?? '') || undefined;
   return { guestId, sessionSecret, sessionToken, sessionExpiresAt };
 }
@@ -123,58 +159,44 @@ export function writeStoredGuestIdentity(
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(
     side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY,
-    obfuscate(guestId),
+    xorObfuscate(guestId),
   );
   if (sessionSecret.trim()) {
     window.localStorage.setItem(
       side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
-      obfuscate(sessionSecret),
+      xorObfuscate(sessionSecret),
     );
   } else {
-    window.localStorage.removeItem(
-      side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
-    );
+    clearStorageKey(side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY);
   }
   if (options.sessionToken !== undefined) {
     if ((options.sessionToken ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-        obfuscate(options.sessionToken ?? ''),
+        xorObfuscate(options.sessionToken ?? ''),
       );
     } else {
-      window.localStorage.removeItem(
-        side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-      );
+      clearStorageKey(side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY);
     }
   }
   if (options.sessionExpiresAt !== undefined) {
     if ((options.sessionExpiresAt ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
-        obfuscate(options.sessionExpiresAt ?? ''),
+        xorObfuscate(options.sessionExpiresAt ?? ''),
       );
     } else {
-      window.localStorage.removeItem(
-        side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
-      );
+      clearStorageKey(side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY);
     }
   }
 }
 
 export function clearStoredGuestIdentity(side: 'white' | 'black'): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(
-    side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY,
-  );
-  window.localStorage.removeItem(
-    side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
-  );
-  window.localStorage.removeItem(
-    side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-  );
-  window.localStorage.removeItem(
-    side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
-  );
+  clearStorageKey(side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY);
+  clearStorageKey(side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY);
+  clearStorageKey(side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY);
+  clearStorageKey(side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY);
 }
 
 // ── Account identity ──────────────────────────────────────────────────────────
@@ -185,16 +207,21 @@ export function readStoredAccountIdentity(side: 'white' | 'black'): {
   expiresAt?: string;
 } {
   if (typeof window === 'undefined') return {};
+  const expiresAt = xorDeobfuscate(window.localStorage.getItem(
+    side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
+  ) ?? '') || undefined;
+  if (isExpired(expiresAt)) {
+    clearStoredAccountIdentity(side);
+    return {};
+  }
   return {
-    accountId: deobfuscate(window.localStorage.getItem(
+    accountId: xorDeobfuscate(window.localStorage.getItem(
       side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY,
     ) ?? '') || undefined,
-    sessionToken: deobfuscate(window.localStorage.getItem(
+    sessionToken: xorDeobfuscate(window.localStorage.getItem(
       side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
     ) ?? '') || undefined,
-    expiresAt: deobfuscate(window.localStorage.getItem(
-      side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-    ) ?? '') || undefined,
+    expiresAt,
   };
 }
 
@@ -206,45 +233,35 @@ export function writeStoredAccountIdentity(
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(
     side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY,
-    obfuscate(account.accountId),
+    xorObfuscate(account.accountId),
   );
   if (options.sessionToken !== undefined) {
     if ((options.sessionToken ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
-        obfuscate(options.sessionToken ?? ''),
+        xorObfuscate(options.sessionToken ?? ''),
       );
     } else {
-      window.localStorage.removeItem(
-        side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
-      );
+      clearStorageKey(side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY);
     }
   }
   if (options.expiresAt !== undefined) {
     if ((options.expiresAt ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-        obfuscate(options.expiresAt ?? ''),
+        xorObfuscate(options.expiresAt ?? ''),
       );
     } else {
-      window.localStorage.removeItem(
-        side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-      );
+      clearStorageKey(side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY);
     }
   }
 }
 
 export function clearStoredAccountIdentity(side: 'white' | 'black'): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(
-    side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY,
-  );
-  window.localStorage.removeItem(
-    side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
-  );
-  window.localStorage.removeItem(
-    side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-  );
+  clearStorageKey(side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY);
+  clearStorageKey(side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY);
+  clearStorageKey(side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY);
 }
 
 // ── URL-query sync helpers ────────────────────────────────────────────────────

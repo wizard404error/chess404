@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -47,16 +46,15 @@ func anticheatAuthedRequest(t *testing.T, mux http.Handler, method, path string,
 }
 
 func TestAnticheatRouteRejectsMissingToken(t *testing.T) {
+	t.Setenv("ANALYSIS_WORKER_SECRET", "test_worker_secret")
 	mux, _ := newAnticheatMuxForTest(t)
-	_ = os.Setenv("INTERNAL_SERVICE_TOKEN", "test_internal_token")
-	defer os.Unsetenv("INTERNAL_SERVICE_TOKEN")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/platform/anticheat/analyses", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 without service token, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 401 without worker token, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

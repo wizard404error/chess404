@@ -84,6 +84,38 @@ export default function PlayHubPage({
           </div>
         </div>
 
+        <button
+          onClick={() => scrollTo(computerRef)}
+          style={{
+            padding:'16px 24px',
+            borderRadius:'16px',
+            background:'linear-gradient(180deg, rgba(130,80,210,0.95) 0%, rgba(70,40,130,0.98) 100%)',
+            border:'1px solid rgba(180,130,255,0.4)',
+            boxShadow:'0 8px 32px rgba(100,50,200,0.35), 0 0 60px rgba(130,80,210,0.15)',
+            color:'#f0e8ff',
+            cursor:'pointer',
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'center',
+            gap:'12px',
+            width:'100%',
+            transition:'transform 0.15s ease, box-shadow 0.15s ease',
+          }}
+          onMouseEnter={e => { const el = e.currentTarget; el.style.transform = 'translateY(-2px)'; el.style.boxShadow = '0 12px 40px rgba(100,50,200,0.5), 0 0 60px rgba(130,80,210,0.25)'; }}
+          onMouseLeave={e => { const el = e.currentTarget; el.style.transform = ''; el.style.boxShadow = '0 8px 32px rgba(100,50,200,0.35), 0 0 60px rgba(130,80,210,0.15)'; }}
+        >
+          <span style={{ fontSize:'28px' }}>🤖</span>
+          <div style={{ textAlign:'left' }}>
+            <div style={{ fontWeight:900, fontSize:'16px', letterSpacing:'0.3px' }}>Play vs Computer</div>
+            <div style={{ fontSize:'12px', color:'rgba(220,210,255,0.75)', marginTop:'2px' }}>Challenge the built-in engine with full card effects</div>
+          </div>
+          <span style={{
+            marginLeft:'auto', padding:'6px 14px', borderRadius:'8px',
+            background:'rgba(255,255,255,0.1)', border:'1px solid rgba(255,255,255,0.15)',
+            fontSize:'13px', fontWeight:800,
+          }}>Play Now →</span>
+        </button>
+
         {activeMatchId ? (
           <div style={{
             padding: '18px 20px',

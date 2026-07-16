@@ -28,6 +28,8 @@ export function useMatchTimer({
   const tickingRef = React.useRef<PieceColor | null>(null);
   const [tickingState, setTickingState] = React.useState<PieceColor | null>(null);
 
+  const [freezeUntilSnapshot, setFreezeUntilSnapshot] = React.useState(false);
+
   const [abortCountdown, setAbortCountdown] = React.useState(initialAbortSecs);
   const [abortActive, setAbortActive] = React.useState(true);
   const abortRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
@@ -97,7 +99,7 @@ export function useMatchTimer({
     if (authoritativeLive) {
       extrapolationRef.current = setInterval(() => {
         const ticking = tickingRef.current;
-        if (ticking === null) return;
+        if (ticking === null || freezeUntilSnapshot) return;
         if (ticking === 'white') {
           setTimeW(t => Math.max(0, t - 0.1));
         } else {
@@ -107,7 +109,7 @@ export function useMatchTimer({
     } else {
       clockRef.current = setInterval(() => {
         const ticking = tickingRef.current;
-        if (ticking === null) return;
+        if (ticking === null || freezeUntilSnapshot) return;
         if (ticking === 'white') {
           setTimeW(t => {
             if (t <= 1) { clearInterval(clockRef.current!); onTimeoutRef.current('white'); return 0; }
@@ -125,13 +127,14 @@ export function useMatchTimer({
       if (clockRef.current) clearInterval(clockRef.current);
       if (extrapolationRef.current) clearInterval(extrapolationRef.current);
     };
-  }, [clockActive, over, authoritativeLive]);
+  }, [clockActive, over, authoritativeLive, freezeUntilSnapshot]);
 
   return {
     timeW, setTimeW,
     timeB, setTimeB,
     clockActive, setClockActive,
     tickingState, tickingRef, setTicking,
+    freezeUntilSnapshot, setFreezeUntilSnapshot,
     abortCountdown, setAbortCountdown,
     abortActive, setAbortActive,
     startAbortCountdown, stopAbortCountdown, resetTimer,

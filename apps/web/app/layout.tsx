@@ -43,6 +43,9 @@ function resolveMatchServiceWsBase(): string {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${jetBrainsMono.variable}`}>
+      <head>
+        <link rel="manifest" href="/manifest.json" />
+      </head>
       <body>
         <a href="#main-content" className="skip-link">
           Skip to content

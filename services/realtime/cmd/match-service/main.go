@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,6 +27,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// redactToken replaces common token and secret query parameter values with [REDACTED].
+func redactToken(s string) string {
+	re := regexp.MustCompile(`(?i)([?&](?:playerSecret|token|secret|s)=)[^&\s]+`)
+	return re.ReplaceAllString(s, "${1}[REDACTED]")
+}
+
 func main() {
 	envutil.Require("PLATFORM_SERVICE_INTERNAL_URL", "ALLOWED_ORIGINS", "INTERNAL_SERVICE_TOKEN")
 	mux := http.NewServeMux()
@@ -37,7 +44,10 @@ func main() {
 
 	store, broadcaster := openMatchStore()
 	service := match.NewServiceWithStoreAndBroadcaster(newFinalizingArchiveStore(archive), store, broadcaster)
-	rl := rate_limit.New()
+	rl, err := rate_limit.NewRateLimiter()
+	if err != nil {
+		log.Fatalf("failed to initialize rate limiter: %v", err)
+	}
 	allowed := httputil.ParseAllowedOrigins()
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:    4096,
@@ -46,11 +56,11 @@ func main() {
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				log.Printf("match:ws: rejecting upgrade for matchID=%s: missing Origin header (allowed=%v)", r.URL.Path, allowed)
+				log.Printf("match:ws: rejecting upgrade for matchID=%s: missing Origin header (allowed=%v)", redactToken(r.URL.String()), allowed)
 				return false
 			}
 			if !httputil.IsOriginAllowed(origin, allowed) {
-				log.Printf("match:ws: rejecting upgrade for matchID=%s: origin=%q not in allowed list %v", r.URL.Path, origin, allowed)
+				log.Printf("match:ws: rejecting upgrade for matchID=%s: origin=%q not in allowed list %v", redactToken(r.URL.String()), origin, allowed)
 				return false
 			}
 			return true

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/chess404/realtime/internal/platform"
@@ -61,7 +63,7 @@ func registerAnticheatRoutes(mux *http.ServeMux, anticheatStore platform.Antiche
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
-		if !requireInternalServiceRequest(w, r) {
+		if !requireAnalysisWorkerRequest(w, r) {
 			return
 		}
 		var req AnticheatAnalysisRequest
@@ -276,6 +278,27 @@ func appendRecent(existing []string, id string, keep int) []string {
 		out = out[len(out)-keep:]
 	}
 	return out
+}
+
+// requireAnalysisWorkerRequest checks the Authorization header against
+// ANALYSIS_WORKER_SECRET. If the env var is empty, auth is skipped (dev mode).
+// If the env var is set and the Bearer token is missing or invalid, a 401 is
+// returned.
+func requireAnalysisWorkerRequest(w http.ResponseWriter, r *http.Request) bool {
+	workerSecret := strings.TrimSpace(os.Getenv("ANALYSIS_WORKER_SECRET"))
+	if workerSecret == "" {
+		return true
+	}
+	const prefix = "Bearer "
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(auth, prefix) {
+		provided := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(workerSecret)) == 1 {
+			return true
+		}
+	}
+	respondError(w, http.StatusUnauthorized, "unauthorized")
+	return false
 }
 
 func parseFloat(s string) (float64, error) {

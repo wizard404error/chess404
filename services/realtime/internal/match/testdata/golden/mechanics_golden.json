@@ -1,0 +1,496 @@
+{
+  "matchId": "golden_all_37",
+  "entries": [
+    {
+      "index": 0,
+      "mechanic": "badsniper",
+      "cardId": "",
+      "beforeBoard": [
+        [
+          {
+            "type": "rook",
+            "color": "white"
+          },
+          {
+            "type": "knight",
+            "color": "white"
+          },
+          {
+            "type": "bishop",
+            "color": "white"
+          },
+          {
+            "type": "queen",
+            "color": "white"
+          },
+          {
+            "type": "king",
+            "color": "white"
+          },
+          {
+            "type": "bishop",
+            "color": "white"
+          },
+          {
+            "type": "knight",
+            "color": "white"
+          },
+          {
+            "type": "rook",
+            "color": "white"
+          }
+        ],
+        [
+          {
+            "type": "pawn",
+            "color": "white"
+          },
+          {
+            "type": "pawn",
+            "color": "white"
+          },
+          {
+            "type": "pawn",
+            "color": "white"
+          },
+          {
+            "type": "pawn",
+            "color": "white"
+          },
+          {
+            "type": "pawn",
+            "color": "white"
+          },
+          {
+            "type": "pawn",
+            "color": "white"
+          },
+          {
+            "type": "pawn",
+            "color": "white"
+          },
+          {
+            "type": "pawn",
+            "color": "white"
+          }
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          {
+            "type": "pawn",
+            "color": "black"
+          },
+          {
+            "type": "pawn",
+            "color": "black"
+          },
+          {
+            "type": "pawn",
+            "color": "black"
+          },
+          {
+            "type": "pawn",
+            "color": "black"
+          },
+          {
+            "type": "pawn",
+            "color": "black"
+          },
+          {
+            "type": "pawn",
+            "color": "black"
+          },
+          {
+            "type": "pawn",
+            "color": "black"
+          },
+          {
+            "type": "pawn",
+            "color": "black"
+          }
+        ],
+        [
+          {
+            "type": "rook",
+            "color": "black"
+          },
+          {
+            "type": "knight",
+            "color": "black"
+          },
+          {
+            "type": "bishop",
+            "color": "black"
+          },
+          {
+            "type": "queen",
+            "color": "black"
+          },
+          {
+            "type": "king",
+            "color": "black"
+          },
+          {
+            "type": "bishop",
+            "color": "black"
+          },
+          {
+            "type": "knight",
+            "color": "black"
+          },
+          {
+            "type": "rook",
+            "color": "black"
+          }
+        ]
+      ],
+      "error": "unauthorized player secret"
+    },
+    {
+      "index": 1,
+      "mechanic": "demote",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 2,
+      "mechanic": "gambler",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 3,
+      "mechanic": "promotehim",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 4,
+      "mechanic": "halffuse",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 5,
+      "mechanic": "swapme",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 6,
+      "mechanic": "jump",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 7,
+      "mechanic": "smallsacrifice",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 8,
+      "mechanic": "freeze",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 9,
+      "mechanic": "promote",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 10,
+      "mechanic": "shield",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 11,
+      "mechanic": "fog_village",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 12,
+      "mechanic": "fullfusion",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 13,
+      "mechanic": "swapus",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 14,
+      "mechanic": "swaphim",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 15,
+      "mechanic": "doublemove_diff",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 16,
+      "mechanic": "doublemove_same",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 17,
+      "mechanic": "demotehim",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 18,
+      "mechanic": "fakepiece",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 19,
+      "mechanic": "teleport",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 20,
+      "mechanic": "lavaground",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 21,
+      "mechanic": "radar",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 22,
+      "mechanic": "mirror",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 23,
+      "mechanic": "cheater",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 24,
+      "mechanic": "invisible",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 25,
+      "mechanic": "sniper",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 26,
+      "mechanic": "fortress",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 27,
+      "mechanic": "clone",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 28,
+      "mechanic": "borrow",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 29,
+      "mechanic": "parasite",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 30,
+      "mechanic": "blackhole",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 31,
+      "mechanic": "bigsacrifice",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 32,
+      "mechanic": "undo",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 33,
+      "mechanic": "reverse",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 34,
+      "mechanic": "unabomber",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 35,
+      "mechanic": "mindcontrol",
+      "cardId": "",
+      "error": "card not found in either hand"
+    },
+    {
+      "index": 36,
+      "mechanic": "joker",
+      "cardId": "",
+      "beforeBoard": [
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "king",
+            "color": "white"
+          },
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          {
+            "type": "knight",
+            "color": "white"
+          },
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          null,
+          null,
+          null,
+          null,
+          {
+            "type": "king",
+            "color": "black"
+          },
+          null,
+          null,
+          null
+        ]
+      ],
+      "error": "unauthorized player secret"
+    }
+  ]
+}

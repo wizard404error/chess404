@@ -9,14 +9,18 @@ import {
   BackHandler,
   Platform,
   Linking,
+  KeyboardAvoidingView,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import type {WebViewNavigation, WebViewMessageEvent} from 'react-native-webview';
 
-const PRODUCTION_URL = 'https://chess404.app';
+// Set CHESS404_URL env var at build time for Railway/non-dev deployments.
+const PRODUCTION_URL = process.env.CHESS404_URL || 'https://chess404.app';
 const DEV_URL = 'http://10.0.2.2:3000';
 
 const WEB_URL = __DEV__ ? DEV_URL : PRODUCTION_URL;
+
+const CONNECTION_TIMEOUT_MS = 15000;
 
 const INJECTED_JS = `
   (function() {
@@ -29,6 +33,33 @@ function App(): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [canGoBack, setCanGoBack] = useState(false);
+
+  // Connection timeout: if no 'ready' message within 15s, show error
+  useEffect(() => {
+    if (!loading) return;
+    const timer = setTimeout(() => {
+      setError('Connection timed out. Check your network and that the server is running.');
+      setLoading(false);
+    }, CONNECTION_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
+  // Deep link handling: open match URLs in the WebView
+  useEffect(() => {
+    const handleDeepLink = (event: {url: string}) => {
+      const url = event.url;
+      if (url.startsWith(WEB_URL) && webViewRef.current) {
+        webViewRef.current.loadUrl(url);
+      }
+    };
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+    Linking.getInitialURL().then((url) => {
+      if (url && url.startsWith(WEB_URL) && webViewRef.current) {
+        webViewRef.current.loadUrl(url);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   const onNavigationStateChange = useCallback((navState: WebViewNavigation) => {
     setCanGoBack(navState.canGoBack);
@@ -74,7 +105,8 @@ function App(): React.JSX.Element {
       )}
       {error && (
         <View style={styles.errorContainer}>
-          <Text style={styles.errorIcon}>Connection Error</Text>
+          <Text style={styles.errorIcon}>⚠</Text>
+          <Text style={styles.errorTitle}>Connection Error</Text>
           <Text style={styles.errorText}>{error}</Text>
           <Text
             style={styles.retryText}
@@ -87,34 +119,40 @@ function App(): React.JSX.Element {
           </Text>
         </View>
       )}
-      <WebView
-        ref={webViewRef}
-        source={{uri: WEB_URL}}
-        style={[styles.webview, loading && styles.hidden]}
-        injectedJavaScript={INJECTED_JS}
-        onMessage={onMessage}
-        onNavigationStateChange={onNavigationStateChange}
-        onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
-        onError={(syntheticEvent) => {
-          const {nativeEvent} = syntheticEvent;
-          setError(nativeEvent.description || 'Failed to connect to Chess404 server');
-          setLoading(false);
-        }}
-        onLoadEnd={() => setLoading(false)}
-        javaScriptEnabled
-        domStorageEnabled
-        startInLoadingState={false}
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        allowsBackForwardNavigationGestures
-        overScrollMode="never"
-        mixedContentMode="never"
-        allowFileAccess={false}
-        allowUniversalAccessFromFileURLs={false}
-        cacheEnabled
-        incognito={false}
-        applicationNameForUserAgent="Chess404Mobile/1.0"
-      />
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+        <WebView
+          ref={webViewRef}
+          source={{uri: WEB_URL}}
+          style={[styles.webview, loading && styles.hidden]}
+          injectedJavaScript={INJECTED_JS}
+          onMessage={onMessage}
+          onNavigationStateChange={onNavigationStateChange}
+          onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+          onError={(syntheticEvent) => {
+            const {nativeEvent} = syntheticEvent;
+            setError(nativeEvent.description || 'Failed to connect to Chess404 server');
+            setLoading(false);
+          }}
+          onLoadEnd={() => setLoading(false)}
+          javaScriptEnabled
+          domStorageEnabled
+          startInLoadingState={false}
+          allowsInlineMediaPlayback
+          mediaPlaybackRequiresUserAction={false}
+          allowsBackForwardNavigationGestures
+          overScrollMode="never"
+          mixedContentMode="never"
+          allowFileAccess={false}
+          allowUniversalAccessFromFileURLs={false}
+          cacheEnabled
+          incognito={false}
+          applicationNameForUserAgent="Chess404Mobile/1.0"
+          pullToRefreshEnabled
+        />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -169,7 +207,14 @@ const styles = StyleSheet.create({
     zIndex: 10,
     padding: 32,
   },
+  flex: {
+    flex: 1,
+  },
   errorIcon: {
+    fontSize: 40,
+    marginBottom: 12,
+  },
+  errorTitle: {
     fontSize: 20,
     fontWeight: '700',
     color: '#ff6b6b',

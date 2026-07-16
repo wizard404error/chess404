@@ -89,7 +89,10 @@ func main() {
 	}
 	defer func() { _ = anticheatStore.Close() }()
 	mux := buildPlatformMux(archive, guests, accounts, friends, moderation, challenges, notifications, emailOutbox, securityAudit, claims, anticheatStore)
-	rl := rate_limit.New()
+	rl, err := rate_limit.NewRateLimiter()
+	if err != nil {
+		log.Fatalf("failed to initialize rate limiter: %v", err)
+	}
 
 	go runAnticheatRetentionLoop(anticheatStore)
 

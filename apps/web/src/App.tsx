@@ -1099,8 +1099,8 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
         }}
       >
       {children}
-      <ErrorBoundary>
       {showPlayHub ? (
+        <ErrorBoundary>
         <PlayHubPage
           hostedRuntime={hostedRuntime}
           whiteProfile={whiteProfile}
@@ -1129,6 +1129,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
           }}
           onCopyMatchLink={(matchId) => { void copyLiveMatchLink(matchId); }}
         />
+        </ErrorBoundary>
       ) : activePage === 'Account' ? (
         !hasPrimaryAccountSession && !accountActionQueryDetected ? (
           <AuthPage
@@ -1151,6 +1152,7 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
           />
         )
       ) : showBoardSurface && hostedRuntime && !authoritativeMatchId ? (
+        <ErrorBoundary>
         <div style={{ display:'flex', flex:1, minHeight:0, alignItems:'center', justifyContent:'center', padding:'28px' }}>
           <div style={{
             width:'min(720px, 100%)',
@@ -1210,7 +1212,9 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
             </div>
           </div>
         </div>
+        </ErrorBoundary>
       ) : showBoardSurface ? (
+        <ErrorBoundary>
       <MatchBoardView
         board={board}
         turn={turn}
@@ -1352,8 +1356,8 @@ export default function App({ runtimeConfig, children }: { runtimeConfig?: { mat
         radarActive={radarActive}
         finalPositionRef={finalPositionRef}
       />
+        </ErrorBoundary>
       ) : null}
-      </ErrorBoundary>
       </AppShell>
     </main>
     <ToastContainer messages={toastMessages} onDismiss={dismissToast} />

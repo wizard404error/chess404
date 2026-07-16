@@ -211,7 +211,10 @@ func main() {
 	// well under 1s; the headroom is for tail latency.
 	client := httputil.NewHTTPClient(10 * time.Second)
 	mux := buildGatewayMux(config, client)
-	rl := rate_limit.New()
+	rl, err := rate_limit.NewRateLimiter()
+	if err != nil {
+		log.Fatalf("failed to initialize rate limiter: %v", err)
+	}
 
 	addr := httputil.ListenAddr("GATEWAY_ADDR", 8080)
 	srv := &http.Server{
@@ -311,6 +314,28 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 			payload = buildGatewayBootstrapPayload(config, client, request, r)
 		} else {
 			payload = buildGatewayBootstrapPayload(config, client, GatewayBootstrapRequest{}, r)
+		}
+
+		// Set HttpOnly cookies for account session tokens as defense-in-depth.
+		// The JSON response still carries the tokens for JS usage; the cookie
+		// provides XSS mitigation and a path to future server-side auth.
+		if payload.AccountSessions != nil {
+			for side, session := range map[string]*platform.AccountSession{
+				"white": payload.AccountSessions.White,
+				"black": payload.AccountSessions.Black,
+			} {
+				if session != nil && session.SessionToken != "" {
+					http.SetCookie(w, &http.Cookie{
+						Name:     "session_token_" + side,
+						Value:    session.SessionToken,
+						Path:     "/",
+						HttpOnly: true,
+						Secure:   true,
+						SameSite: http.SameSiteStrictMode,
+						Expires:  session.ExpiresAt,
+					})
+				}
+			}
 		}
 
 		httputil.WriteJSON(w, http.StatusOK, contracts.Envelope{

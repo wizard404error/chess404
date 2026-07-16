@@ -136,6 +136,9 @@ type InvisiblePieceState struct {
 	Piece      Piece  `json:"piece"`
 	OwnerColor string `json:"ownerColor"`
 	RoundsLeft int    `json:"roundsLeft"`
+	// InFogZone is true when the ghost square overlaps a Fog Village zone.
+	// The ghost position is visible to the owner but hidden from the opponent.
+	InFogZone bool `json:"inFogZone,omitempty"`
 }
 
 type CheaterState struct {
@@ -223,7 +226,7 @@ type MatchState struct {
 	Winner                  string               `json:"winner,omitempty"`
 	FinishReason            string               `json:"finishReason,omitempty"`
 	DrawOfferedBy           string               `json:"drawOfferedBy,omitempty"`
-	DrawOfferTime           time.Time            `json:"drawOfferTime,omitempty"`
+	DrawOfferTime           *time.Time           `json:"drawOfferTime,omitempty"`
 	SeenClientMoveIDs       []string             `json:"seenClientMoveIds,omitempty"`
 	PendingCard             *PendingCardState    `json:"pendingCard,omitempty"`
 	CreatedAt               time.Time            `json:"createdAt"`

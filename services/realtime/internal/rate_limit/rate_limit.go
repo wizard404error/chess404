@@ -1,7 +1,9 @@
 package rate_limit
 
 import (
+	"context"
 	"crypto/subtle"
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -26,15 +30,23 @@ type bucket struct {
 	count       int
 }
 
-type Limiter struct {
+// RateLimiter is the interface for rate limiter backends.
+type RateLimiter interface {
+	Allow(key string, window time.Duration, limit int) (bool, time.Duration)
+	Middleware(window time.Duration, limit int) func(http.Handler) http.Handler
+	Close()
+}
+
+// InMemoryRateLimiter is the default in-memory rate limiter.
+type InMemoryRateLimiter struct {
 	now     func() time.Time
 	mu      sync.Mutex
 	buckets map[string]bucket
 	stopCh  chan struct{}
 }
 
-func New() *Limiter {
-	l := &Limiter{
+func New() *InMemoryRateLimiter {
+	l := &InMemoryRateLimiter{
 		now:     time.Now,
 		buckets: make(map[string]bucket),
 		stopCh:  make(chan struct{}),
@@ -43,11 +55,11 @@ func New() *Limiter {
 	return l
 }
 
-func (l *Limiter) Close() {
+func (l *InMemoryRateLimiter) Close() {
 	close(l.stopCh)
 }
 
-func (l *Limiter) cleanupLoop() {
+func (l *InMemoryRateLimiter) cleanupLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -67,7 +79,7 @@ func (l *Limiter) cleanupLoop() {
 	}
 }
 
-func (l *Limiter) Allow(key string, window time.Duration, limit int) (bool, time.Duration) {
+func (l *InMemoryRateLimiter) Allow(key string, window time.Duration, limit int) (bool, time.Duration) {
 	if key == "" || limit <= 0 {
 		return true, 0
 	}
@@ -91,7 +103,7 @@ func (l *Limiter) Allow(key string, window time.Duration, limit int) (bool, time
 	return true, 0
 }
 
-func (l *Limiter) Middleware(window time.Duration, limit int) func(http.Handler) http.Handler {
+func (l *InMemoryRateLimiter) Middleware(window time.Duration, limit int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := ClientIP(r)
@@ -111,6 +123,99 @@ func (l *Limiter) Middleware(window time.Duration, limit int) func(http.Handler)
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RedisRateLimiter is a Redis-backed rate limiter for distributed deployments.
+type RedisRateLimiter struct {
+	client *redis.Client
+	now    func() time.Time
+}
+
+func NewRedis(redisURL string) (*RedisRateLimiter, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, err
+	}
+	client := redis.NewClient(opts)
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return &RedisRateLimiter{
+		client: client,
+		now:    time.Now,
+	}, nil
+}
+
+func (r *RedisRateLimiter) Close() {
+	_ = r.client.Close()
+}
+
+func (r *RedisRateLimiter) Allow(key string, window time.Duration, limit int) (bool, time.Duration) {
+	if key == "" || limit <= 0 {
+		return true, 0
+	}
+	ctx := context.Background()
+	count, err := r.client.Incr(ctx, key).Result()
+	if err != nil {
+		log.Printf("rate_limit:redis: INCR failed for key=%s err=%v, allowing request", key, err)
+		return true, 0
+	}
+	if count == 1 {
+		r.client.Expire(ctx, key, window)
+	}
+	if count > int64(limit) {
+		ttl, _ := r.client.TTL(ctx, key).Result()
+		if ttl < time.Second {
+			ttl = time.Second
+		}
+		return false, ttl
+	}
+	return true, 0
+}
+
+func (r *RedisRateLimiter) Middleware(window time.Duration, limit int) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, rq *http.Request) {
+			ip := ClientIP(rq)
+			path := strings.TrimPrefix(rq.URL.Path, "/")
+			key := "ratelimit:" + ip + ":" + path
+			allowed, retryAfter := r.Allow(key, window, limit)
+			if !allowed {
+				seconds := int(math.Ceil(retryAfter.Seconds()))
+				if seconds < 1 {
+					seconds = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(seconds))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
+				return
+			}
+			next.ServeHTTP(w, rq)
+		})
+	}
+}
+
+// NewRateLimiter creates a rate limiter based on the RATE_LIMIT_BACKEND env var.
+// Supported values: "memory" (default), "redis".
+func NewRateLimiter() (RateLimiter, error) {
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("RATE_LIMIT_BACKEND")))
+	if backend == "redis" {
+		redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
+		if redisURL == "" {
+			log.Println("rate_limit: RATE_LIMIT_BACKEND=redis but REDIS_URL is empty, falling back to memory")
+			return New(), nil
+		}
+		rl, err := NewRedis(redisURL)
+		if err != nil {
+			log.Printf("rate_limit: failed to connect to Redis at %s: %v, falling back to memory", redisURL, err)
+			return New(), nil
+		}
+		log.Println("rate_limit: using Redis backend")
+		return rl, nil
+	}
+	return New(), nil
 }
 
 func CSRFMiddleware(next http.Handler, allowedOrigins []string, internalToken string) http.Handler {
@@ -274,7 +379,7 @@ func ClientIP(r *http.Request) string {
 
 func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)

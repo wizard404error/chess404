@@ -93,6 +93,8 @@ func sanitizePublicMatchState(state contracts.MatchState) contracts.MatchState {
 	safe.BlackGuestID = ""
 	safe.WhiteAccountID = ""
 	safe.BlackAccountID = ""
+	safe.WhitePlayerSecret = ""
+	safe.BlackPlayerSecret = ""
 	safe.InvisiblePiece = nil
 	safe.CheaterState = nil
 	safe.RadarRevealFor = ""

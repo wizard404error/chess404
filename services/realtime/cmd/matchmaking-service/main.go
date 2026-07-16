@@ -30,7 +30,10 @@ func main() {
 		log.Fatalf("failed to initialize matchmaking service: %v", err)
 	}
 	defer func() { _ = service.Close() }()
-	rl := rate_limit.New()
+	rl, err := rate_limit.NewRateLimiter()
+	if err != nil {
+		log.Fatalf("failed to initialize rate limiter: %v", err)
+	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
