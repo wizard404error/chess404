@@ -1625,8 +1625,9 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
   const getSquare = (e: React.MouseEvent): Sq => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
-    const effSQ = rect.width / 8;
-    return { row: 7 - Math.floor(y / effSQ), col: Math.floor(x / effSQ) };
+    const sqX = rect.width / 8;
+    const sqY = rect.height / 8;
+    return { row: 7 - Math.floor(y / sqY), col: Math.floor(x / sqX) };
   };
 
   const getTouchSquare = (e: TouchEvent): Sq | null => {
@@ -1636,8 +1637,9 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
     const touch = e.touches[0] || e.changedTouches[0];
     if (!touch) return null;
     const x = touch.clientX - rect.left, y = touch.clientY - rect.top;
-    const effSQ = rect.width / 8;
-    return { row: 7 - Math.floor(y / effSQ), col: Math.floor(x / effSQ) };
+    const sqX = rect.width / 8;
+    const sqY = rect.height / 8;
+    return { row: 7 - Math.floor(y / sqY), col: Math.floor(x / sqX) };
   };
 
   const touchStartSq = React.useRef<Sq | null>(null);
@@ -1824,6 +1826,7 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
           display:'block',
           width: '100%',
           height: '100%',
+          aspectRatio: '1/1',
           touchAction: 'none',
           cursor: annotationStart ? 'crosshair' : (cardPending ? 'crosshair' : (localDrag ? 'grabbing' : 'pointer')),
         }}
