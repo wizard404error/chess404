@@ -41,8 +41,8 @@ function resolveMatchServiceWsBase(): string {
   return httpBase;
 }
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const nonce = headers().get('x-nonce') ?? '';
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const nonce = (await headers()).get('x-nonce') ?? '';
   return (
     <html lang="en" className={`${inter.variable} ${jetBrainsMono.variable}`} nonce={nonce}>
       <head>
