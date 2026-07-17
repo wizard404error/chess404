@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
@@ -51,7 +50,7 @@ function buildCsp(nonce: string): string {
 }
 
 export function middleware(request: NextRequest): NextResponse {
-  const nonce = crypto.randomUUID();
+  const nonce = globalThis.crypto.randomUUID();
   const response = NextResponse.next();
 
   response.headers.set('Content-Security-Policy', buildCsp(nonce));
