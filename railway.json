@@ -100,8 +100,17 @@
         "resources": {
           "cpu": 1,
           "memory": 512
+        },
+        "variables": {
+          "NEXT_PUBLIC_SENTRY_DSN": "${{Sentry.DSN}}"
         }
       }
+    }
+  },
+  "cron": {
+    "postgres-backup": {
+      "schedule": "0 6 * * *",
+      "command": "deploy/postgres-backup.sh"
     }
   },
   "volumes": {

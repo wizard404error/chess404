@@ -45,10 +45,14 @@ type matchArchiveFile struct {
 }
 
 type MatchArchiveStore struct {
-	mu      sync.Mutex
-	store   archivePersistence
-	entries map[string]MatchArchiveEntry
-	private map[string]MatchArchivePrivateEntry
+	mu        sync.Mutex
+	store     archivePersistence
+	entries   map[string]MatchArchiveEntry
+	private   map[string]MatchArchivePrivateEntry
+	writeCh   chan struct{}
+	closeCh   chan struct{}
+	closed    bool
+	persistMu sync.Mutex
 }
 
 type MatchArchiveStats struct {
@@ -85,6 +89,8 @@ func newMatchArchiveStore(persistence archivePersistence) (*MatchArchiveStore, e
 		store:   persistence,
 		entries: make(map[string]MatchArchiveEntry),
 		private: make(map[string]MatchArchivePrivateEntry),
+		writeCh: make(chan struct{}, 64),
+		closeCh: make(chan struct{}),
 	}
 	if err := store.load(); err != nil {
 		if store.store != nil {
@@ -92,7 +98,41 @@ func newMatchArchiveStore(persistence archivePersistence) (*MatchArchiveStore, e
 		}
 		return nil, err
 	}
+	go store.writeLoop()
 	return store, nil
+}
+
+func (s *MatchArchiveStore) writeLoop() {
+	for {
+		select {
+		case <-s.writeCh:
+		drainLoop:
+			for {
+				select {
+				case <-s.writeCh:
+				default:
+					break drainLoop
+				}
+			}
+			s.persistMu.Lock()
+			s.mu.Lock()
+			if s.closed {
+				s.mu.Unlock()
+				s.persistMu.Unlock()
+				return
+			}
+			_ = s.persistLocked()
+			s.mu.Unlock()
+			s.persistMu.Unlock()
+		case <-s.closeCh:
+			s.persistMu.Lock()
+			s.mu.Lock()
+			_ = s.persistLocked()
+			s.mu.Unlock()
+			s.persistMu.Unlock()
+			return
+		}
+	}
 }
 
 func (s *MatchArchiveStore) Backend() string {
@@ -104,17 +144,38 @@ func (s *MatchArchiveStore) Backend() string {
 	return s.store.backend()
 }
 
-func (s *MatchArchiveStore) Close() error {
+func (s *MatchArchiveStore) Flush() error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.store == nil {
+	if s.closed {
 		return nil
 	}
-	err := s.store.close()
+	return s.persistLocked()
+}
+
+func (s *MatchArchiveStore) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	close(s.closeCh)
+	s.mu.Unlock()
+
+	s.persistMu.Lock()
+	if s.store != nil {
+		s.store.close()
+	}
+	s.mu.Lock()
 	s.store = nil
 	s.entries = nil
 	s.private = nil
-	return err
+	s.mu.Unlock()
+	s.persistMu.Unlock()
+	return nil
 }
 
 func (s *MatchArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) error {
@@ -150,7 +211,11 @@ func (s *MatchArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) err
 		BlackPlayerSecret: match.BlackPlayerSecret,
 		History:           clonePositionHistory(match.History),
 	}
-	return s.persistLocked()
+	select {
+	case s.writeCh <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 func (s *MatchArchiveStore) Get(matchID string) (MatchArchiveEntry, bool) {

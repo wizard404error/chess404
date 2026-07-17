@@ -33,7 +33,7 @@ func TestCardFreeze(t *testing.T) {
 		t.Fatalf("select_target freeze: %v", err)
 	}
 
-	if frozen := service.matches["test_freeze"].Board[6][0]; frozen == nil || !frozen.Frozen {
+	if frozen := service.getMatchContainer("test_freeze").state.Board[6][0]; frozen == nil || !frozen.Frozen {
 		t.Fatal("expected frozen piece")
 	}
 	if result.Match.PendingCard != nil {
@@ -51,7 +51,7 @@ func TestCardBadsniper(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_badsniper"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "badsniper")
 
-	state := service.matches["test_badsniper"]
+	state := service.getMatchContainer("test_badsniper").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -71,7 +71,7 @@ func TestCardBadsniper(t *testing.T) {
 		t.Fatalf("select_target: %v", err)
 	}
 
-	if removed := service.matches["test_badsniper"].Board[2][2]; removed != nil {
+	if removed := service.getMatchContainer("test_badsniper").state.Board[2][2]; removed != nil {
 		t.Fatal("expected own piece removed")
 	}
 	if result.Match.PendingCard != nil {
@@ -89,7 +89,7 @@ func TestCardDemote(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_demote"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "demote")
 
-	state := service.matches["test_demote"]
+	state := service.getMatchContainer("test_demote").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -114,7 +114,7 @@ func TestCardDemote(t *testing.T) {
 		t.Fatalf("selection step: %v", err)
 	}
 
-	if piece := service.matches["test_demote"].Board[3][3]; piece == nil || piece.Type != "rook" {
+	if piece := service.getMatchContainer("test_demote").state.Board[3][3]; piece == nil || piece.Type != "rook" {
 		t.Fatalf("expected rook got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -129,7 +129,7 @@ func TestCardDemotehim(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_demotehim"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "demotehim")
 
-	state := service.matches["test_demotehim"]
+	state := service.getMatchContainer("test_demotehim").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -154,7 +154,7 @@ func TestCardDemotehim(t *testing.T) {
 		t.Fatalf("selection: %v", err)
 	}
 
-	if piece := service.matches["test_demotehim"].Board[3][3]; piece == nil || piece.Type != "pawn" {
+	if piece := service.getMatchContainer("test_demotehim").state.Board[3][3]; piece == nil || piece.Type != "pawn" {
 		t.Fatalf("expected pawn got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -188,7 +188,7 @@ func TestCardPromote(t *testing.T) {
 		t.Fatalf("selection: %v", err)
 	}
 
-	if piece := service.matches["test_promote"].Board[1][0]; piece == nil || piece.Type != "queen" {
+	if piece := service.getMatchContainer("test_promote").state.Board[1][0]; piece == nil || piece.Type != "queen" {
 		t.Fatalf("expected queen got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -222,7 +222,7 @@ func TestCardPromotehim(t *testing.T) {
 		t.Fatalf("selection: %v", err)
 	}
 
-	if piece := service.matches["test_promotehim"].Board[6][0]; piece == nil || piece.Type != "queen" || piece.Color != "black" {
+	if piece := service.getMatchContainer("test_promotehim").state.Board[6][0]; piece == nil || piece.Type != "queen" || piece.Color != "black" {
 		t.Fatalf("expected black queen got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -250,7 +250,7 @@ func TestCardShield(t *testing.T) {
 		t.Fatalf("select_target: %v", err)
 	}
 
-	shielded := service.matches["test_shield"].Board[1][0]
+	shielded := service.getMatchContainer("test_shield").state.Board[1][0]
 	if shielded == nil || !shielded.Shielded || shielded.ShieldTurn == nil {
 		t.Fatal("expected shielded with expiry")
 	}
@@ -282,7 +282,7 @@ func TestCardSniper(t *testing.T) {
 		t.Fatalf("select_target: %v", err)
 	}
 
-	if removed := service.matches["test_sniper"].Board[6][0]; removed != nil {
+	if removed := service.getMatchContainer("test_sniper").state.Board[6][0]; removed != nil {
 		t.Fatal("expected sniper removed piece")
 	}
 	if result.Match.PendingCard != nil {
@@ -300,7 +300,7 @@ func TestCardSwapme(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_swapme"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swapme")
 
-	state := service.matches["test_swapme"]
+	state := service.getMatchContainer("test_swapme").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -326,10 +326,10 @@ func TestCardSwapme(t *testing.T) {
 		t.Fatalf("second target: %v", err)
 	}
 
-	if p1 := service.matches["test_swapme"].Board[2][2]; p1 == nil || p1.Type != "rook" {
+	if p1 := service.getMatchContainer("test_swapme").state.Board[2][2]; p1 == nil || p1.Type != "rook" {
 		t.Fatalf("expected rook at (2,2) got %#v", p1)
 	}
-	if p2 := service.matches["test_swapme"].Board[4][4]; p2 == nil || p2.Type != "knight" {
+	if p2 := service.getMatchContainer("test_swapme").state.Board[4][4]; p2 == nil || p2.Type != "knight" {
 		t.Fatalf("expected knight at (4,4) got %#v", p2)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -344,7 +344,7 @@ func TestCardSwapus(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_swapus"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swapus")
 
-	state := service.matches["test_swapus"]
+	state := service.getMatchContainer("test_swapus").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -370,10 +370,10 @@ func TestCardSwapus(t *testing.T) {
 		t.Fatalf("second: %v", err)
 	}
 
-	if p1 := service.matches["test_swapus"].Board[2][2]; p1 == nil || p1.Color != "black" {
+	if p1 := service.getMatchContainer("test_swapus").state.Board[2][2]; p1 == nil || p1.Color != "black" {
 		t.Fatalf("expected black piece at (2,2) got %#v", p1)
 	}
-	if p2 := service.matches["test_swapus"].Board[5][5]; p2 == nil || p2.Color != "white" {
+	if p2 := service.getMatchContainer("test_swapus").state.Board[5][5]; p2 == nil || p2.Color != "white" {
 		t.Fatalf("expected white piece at (5,5) got %#v", p2)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -388,7 +388,7 @@ func TestCardSwaphim(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_swaphim"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swaphim")
 
-	state := service.matches["test_swaphim"]
+	state := service.getMatchContainer("test_swaphim").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -414,10 +414,10 @@ func TestCardSwaphim(t *testing.T) {
 		t.Fatalf("second: %v", err)
 	}
 
-	if p1 := service.matches["test_swaphim"].Board[5][5]; p1 == nil || p1.Type != "rook" {
+	if p1 := service.getMatchContainer("test_swaphim").state.Board[5][5]; p1 == nil || p1.Type != "rook" {
 		t.Fatalf("expected rook at (5,5) got %#v", p1)
 	}
-	if p2 := service.matches["test_swaphim"].Board[6][4]; p2 == nil || p2.Type != "knight" {
+	if p2 := service.getMatchContainer("test_swaphim").state.Board[6][4]; p2 == nil || p2.Type != "knight" {
 		t.Fatalf("expected knight at (6,4) got %#v", p2)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -432,7 +432,7 @@ func TestCardJump(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_jump"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "jump")
 
-	state := service.matches["test_jump"]
+	state := service.getMatchContainer("test_jump").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -458,10 +458,10 @@ func TestCardJump(t *testing.T) {
 		t.Fatalf("destination: %v", err)
 	}
 
-	if p := service.matches["test_jump"].Board[3][5]; p == nil || p.Type != "rook" {
+	if p := service.getMatchContainer("test_jump").state.Board[3][5]; p == nil || p.Type != "rook" {
 		t.Fatalf("expected rook at (3,5) got %#v", p)
 	}
-	if src := service.matches["test_jump"].Board[3][3]; src != nil {
+	if src := service.getMatchContainer("test_jump").state.Board[3][3]; src != nil {
 		t.Fatal("expected source empty")
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -495,10 +495,10 @@ func TestCardTeleport(t *testing.T) {
 		t.Fatalf("dest: %v", err)
 	}
 
-	if p := service.matches["test_teleport"].Board[4][4]; p == nil || p.Type != "pawn" {
+	if p := service.getMatchContainer("test_teleport").state.Board[4][4]; p == nil || p.Type != "pawn" {
 		t.Fatalf("expected pawn at (4,4) got %#v", p)
 	}
-	if src := service.matches["test_teleport"].Board[1][0]; src != nil {
+	if src := service.getMatchContainer("test_teleport").state.Board[1][0]; src != nil {
 		t.Fatal("expected source empty")
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -513,7 +513,7 @@ func TestCardSmallsacrifice(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_smallsac"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "smallsacrifice")
 
-	state := service.matches["test_smallsac"]
+	state := service.getMatchContainer("test_smallsac").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -563,7 +563,7 @@ func TestCardBigsacrifice(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_bigsac"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "bigsacrifice")
 
-	state := service.matches["test_bigsac"]
+	state := service.getMatchContainer("test_bigsac").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -613,7 +613,7 @@ func TestCardClone(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_clone"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "clone")
 
-	state := service.matches["test_clone"]
+	state := service.getMatchContainer("test_clone").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -638,10 +638,10 @@ func TestCardClone(t *testing.T) {
 		t.Fatalf("dest: %v", err)
 	}
 
-	if p := service.matches["test_clone"].Board[4][4]; p == nil || p.Type != "knight" {
+	if p := service.getMatchContainer("test_clone").state.Board[4][4]; p == nil || p.Type != "knight" {
 		t.Fatalf("expected knight clone got %#v", p)
 	}
-	if src := service.matches["test_clone"].Board[3][3]; src == nil || src.Type != "knight" {
+	if src := service.getMatchContainer("test_clone").state.Board[3][3]; src == nil || src.Type != "knight" {
 		t.Fatal("expected source preserved")
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -656,7 +656,7 @@ func TestCardBorrow(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_borrow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "borrow")
 
-	state := service.matches["test_borrow"]
+	state := service.getMatchContainer("test_borrow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -680,7 +680,7 @@ func TestCardBorrow(t *testing.T) {
 		t.Fatalf("target: %v", err)
 	}
 
-	if p := service.matches["test_borrow"].Board[3][3]; p == nil || p.Color != "white" || !p.Borrowed {
+	if p := service.getMatchContainer("test_borrow").state.Board[3][3]; p == nil || p.Color != "white" || !p.Borrowed {
 		t.Fatal("expected borrowed white piece")
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -695,7 +695,7 @@ func TestCardParasite(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_parasite"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "parasite")
 
-	state := service.matches["test_parasite"]
+	state := service.getMatchContainer("test_parasite").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -726,7 +726,7 @@ func TestCardParasite(t *testing.T) {
 		t.Fatalf("target: %v", err)
 	}
 
-	if p := service.matches["test_parasite"].Board[3][3]; p == nil || p.ParasiteTarget != "5,5" {
+	if p := service.getMatchContainer("test_parasite").state.Board[3][3]; p == nil || p.ParasiteTarget != "5,5" {
 		t.Fatalf("expected parasite link, got %#v", p)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -995,10 +995,10 @@ func TestCardReverse(t *testing.T) {
 		t.Fatalf("reverse: %v", err)
 	}
 
-	if p := service.matches["test_reverse"].Board[4][4]; p != nil {
+	if p := service.getMatchContainer("test_reverse").state.Board[4][4]; p != nil {
 		t.Fatal("expected reversed black pawn gone from e5")
 	}
-	if p := service.matches["test_reverse"].Board[6][4]; p == nil || p.Type != "pawn" || p.Color != "black" {
+	if p := service.getMatchContainer("test_reverse").state.Board[6][4]; p == nil || p.Type != "pawn" || p.Color != "black" {
 		t.Fatal("expected black pawn restored to e7")
 	}
 	if result.Match.Turn != "white" {
@@ -1071,7 +1071,7 @@ func TestCardGambler(t *testing.T) {
 	if len(result.Events) == 0 || result.Events[0].Type != "card_played" {
 		t.Fatal("expected card_played event")
 	}
-	outcome, _ := result.Events[0].Payload["outcome"].(string)
+	outcome, _ := 	result.Events[0].Payload["outcome"].(string)
 	if outcome != "win" && outcome != "lose" && outcome != "none" {
 		t.Fatalf("unexpected outcome %q", outcome)
 	}
@@ -1120,7 +1120,7 @@ func TestCardMirror(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_mirror"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "mirror")
 
-	state := service.matches["test_mirror"]
+	state := service.getMatchContainer("test_mirror").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1188,7 +1188,7 @@ func TestCardInvisible(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_invisible"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "invisible")
 
-	state := service.matches["test_invisible"]
+	state := service.getMatchContainer("test_invisible").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1207,10 +1207,10 @@ func TestCardInvisible(t *testing.T) {
 		t.Fatalf("target: %v", err)
 	}
 
-	if p := service.matches["test_invisible"].Board[0][0]; p != nil {
+	if p := service.getMatchContainer("test_invisible").state.Board[0][0]; p != nil {
 		t.Fatal("expected invisible piece removed from board")
 	}
-	if service.matches["test_invisible"].InvisiblePiece == nil {
+	if service.getMatchContainer("test_invisible").state.InvisiblePiece == nil {
 		t.Fatal("expected invisible ghost state")
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -1225,7 +1225,7 @@ func TestCardFakepiece(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_fake"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fakepiece")
 
-	state := service.matches["test_fake"]
+	state := service.getMatchContainer("test_fake").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1259,7 +1259,7 @@ func TestCardHalffuse(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_halffuse"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "halffuse")
 
-	state := service.matches["test_halffuse"]
+	state := service.getMatchContainer("test_halffuse").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1303,7 +1303,7 @@ func TestCardFullfusion(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_fullfusion"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fullfusion")
 
-	state := service.matches["test_fullfusion"]
+	state := service.getMatchContainer("test_fullfusion").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1347,7 +1347,7 @@ func TestCardMindcontrol(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_mindcontrol"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "mindcontrol")
 
-	state := service.matches["test_mindcontrol"]
+	state := service.getMatchContainer("test_mindcontrol").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1366,7 +1366,7 @@ func TestCardMindcontrol(t *testing.T) {
 		t.Fatalf("target: %v", err)
 	}
 
-	if p := service.matches["test_mindcontrol"].Board[3][3]; p == nil || p.Color != "white" || p.Borrowed {
+	if p := service.getMatchContainer("test_mindcontrol").state.Board[3][3]; p == nil || p.Color != "white" || p.Borrowed {
 		t.Fatal("expected permanently white piece (not borrowed)")
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -1379,7 +1379,7 @@ func TestCardJoker(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_joker"}, now)
-	state := service.matches["test_joker"]
+	state := service.getMatchContainer("test_joker").state
 	state.WhiteHand = []contracts.GameCard{cardTemplateByMechanic("joker")}
 	snapshot.Match.WhiteHand = state.WhiteHand
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "joker")
@@ -1426,7 +1426,7 @@ func TestCardUnabomber(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_unabomber"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "unabomber")
 
-	state := service.matches["test_unabomber"]
+	state := service.getMatchContainer("test_unabomber").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1496,7 +1496,7 @@ func TestCardMechanicsGolden(t *testing.T) {
 
 	result := goldenResult{MatchID: "golden_all_37"}
 
-	state := service.matches["golden_all_37"]
+	state := service.getMatchContainer("golden_all_37").state
 
 	for idx, mech := range mechanics {
 		entry := goldenEntry{
@@ -1958,7 +1958,7 @@ func FuzzApplyCard(f *testing.F) {
 			Seed:    int64(mechanicIdx)*1000 + int64(targetRow)*100 + int64(targetCol),
 		}, now)
 
-		state := service.matches["fuzz_"+mech]
+		state := service.getMatchContainer("fuzz_" + mech).state
 		cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, mech)
 
 		// Place random pieces on the board

@@ -146,5 +146,31 @@ export const GLOBAL_STYLES = `
     75%  { transform: scale(1.2) rotateZ(10deg);  filter: brightness(2) hue-rotate(300deg); }
     100% { transform: scale(1) rotateZ(0deg);   filter: brightness(1); }
   }
+  @keyframes toastSlideIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes sacrificePulse {
+    0%, 100% { filter: drop-shadow(0 0 4px rgba(220,20,20,0.6)); transform: scale(1); }
+    50% { filter: drop-shadow(0 0 14px rgba(255,60,60,0.95)); transform: scale(1.12); }
+  }
+  @keyframes mindControlPulse {
+    0%, 100% { filter: drop-shadow(0 0 4px rgba(139,0,255,0.5)); transform: scale(1) rotate(0deg); }
+    33% { filter: drop-shadow(0 0 16px rgba(200,0,255,0.95)); transform: scale(1.1) rotate(-6deg); }
+    66% { filter: drop-shadow(0 0 12px rgba(255,0,200,0.8)); transform: scale(1.08) rotate(6deg); }
+  }
+  @keyframes fusePulse {
+    0%, 100% { filter: drop-shadow(0 0 4px rgba(251,191,36,0.5)); transform: scale(1); }
+    50% { filter: drop-shadow(0 0 18px rgba(251,191,36,1)) drop-shadow(0 0 8px rgba(167,139,250,0.8)); transform: scale(1.15); }
+  }
+  .glass-card {
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  .card-hand-slot:hover {
+    transform: translateY(-8px) scale(1.04);
+    filter: drop-shadow(0 12px 24px rgba(255,160,40,0.5));
+  }
 `;
 

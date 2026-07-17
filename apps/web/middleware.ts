@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
@@ -35,14 +36,14 @@ function extraConnectOrigins(): string[] {
   return Array.from(origins);
 }
 
-function buildCsp(): string {
+function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self' ws: wss: " + extraConnectOrigins().join(' '),
+    "connect-src 'self' " + extraConnectOrigins().join(' '),
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -50,11 +51,14 @@ function buildCsp(): string {
 }
 
 export function middleware(request: NextRequest): NextResponse {
+  const nonce = crypto.randomUUID();
   const response = NextResponse.next();
 
-  response.headers.set('Content-Security-Policy', buildCsp());
+  response.headers.set('Content-Security-Policy', buildCsp(nonce));
+  response.headers.set('x-nonce', nonce);
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   // Defeat the 1-year CDN cache (s-maxage=31536000) on HTML pages so env-var

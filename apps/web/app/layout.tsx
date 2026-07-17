@@ -1,5 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import ClientApp from './ClientApp';
 
@@ -41,8 +42,9 @@ function resolveMatchServiceWsBase(): string {
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const nonce = headers().get('x-nonce') ?? '';
   return (
-    <html lang="en" className={`${inter.variable} ${jetBrainsMono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${jetBrainsMono.variable}`} nonce={nonce}>
       <head>
         <link rel="manifest" href="/manifest.json" />
       </head>

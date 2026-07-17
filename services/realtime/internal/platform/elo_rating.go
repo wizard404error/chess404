@@ -3,9 +3,11 @@ package platform
 import "math"
 
 const (
-	defaultEloKFactor    = 32.0
-	defaultEloStartRating = 1200
-	defaultEloMinRating  = 100
+	defaultEloKFactor          = 32.0
+	defaultPlacementEloKFactor = 64.0
+	defaultPlacementMatches    = 5
+	defaultEloStartRating      = 1200
+	defaultEloMinRating        = 100
 )
 
 // ApplyEloMatchResult updates the two ratings according to the standard
@@ -16,10 +18,10 @@ const (
 // The K-factor and minimum rating are exposed for callers that need to vary
 // them (account finalization uses a stricter floor).
 func ApplyEloMatchResult(whiteRating, blackRating int, winner string) (int, int) {
-	return applyEloMatchResultWithK(whiteRating, blackRating, winner, defaultEloKFactor, defaultEloMinRating)
+	return ApplyEloMatchResultWithK(whiteRating, blackRating, winner, defaultEloKFactor, defaultEloMinRating)
 }
 
-func applyEloMatchResultWithK(whiteRating, blackRating int, winner string, kFactor float64, minRating int) (int, int) {
+func ApplyEloMatchResultWithK(whiteRating, blackRating int, winner string, kFactor float64, minRating int) (int, int) {
 	if whiteRating <= 0 {
 		whiteRating = defaultEloStartRating
 	}

@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,19 +25,20 @@ const maxAccountRatingHistoryEntries = 100
 var accountHandlePattern = regexp.MustCompile(`^[a-z0-9_-]{3,24}$`)
 
 type AccountProfile struct {
-	AccountID      string                      `json:"accountId"`
-	Handle         string                      `json:"handle"`
-	PrimaryGuestID string                      `json:"primaryGuestId"`
-	LinkedGuestIDs []string                    `json:"linkedGuestIds"`
-	Rating         int                         `json:"rating"`
-	MatchesPlayed  int                         `json:"matchesPlayed"`
-	Wins           int                         `json:"wins"`
-	Losses         int                         `json:"losses"`
-	Draws          int                         `json:"draws"`
-	RatingHistory  []AccountRatingHistoryEntry `json:"ratingHistory,omitempty"`
-	CreatedAt      time.Time                   `json:"createdAt"`
-	LastSeenAt     time.Time                   `json:"lastSeenAt"`
-	LastActiveAt   time.Time                   `json:"lastActiveAt,omitempty"`
+	AccountID           string                      `json:"accountId"`
+	Handle              string                      `json:"handle"`
+	PrimaryGuestID      string                      `json:"primaryGuestId"`
+	LinkedGuestIDs      []string                    `json:"linkedGuestIds"`
+	Rating              int                         `json:"rating"`
+	MatchesPlayed       int                         `json:"matchesPlayed"`
+	Wins                int                         `json:"wins"`
+	Losses              int                         `json:"losses"`
+	Draws               int                         `json:"draws"`
+	PlacementsRemaining int                         `json:"placementsRemaining"`
+	RatingHistory       []AccountRatingHistoryEntry `json:"ratingHistory,omitempty"`
+	CreatedAt           time.Time                   `json:"createdAt"`
+	LastSeenAt          time.Time                   `json:"lastSeenAt"`
+	LastActiveAt        time.Time                   `json:"lastActiveAt,omitempty"`
 }
 
 type AccountRatingHistoryEntry struct {
@@ -60,14 +62,16 @@ type AccountSession struct {
 }
 
 type AccountPrivateState struct {
-	SessionToken       string                           `json:"sessionToken,omitempty"`
-	ExpiresAt          time.Time                        `json:"expiresAt,omitempty"`
-	Sessions           []AccountSessionRecord           `json:"sessions,omitempty"`
-	Email              string                           `json:"email,omitempty"`
-	PasswordHash       string                           `json:"passwordHash,omitempty"`
-	EmailVerifiedAt    time.Time                        `json:"emailVerifiedAt,omitempty"`
-	EmailVerifications []AccountEmailVerificationRecord `json:"emailVerifications,omitempty"`
-	PasswordResets     []AccountPasswordResetRecord     `json:"passwordResets,omitempty"`
+	SessionToken          string                           `json:"sessionToken,omitempty"`
+	ExpiresAt             time.Time                        `json:"expiresAt,omitempty"`
+	Sessions              []AccountSessionRecord           `json:"sessions,omitempty"`
+	Email                 string                           `json:"email,omitempty"`
+	PasswordHash          string                           `json:"passwordHash,omitempty"`
+	EmailVerifiedAt       time.Time                        `json:"emailVerifiedAt,omitempty"`
+	EmailVerifications    []AccountEmailVerificationRecord `json:"emailVerifications,omitempty"`
+	PasswordResets        []AccountPasswordResetRecord     `json:"passwordResets,omitempty"`
+	FailedLoginAttempts   int                              `json:"failedLoginAttempts,omitempty"`
+	LoginLockedUntil      *time.Time                       `json:"loginLockedUntil,omitempty"`
 }
 
 type AccountStoreStats struct {
@@ -170,13 +174,14 @@ func (s *AccountStore) ClaimGuest(guest GuestProfile, handle string) (AccountSes
 
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
-		AccountID:      accountID,
-		Handle:         normalizedHandle,
-		PrimaryGuestID: guest.GuestID,
-		LinkedGuestIDs: []string{guest.GuestID},
-		CreatedAt:      now,
-		LastSeenAt:     now,
-		LastActiveAt:   now,
+		AccountID:           accountID,
+		Handle:              normalizedHandle,
+		PrimaryGuestID:      guest.GuestID,
+		LinkedGuestIDs:      []string{guest.GuestID},
+		PlacementsRemaining: defaultPlacementMatches,
+		CreatedAt:           now,
+		LastSeenAt:          now,
+		LastActiveAt:        now,
 	}
 	privateState, record := issueAccountPrivateSession(AccountPrivateState{}, now)
 	s.accounts[accountID] = account
@@ -534,21 +539,62 @@ func (s *AccountStore) EnablePasswordLogin(accountID, sessionToken, email, passw
 	return buildAccountSessionFromRecord(account, record), nil
 }
 
+const (
+	maxLoginAttempts        = 10
+	loginLockoutDuration    = 15 * time.Minute
+	loginLockoutIncrement   = 30 * time.Second
+)
+
 func (s *AccountStore) LoginWithPassword(identifier, password string) (AccountSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now().UTC()
+
 	accountID, privateState, ok := s.lookupAccountCredentialsLocked(identifier)
-	if !ok || !verifyAccountPassword(password, privateState.PasswordHash) {
+	if !ok {
 		return AccountSession{}, ErrUnauthorizedAccountCredentials
 	}
+
+	// Per-account brute force lockout check
+	if privateState.LoginLockedUntil != nil && now.Before(*privateState.LoginLockedUntil) {
+		retryAfter := time.Until(*privateState.LoginLockedUntil)
+		if retryAfter < 0 {
+			retryAfter = 0
+		}
+		return AccountSession{}, fmt.Errorf("account locked: too many failed login attempts, retry after %s", retryAfter.Round(time.Second))
+	}
+
+	if !verifyAccountPassword(password, privateState.PasswordHash) {
+		// Track failed attempt with exponential backoff
+		privateState.FailedLoginAttempts++
+		lockoutDuration := loginLockoutDuration
+		if privateState.FailedLoginAttempts > 1 {
+			lockoutDuration = loginLockoutDuration + loginLockoutIncrement*time.Duration(privateState.FailedLoginAttempts-1)
+			if lockoutDuration > 2*time.Hour {
+				lockoutDuration = 2 * time.Hour
+			}
+		}
+		if privateState.FailedLoginAttempts >= maxLoginAttempts {
+			lockedUntil := now.Add(lockoutDuration)
+			privateState.LoginLockedUntil = &lockedUntil
+		}
+		s.private[accountID] = privateState
+		if err := s.persistLocked(); err != nil {
+			return AccountSession{}, err
+		}
+		return AccountSession{}, ErrUnauthorizedAccountCredentials
+	}
+
+	// Successful login: reset failed attempts
+	privateState.FailedLoginAttempts = 0
+	privateState.LoginLockedUntil = nil
 
 	account, ok := s.accounts[accountID]
 	if !ok {
 		return AccountSession{}, os.ErrNotExist
 	}
 
-	now := time.Now().UTC()
 	touchAccountPresence(&account, now)
 	privateState, record := issueAccountPrivateSession(privateState, now)
 	s.accounts[accountID] = account
@@ -704,6 +750,12 @@ func (s *AccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccountID, wi
 	}
 	white.MatchesPlayed++
 	black.MatchesPlayed++
+	if white.PlacementsRemaining > 0 {
+		white.PlacementsRemaining--
+	}
+	if black.PlacementsRemaining > 0 {
+		black.PlacementsRemaining--
+	}
 	touchAccountPresence(&white, now)
 	touchAccountPresence(&black, now)
 	modeID = contracts.NormalizeMatchModeID(string(modeID))
@@ -908,7 +960,11 @@ func applyAccountMatchResult(white, black *AccountProfile, winner string) error 
 	if white == nil || black == nil {
 		return os.ErrInvalid
 	}
-	newWhite, newBlack := ApplyEloMatchResult(white.Rating, black.Rating, winner)
+	kFactor := defaultEloKFactor
+	if white.PlacementsRemaining > 0 || black.PlacementsRemaining > 0 {
+		kFactor = defaultPlacementEloKFactor
+	}
+	newWhite, newBlack := ApplyEloMatchResultWithK(white.Rating, black.Rating, winner, kFactor, defaultEloMinRating)
 	switch winner {
 	case "white":
 		white.Rating = newWhite

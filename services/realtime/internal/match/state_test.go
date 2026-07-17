@@ -324,6 +324,10 @@ func TestArchivedMatchReloadKeepsSecretsAndReverseHistory(t *testing.T) {
 		t.Fatalf("expected black move to succeed, got %v", err)
 	}
 
+	if err := archive.Flush(); err != nil {
+		t.Fatalf("expected archive flush to succeed, got %v", err)
+	}
+
 	restartedArchive, err := platform.NewMatchArchiveStore(archivePath)
 	if err != nil {
 		t.Fatalf("expected archive reload to succeed, got %v", err)
@@ -426,7 +430,7 @@ func TestFrozenPieceCannotMove(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "frozen"}, now)
 
-	state := service.matches["frozen"]
+	state := service.getMatchContainer("frozen").state
 	state.Board[1][4].Frozen = true
 
 	_, err := applyTestIntent(service, contracts.PlayerIntent{
@@ -446,7 +450,7 @@ func TestShieldedCaptureIsBlockedAndShieldRemoved(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "shielded"}, now)
 
-	state := service.matches["shielded"]
+	state := service.getMatchContainer("shielded").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -567,7 +571,7 @@ func TestPawnPromotionResolvedByBackend(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "promotion"}, now)
 
-	state := service.matches["promotion"]
+	state := service.getMatchContainer("promotion").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -622,7 +626,7 @@ func TestMoveCheckmateFinishesAuthoritatively(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 5, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "mate_finish"}, now)
 
-	state := service.matches["mate_finish"]
+	state := service.getMatchContainer("mate_finish").state
 	state.Board = emptyBoard()
 	state.Board[5][5] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[5][6] = &contracts.Piece{Type: "queen", Color: "white"}
@@ -660,7 +664,7 @@ func TestFiftyMoveRuleFinishesAuthoritatively(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 10, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fifty_move_finish"}, now)
 
-	state := service.matches["fifty_move_finish"]
+	state := service.getMatchContainer("fifty_move_finish").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -696,7 +700,7 @@ func TestThreefoldRepetitionFinishesAuthoritatively(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 15, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "threefold_finish"}, now)
 
-	state := service.matches["threefold_finish"]
+	state := service.getMatchContainer("threefold_finish").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -811,7 +815,7 @@ func TestDisconnectGraceFinishesAbandonedMatch(t *testing.T) {
 	if finishedSnapshot.Match.Status != "finished" || finishedSnapshot.Match.Winner != "black" || finishedSnapshot.Match.FinishReason != "abandon" {
 		t.Fatalf("expected black to win abandoned match, got status=%q winner=%q reason=%q", finishedSnapshot.Match.Status, finishedSnapshot.Match.Winner, finishedSnapshot.Match.FinishReason)
 	}
-	events := service.events["presence_abandon"]
+	events := service.getMatchContainer("presence_abandon").events
 	if len(events) == 0 {
 		t.Fatalf("expected abandon finish event to be recorded")
 	}
@@ -839,7 +843,7 @@ func TestDisconnectGraceFinishesBothDisconnectedNoMoveMatchAsAbort(t *testing.T)
 	if finishedSnapshot.Match.Status != "finished" || finishedSnapshot.Match.Winner != "aborted" || finishedSnapshot.Match.FinishReason != "abort" {
 		t.Fatalf("expected both-disconnected no-move room to abort, got status=%q winner=%q reason=%q", finishedSnapshot.Match.Status, finishedSnapshot.Match.Winner, finishedSnapshot.Match.FinishReason)
 	}
-	events := service.events["presence_both_abort"]
+	events := service.getMatchContainer("presence_both_abort").events
 	if len(events) == 0 {
 		t.Fatalf("expected both-disconnected finish event to be recorded")
 	}
@@ -901,6 +905,10 @@ func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 		t.Fatalf("expected archived match move to succeed, got %v", err)
 	}
 
+	if err := archive.Flush(); err != nil {
+		t.Fatalf("expected archive flush to succeed, got %v", err)
+	}
+
 	restartedArchive, err := platform.NewMatchArchiveStore(archivePath)
 	if err != nil {
 		t.Fatalf("expected archive reload to succeed, got %v", err)
@@ -922,7 +930,7 @@ func TestRestartedServiceReconcilesArchivedActiveMatch(t *testing.T) {
 	if reconciled.Match.Status != "finished" || reconciled.Match.Winner != "draw" || reconciled.Match.FinishReason != "abandon" {
 		t.Fatalf("expected restarted active room to reconcile into a draw abandon, got status=%q winner=%q reason=%q", reconciled.Match.Status, reconciled.Match.Winner, reconciled.Match.FinishReason)
 	}
-	events := restarted.events["reconcile_room"]
+	events := restarted.getMatchContainer("reconcile_room").events
 	if len(events) == 0 {
 		t.Fatalf("expected reconciled finish event to be recorded")
 	}
@@ -977,7 +985,7 @@ func TestSelectTargetAppliesFreezeAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected target selection to freeze piece, got %v", err)
 	}
 
-	if frozen := service.matches["freeze_apply"].Board[6][0]; frozen == nil || !frozen.Frozen {
+	if frozen := service.getMatchContainer("freeze_apply").state.Board[6][0]; frozen == nil || !frozen.Frozen {
 		t.Fatalf("expected backend to mark target frozen")
 	}
 	if result.Match.PendingCard != nil {
@@ -1013,7 +1021,7 @@ func TestSelectTargetAppliesShieldAndSetsExpiry(t *testing.T) {
 		t.Fatalf("expected target selection to shield piece, got %v", err)
 	}
 
-	shielded := service.matches["shield_apply"].Board[1][0]
+	shielded := service.getMatchContainer("shield_apply").state.Board[1][0]
 	if shielded == nil || !shielded.Shielded || shielded.ShieldTurn == nil {
 		t.Fatalf("expected backend to shield target with expiry, got %#v", shielded)
 	}
@@ -1067,7 +1075,7 @@ func TestSelectTargetAppliesSniperAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected sniper target selection to succeed, got %v", err)
 	}
 
-	if removed := service.matches["sniper_apply"].Board[6][0]; removed != nil {
+	if removed := service.getMatchContainer("sniper_apply").state.Board[6][0]; removed != nil {
 		t.Fatalf("expected backend to remove sniped piece, got %#v", removed)
 	}
 	if result.Match.PendingCard != nil {
@@ -1084,7 +1092,7 @@ func TestSelectTargetRejectsSniperIfRemovalChecksEnemyKing(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "sniper_enemy_check"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "sniper")
 
-	state := service.matches["sniper_enemy_check"]
+	state := service.getMatchContainer("sniper_enemy_check").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1117,7 +1125,7 @@ func TestSelectTargetAppliesBadSniperAndConsumesCard(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "badsniper_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "badsniper")
 
-	state := service.matches["badsniper_apply"]
+	state := service.getMatchContainer("badsniper_apply").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1143,7 +1151,7 @@ func TestSelectTargetAppliesBadSniperAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected bad sniper target selection to succeed, got %v", err)
 	}
 
-	if removed := service.matches["badsniper_apply"].Board[2][2]; removed != nil {
+	if removed := service.getMatchContainer("badsniper_apply").state.Board[2][2]; removed != nil {
 		t.Fatalf("expected backend to remove own targeted piece, got %#v", removed)
 	}
 	if result.Match.PendingCard != nil {
@@ -1196,7 +1204,7 @@ func TestPromoteFlowBuildsOptionsThenAppliesSelection(t *testing.T) {
 		t.Fatalf("expected promote selection step to succeed, got %v", err)
 	}
 
-	if piece := service.matches["promote_flow"].Board[1][0]; piece == nil || piece.Type != "queen" {
+	if piece := service.getMatchContainer("promote_flow").state.Board[1][0]; piece == nil || piece.Type != "queen" {
 		t.Fatalf("expected promoted piece to become queen, got %#v", piece)
 	}
 	if resolved.Match.PendingCard != nil {
@@ -1213,7 +1221,7 @@ func TestDemoteFlowRejectsMissingSelection(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "demote_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "demote")
 
-	state := service.matches["demote_flow"]
+	state := service.getMatchContainer("demote_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1289,7 +1297,7 @@ func TestPromoteHimFlowBuildsOptionsAndAppliesSelection(t *testing.T) {
 		t.Fatalf("expected promotehim selection step to succeed, got %v", err)
 	}
 
-	if piece := service.matches["promotehim_flow"].Board[6][0]; piece == nil || piece.Type != "queen" || piece.Color != "black" {
+	if piece := service.getMatchContainer("promotehim_flow").state.Board[6][0]; piece == nil || piece.Type != "queen" || piece.Color != "black" {
 		t.Fatalf("expected enemy piece to become black queen, got %#v", piece)
 	}
 	if resolved.Match.PendingCard != nil {
@@ -1306,7 +1314,7 @@ func TestDemoteHimCanTargetOwnPieceAndApplySelection(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "demotehim_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "demotehim")
 
-	state := service.matches["demotehim_flow"]
+	state := service.getMatchContainer("demotehim_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1345,7 +1353,7 @@ func TestDemoteHimCanTargetOwnPieceAndApplySelection(t *testing.T) {
 		t.Fatalf("expected demotehim selection step to succeed, got %v", err)
 	}
 
-	if piece := service.matches["demotehim_flow"].Board[3][3]; piece == nil || piece.Type != "pawn" || piece.Color != "white" {
+	if piece := service.getMatchContainer("demotehim_flow").state.Board[3][3]; piece == nil || piece.Type != "pawn" || piece.Color != "white" {
 		t.Fatalf("expected targeted piece to become white pawn, got %#v", piece)
 	}
 	if len(resolved.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -1392,10 +1400,10 @@ func TestTeleportFlowSelectsSourceThenDestination(t *testing.T) {
 		t.Fatalf("expected teleport destination selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["teleport_flow"].Board[4][4]; piece == nil || piece.Type != "pawn" || piece.Color != "white" {
+	if piece := service.getMatchContainer("teleport_flow").state.Board[4][4]; piece == nil || piece.Type != "pawn" || piece.Color != "white" {
 		t.Fatalf("expected white pawn teleported to e5, got %#v", piece)
 	}
-	if source := service.matches["teleport_flow"].Board[1][0]; source != nil {
+	if source := service.getMatchContainer("teleport_flow").state.Board[1][0]; source != nil {
 		t.Fatalf("expected original square to be empty after teleport, got %#v", source)
 	}
 	if step2.Match.PendingCard != nil {
@@ -1412,7 +1420,7 @@ func TestJumpFlowSelectsSourceThenDestination(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "jump_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "jump")
 
-	state := service.matches["jump_flow"]
+	state := service.getMatchContainer("jump_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1452,10 +1460,10 @@ func TestJumpFlowSelectsSourceThenDestination(t *testing.T) {
 		t.Fatalf("expected jump destination selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["jump_flow"].Board[3][5]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
+	if piece := service.getMatchContainer("jump_flow").state.Board[3][5]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
 		t.Fatalf("expected white rook to land on jump destination, got %#v", piece)
 	}
-	if source := service.matches["jump_flow"].Board[3][3]; source != nil {
+	if source := service.getMatchContainer("jump_flow").state.Board[3][3]; source != nil {
 		t.Fatalf("expected original jump square to be empty, got %#v", source)
 	}
 	if step2.Match.PendingCard != nil {
@@ -1472,7 +1480,7 @@ func TestSwapMeFlowSelectsTwoOwnedPieces(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "swapme_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swapme")
 
-	state := service.matches["swapme_flow"]
+	state := service.getMatchContainer("swapme_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1512,10 +1520,10 @@ func TestSwapMeFlowSelectsTwoOwnedPieces(t *testing.T) {
 		t.Fatalf("expected swapme second selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["swapme_flow"].Board[2][2]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
+	if piece := service.getMatchContainer("swapme_flow").state.Board[2][2]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
 		t.Fatalf("expected rook to move onto first swap square, got %#v", piece)
 	}
-	if piece := service.matches["swapme_flow"].Board[4][4]; piece == nil || piece.Type != "knight" || piece.Color != "white" {
+	if piece := service.getMatchContainer("swapme_flow").state.Board[4][4]; piece == nil || piece.Type != "knight" || piece.Color != "white" {
 		t.Fatalf("expected knight to move onto second swap square, got %#v", piece)
 	}
 	if step2.Match.PendingCard != nil {
@@ -1532,7 +1540,7 @@ func TestSwapUsFlowSelectsOwnedThenEnemyPiece(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "swapus_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swapus")
 
-	state := service.matches["swapus_flow"]
+	state := service.getMatchContainer("swapus_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1572,10 +1580,10 @@ func TestSwapUsFlowSelectsOwnedThenEnemyPiece(t *testing.T) {
 		t.Fatalf("expected swapus second selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["swapus_flow"].Board[2][2]; piece == nil || piece.Type != "knight" || piece.Color != "black" {
+	if piece := service.getMatchContainer("swapus_flow").state.Board[2][2]; piece == nil || piece.Type != "knight" || piece.Color != "black" {
 		t.Fatalf("expected enemy knight to move onto first swap square, got %#v", piece)
 	}
-	if piece := service.matches["swapus_flow"].Board[5][5]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
+	if piece := service.getMatchContainer("swapus_flow").state.Board[5][5]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
 		t.Fatalf("expected white rook to move onto enemy square, got %#v", piece)
 	}
 	if step2.Match.PendingCard != nil {
@@ -1592,7 +1600,7 @@ func TestSwapHimFlowSelectsTwoEnemyPieces(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "swaphim_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "swaphim")
 
-	state := service.matches["swaphim_flow"]
+	state := service.getMatchContainer("swaphim_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1632,10 +1640,10 @@ func TestSwapHimFlowSelectsTwoEnemyPieces(t *testing.T) {
 		t.Fatalf("expected swaphim second selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["swaphim_flow"].Board[5][5]; piece == nil || piece.Type != "rook" || piece.Color != "black" {
+	if piece := service.getMatchContainer("swaphim_flow").state.Board[5][5]; piece == nil || piece.Type != "rook" || piece.Color != "black" {
 		t.Fatalf("expected enemy rook to move onto first swap square, got %#v", piece)
 	}
-	if piece := service.matches["swaphim_flow"].Board[6][4]; piece == nil || piece.Type != "knight" || piece.Color != "black" {
+	if piece := service.getMatchContainer("swaphim_flow").state.Board[6][4]; piece == nil || piece.Type != "knight" || piece.Color != "black" {
 		t.Fatalf("expected enemy knight to move onto second swap square, got %#v", piece)
 	}
 	if step2.Match.PendingCard != nil {
@@ -1652,7 +1660,7 @@ func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "borrow_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "borrow")
 
-	state := service.matches["borrow_flow"]
+	state := service.getMatchContainer("borrow_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1677,7 +1685,7 @@ func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 		t.Fatalf("expected borrow target selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["borrow_flow"].Board[3][3]; piece == nil || piece.Color != "white" || !piece.Borrowed {
+	if piece := service.getMatchContainer("borrow_flow").state.Board[3][3]; piece == nil || piece.Color != "white" || !piece.Borrowed {
 		t.Fatalf("expected borrowed piece to become temporarily white, got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -1694,7 +1702,7 @@ func TestBorrowTemporarilyTransfersControlUntilTurnEnds(t *testing.T) {
 		t.Fatalf("expected borrowed piece to be movable by white, got %v", err)
 	}
 
-	if piece := service.matches["borrow_flow"].Board[3][6]; piece == nil || piece.Color != "black" || piece.Borrowed {
+	if piece := service.getMatchContainer("borrow_flow").state.Board[3][6]; piece == nil || piece.Color != "black" || piece.Borrowed {
 		t.Fatalf("expected borrowed piece to revert to black after turn end, got %#v", piece)
 	}
 }
@@ -1705,7 +1713,7 @@ func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "mindcontrol_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "mindcontrol")
 
-	state := service.matches["mindcontrol_flow"]
+	state := service.getMatchContainer("mindcontrol_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1734,7 +1742,7 @@ func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 		t.Fatalf("expected mindcontrol target selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["mindcontrol_flow"].Board[3][3]; piece == nil || piece.Color != "white" || piece.Borrowed {
+	if piece := service.getMatchContainer("mindcontrol_flow").state.Board[3][3]; piece == nil || piece.Color != "white" || piece.Borrowed {
 		t.Fatalf("expected mind-controlled piece to become permanently white, got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -1751,7 +1759,7 @@ func TestMindControlPermanentlyTransfersControl(t *testing.T) {
 		t.Fatalf("expected mind-controlled piece to be movable by white, got %v", err)
 	}
 
-	if piece := service.matches["mindcontrol_flow"].Board[3][6]; piece == nil || piece.Color != "white" || piece.Borrowed {
+	if piece := service.getMatchContainer("mindcontrol_flow").state.Board[3][6]; piece == nil || piece.Color != "white" || piece.Borrowed {
 		t.Fatalf("expected mind-controlled piece to stay white after turn end, got %#v", piece)
 	}
 }
@@ -1762,7 +1770,7 @@ func TestParasiteLinksHostToEqualValueEnemyPiece(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "parasite_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "parasite")
 
-	state := service.matches["parasite_flow"]
+	state := service.getMatchContainer("parasite_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1802,7 +1810,7 @@ func TestParasiteLinksHostToEqualValueEnemyPiece(t *testing.T) {
 		t.Fatalf("expected parasite target selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["parasite_flow"].Board[3][3]; piece == nil || piece.ParasiteTarget != "5,5" {
+	if piece := service.getMatchContainer("parasite_flow").state.Board[3][3]; piece == nil || piece.ParasiteTarget != "5,5" {
 		t.Fatalf("expected host to store parasite target, got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -1815,7 +1823,7 @@ func TestParasiteTriggerRemovesHostWhenLinkedTargetDies(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "parasite_trigger"}, now)
 
-	state := service.matches["parasite_trigger"]
+	state := service.getMatchContainer("parasite_trigger").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1833,7 +1841,7 @@ func TestParasiteTriggerRemovesHostWhenLinkedTargetDies(t *testing.T) {
 		t.Fatalf("expected parasite trigger capture to succeed, got %v", err)
 	}
 
-	if host := service.matches["parasite_trigger"].Board[3][3]; host != nil {
+	if host := service.getMatchContainer("parasite_trigger").state.Board[3][3]; host != nil {
 		t.Fatalf("expected host piece to die when linked target died, got %#v", host)
 	}
 }
@@ -1843,7 +1851,7 @@ func TestParasiteRejectedCaptureDoesNotMutateBoard(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "parasite_reject"}, now)
 
-	state := service.matches["parasite_reject"]
+	state := service.getMatchContainer("parasite_reject").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[0][1] = &contracts.Piece{Type: "rook", Color: "white", ParasiteTarget: "2,2"}
@@ -1863,13 +1871,13 @@ func TestParasiteRejectedCaptureDoesNotMutateBoard(t *testing.T) {
 		t.Fatalf("expected parasite rejection, got %v", err)
 	}
 
-	if piece := service.matches["parasite_reject"].Board[1][1]; piece == nil || piece.Type != "bishop" || piece.Color != "white" {
+	if piece := service.getMatchContainer("parasite_reject").state.Board[1][1]; piece == nil || piece.Type != "bishop" || piece.Color != "white" {
 		t.Fatalf("expected moving bishop to remain on original square, got %#v", piece)
 	}
-	if piece := service.matches["parasite_reject"].Board[2][2]; piece == nil || piece.Type != "rook" || piece.Color != "black" {
+	if piece := service.getMatchContainer("parasite_reject").state.Board[2][2]; piece == nil || piece.Type != "rook" || piece.Color != "black" {
 		t.Fatalf("expected captured target to remain on board after rejection, got %#v", piece)
 	}
-	if piece := service.matches["parasite_reject"].Board[0][1]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
+	if piece := service.getMatchContainer("parasite_reject").state.Board[0][1]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
 		t.Fatalf("expected parasite host to remain on board after rejection, got %#v", piece)
 	}
 }
@@ -1880,7 +1888,7 @@ func TestCloneFlowSelectsSourceThenAdjacentEmptySquare(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "clone_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "clone")
 
-	state := service.matches["clone_flow"]
+	state := service.getMatchContainer("clone_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][0] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1919,10 +1927,10 @@ func TestCloneFlowSelectsSourceThenAdjacentEmptySquare(t *testing.T) {
 		t.Fatalf("expected clone destination selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["clone_flow"].Board[4][4]; piece == nil || piece.Type != "knight" || piece.Color != "white" {
+	if piece := service.getMatchContainer("clone_flow").state.Board[4][4]; piece == nil || piece.Type != "knight" || piece.Color != "white" {
 		t.Fatalf("expected cloned knight on destination square, got %#v", piece)
 	}
-	if source := service.matches["clone_flow"].Board[3][3]; source == nil || source.Type != "knight" || source.Color != "white" {
+	if source := service.getMatchContainer("clone_flow").state.Board[3][3]; source == nil || source.Type != "knight" || source.Color != "white" {
 		t.Fatalf("expected source knight to remain in place, got %#v", source)
 	}
 	if step2.Match.PendingCard != nil {
@@ -1958,10 +1966,10 @@ func TestLavaGroundPlacementConsumesCardAndStoresTrap(t *testing.T) {
 		t.Fatalf("expected lavaground target selection to succeed, got %v", err)
 	}
 
-	if len(service.matches["lava_place"].LavaSquares) != 1 {
-		t.Fatalf("expected one active lava square, got %#v", service.matches["lava_place"].LavaSquares)
+	if len(service.getMatchContainer("lava_place").state.LavaSquares) != 1 {
+		t.Fatalf("expected one active lava square, got %#v", service.getMatchContainer("lava_place").state.LavaSquares)
 	}
-	lava := service.matches["lava_place"].LavaSquares[0]
+	lava := service.getMatchContainer("lava_place").state.LavaSquares[0]
 	if lava.Row != 4 || lava.Col != 4 || lava.MovesLeft != 2 {
 		t.Fatalf("expected lava trap at e5 with 2 moves left, got %#v", lava)
 	}
@@ -1975,7 +1983,7 @@ func TestLavaGroundBurnsLandingPieceAndTicksOtherTraps(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "lava_trigger"}, now)
 
-	state := service.matches["lava_trigger"]
+	state := service.getMatchContainer("lava_trigger").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -1997,13 +2005,13 @@ func TestLavaGroundBurnsLandingPieceAndTicksOtherTraps(t *testing.T) {
 		t.Fatalf("expected move onto lava to succeed, got %v", err)
 	}
 
-	if piece := service.matches["lava_trigger"].Board[3][4]; piece != nil {
+	if piece := service.getMatchContainer("lava_trigger").state.Board[3][4]; piece != nil {
 		t.Fatalf("expected landing piece to be burned by lava, got %#v", piece)
 	}
-	if len(service.matches["lava_trigger"].LavaSquares) != 1 {
-		t.Fatalf("expected triggered lava to be removed and other lava to decay, got %#v", service.matches["lava_trigger"].LavaSquares)
+	if len(service.getMatchContainer("lava_trigger").state.LavaSquares) != 1 {
+		t.Fatalf("expected triggered lava to be removed and other lava to decay, got %#v", service.getMatchContainer("lava_trigger").state.LavaSquares)
 	}
-	other := service.matches["lava_trigger"].LavaSquares[0]
+	other := service.getMatchContainer("lava_trigger").state.LavaSquares[0]
 	if other.Row != 5 || other.Col != 5 || other.MovesLeft != 1 {
 		t.Fatalf("expected other lava trap to decay to 1 move left, got %#v", other)
 	}
@@ -2018,7 +2026,7 @@ func TestInvisibleRemovesPieceFromBoardAndStoresGhostState(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "invisible_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "invisible")
 
-	state := service.matches["invisible_apply"]
+	state := service.getMatchContainer("invisible_apply").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2043,14 +2051,14 @@ func TestInvisibleRemovesPieceFromBoardAndStoresGhostState(t *testing.T) {
 		t.Fatalf("expected invisible target selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["invisible_apply"].Board[0][0]; piece != nil {
+	if piece := service.getMatchContainer("invisible_apply").state.Board[0][0]; piece != nil {
 		t.Fatalf("expected invisible piece to be removed from the board, got %#v", piece)
 	}
-	if service.matches["invisible_apply"].InvisiblePiece == nil {
+	if service.getMatchContainer("invisible_apply").state.InvisiblePiece == nil {
 		t.Fatalf("expected invisible ghost state to be stored")
 	}
-	if service.matches["invisible_apply"].InvisiblePiece.Row != 0 || service.matches["invisible_apply"].InvisiblePiece.Col != 0 {
-		t.Fatalf("expected invisible ghost to start on a1, got %#v", service.matches["invisible_apply"].InvisiblePiece)
+	if service.getMatchContainer("invisible_apply").state.InvisiblePiece.Row != 0 || service.getMatchContainer("invisible_apply").state.InvisiblePiece.Col != 0 {
+		t.Fatalf("expected invisible ghost to start on a1, got %#v", service.getMatchContainer("invisible_apply").state.InvisiblePiece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
 		t.Fatalf("expected invisible card to be consumed")
@@ -2063,7 +2071,7 @@ func TestInvisibleMoveMaterializesWhenGivingCheck(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "invisible_move"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "invisible")
 
-	state := service.matches["invisible_move"]
+	state := service.getMatchContainer("invisible_move").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2097,10 +2105,10 @@ func TestInvisibleMoveMaterializesWhenGivingCheck(t *testing.T) {
 		t.Fatalf("expected invisible move to succeed, got %v", err)
 	}
 
-	if service.matches["invisible_move"].InvisiblePiece != nil {
+	if service.getMatchContainer("invisible_move").state.InvisiblePiece != nil {
 		t.Fatalf("expected invisible piece to materialize after giving check")
 	}
-	if piece := service.matches["invisible_move"].Board[7][0]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
+	if piece := service.getMatchContainer("invisible_move").state.Board[7][0]; piece == nil || piece.Type != "rook" || piece.Color != "white" {
 		t.Fatalf("expected rook to materialize on a8, got %#v", piece)
 	}
 	if len(result.Events) == 0 || result.Events[0].Payload["materialized"] != "check" {
@@ -2114,7 +2122,7 @@ func TestUnabomberAttachesBombAndConsumesCard(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "unabomber_apply"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "unabomber")
 
-	state := service.matches["unabomber_apply"]
+	state := service.getMatchContainer("unabomber_apply").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2139,11 +2147,11 @@ func TestUnabomberAttachesBombAndConsumesCard(t *testing.T) {
 		t.Fatalf("expected unabomber target selection to succeed, got %v", err)
 	}
 
-	if piece := service.matches["unabomber_apply"].Board[1][0]; piece == nil || !piece.Bomb {
+	if piece := service.getMatchContainer("unabomber_apply").state.Board[1][0]; piece == nil || !piece.Bomb {
 		t.Fatalf("expected target piece to carry a bomb, got %#v", piece)
 	}
-	if len(service.matches["unabomber_apply"].BombPieces) != 1 {
-		t.Fatalf("expected one tracked bomb, got %#v", service.matches["unabomber_apply"].BombPieces)
+	if len(service.getMatchContainer("unabomber_apply").state.BombPieces) != 1 {
+		t.Fatalf("expected one tracked bomb, got %#v", service.getMatchContainer("unabomber_apply").state.BombPieces)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
 		t.Fatalf("expected unabomber card to be consumed")
@@ -2155,7 +2163,7 @@ func TestUnabomberExplodesOnWhiteTurnHandoff(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "unabomber_explode"}, now)
 
-	state := service.matches["unabomber_explode"]
+	state := service.getMatchContainer("unabomber_explode").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2180,17 +2188,17 @@ func TestUnabomberExplodesOnWhiteTurnHandoff(t *testing.T) {
 		t.Fatalf("expected black move before bomb explosion to succeed, got %v", err)
 	}
 
-	if piece := service.matches["unabomber_explode"].Board[4][4]; piece != nil {
+	if piece := service.getMatchContainer("unabomber_explode").state.Board[4][4]; piece != nil {
 		t.Fatalf("expected bomb carrier to be destroyed, got %#v", piece)
 	}
-	if piece := service.matches["unabomber_explode"].Board[4][5]; piece != nil {
+	if piece := service.getMatchContainer("unabomber_explode").state.Board[4][5]; piece != nil {
 		t.Fatalf("expected adjacent white piece to be destroyed, got %#v", piece)
 	}
-	if piece := service.matches["unabomber_explode"].Board[5][4]; piece != nil {
+	if piece := service.getMatchContainer("unabomber_explode").state.Board[5][4]; piece != nil {
 		t.Fatalf("expected adjacent black piece to be destroyed, got %#v", piece)
 	}
-	if len(service.matches["unabomber_explode"].BombPieces) != 0 {
-		t.Fatalf("expected bomb tracker to clear after explosion, got %#v", service.matches["unabomber_explode"].BombPieces)
+	if len(service.getMatchContainer("unabomber_explode").state.BombPieces) != 0 {
+		t.Fatalf("expected bomb tracker to clear after explosion, got %#v", service.getMatchContainer("unabomber_explode").state.BombPieces)
 	}
 	if len(result.Events) == 0 || result.Events[0].Payload["bombExplodedSquares"] == nil {
 		t.Fatalf("expected move payload to include exploded bomb squares, got %#v", result.Events)
@@ -2202,7 +2210,7 @@ func TestUnabomberTrackerFollowsMovedCarrier(t *testing.T) {
 	now := time.Date(2026, 5, 5, 8, 5, 0, 0, time.UTC)
 	createTestMatch(service, contracts.CreateMatchRequest{MatchID: "unabomber_tracker"}, now)
 
-	state := service.matches["unabomber_tracker"]
+	state := service.getMatchContainer("unabomber_tracker").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2238,7 +2246,7 @@ func TestRoundDrawAddsCardsOnAuthoritativeSchedule(t *testing.T) {
 		StarterHandMode: "starter_three",
 	}, now)
 
-	state := service.matches["round_draw_schedule"]
+	state := service.getMatchContainer("round_draw_schedule").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2285,7 +2293,7 @@ func TestHalfFuseSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "halffuse_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "halffuse")
 
-	state := service.matches["halffuse_flow"]
+	state := service.getMatchContainer("halffuse_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2324,10 +2332,10 @@ func TestHalfFuseSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 		t.Fatalf("expected halffuse second selection to succeed, got %v", err)
 	}
 
-	if source := service.matches["halffuse_flow"].Board[3][3]; source != nil {
+	if source := service.getMatchContainer("halffuse_flow").state.Board[3][3]; source != nil {
 		t.Fatalf("expected first piece to be consumed by fusion, got %#v", source)
 	}
-	if fused := service.matches["halffuse_flow"].Board[3][4]; fused == nil || fused.Type != "knight" || fused.FusedWith != "pawn" {
+	if fused := service.getMatchContainer("halffuse_flow").state.Board[3][4]; fused == nil || fused.Type != "knight" || fused.FusedWith != "pawn" {
 		t.Fatalf("expected fused knight+pawn result, got %#v", fused)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -2341,7 +2349,7 @@ func TestHalfFuseBishopAndRookBecomeQueen(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "halffuse_queen"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "halffuse")
 
-	state := service.matches["halffuse_queen"]
+	state := service.getMatchContainer("halffuse_queen").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2375,7 +2383,7 @@ func TestHalfFuseBishopAndRookBecomeQueen(t *testing.T) {
 		t.Fatalf("expected bishop+rook halffuse to succeed, got %v", err)
 	}
 
-	if fused := service.matches["halffuse_queen"].Board[3][4]; fused == nil || fused.Type != "queen" || fused.FusedWith != "" {
+	if fused := service.getMatchContainer("halffuse_queen").state.Board[3][4]; fused == nil || fused.Type != "queen" || fused.FusedWith != "" {
 		t.Fatalf("expected bishop+rook to become queen, got %#v", fused)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -2389,7 +2397,7 @@ func TestFullFusionSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fullfusion_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fullfusion")
 
-	state := service.matches["fullfusion_flow"]
+	state := service.getMatchContainer("fullfusion_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2428,10 +2436,10 @@ func TestFullFusionSelectsTwoPiecesAndAppliesFusion(t *testing.T) {
 		t.Fatalf("expected fullfusion second selection to succeed, got %v", err)
 	}
 
-	if source := service.matches["fullfusion_flow"].Board[3][3]; source != nil {
+	if source := service.getMatchContainer("fullfusion_flow").state.Board[3][3]; source != nil {
 		t.Fatalf("expected first piece to be consumed by full fusion, got %#v", source)
 	}
-	if fused := service.matches["fullfusion_flow"].Board[3][4]; fused == nil || fused.Type != "knight" || fused.FusedWith != "queen" {
+	if fused := service.getMatchContainer("fullfusion_flow").state.Board[3][4]; fused == nil || fused.Type != "knight" || fused.FusedWith != "queen" {
 		t.Fatalf("expected fused knight+queen result, got %#v", fused)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -2445,7 +2453,7 @@ func TestFullFusionBishopAndRookBecomeQueen(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fullfusion_queen"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fullfusion")
 
-	state := service.matches["fullfusion_queen"]
+	state := service.getMatchContainer("fullfusion_queen").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][7] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2479,7 +2487,7 @@ func TestFullFusionBishopAndRookBecomeQueen(t *testing.T) {
 		t.Fatalf("expected bishop+rook fullfusion to succeed, got %v", err)
 	}
 
-	if fused := service.matches["fullfusion_queen"].Board[3][4]; fused == nil || fused.Type != "queen" || fused.FusedWith != "" {
+	if fused := service.getMatchContainer("fullfusion_queen").state.Board[3][4]; fused == nil || fused.Type != "queen" || fused.FusedWith != "" {
 		t.Fatalf("expected bishop+rook to become queen, got %#v", fused)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -2830,10 +2838,10 @@ func TestReverseRestoresPreviousCompletedMoveState(t *testing.T) {
 		t.Fatalf("expected reverse play_card to succeed, got %v", err)
 	}
 
-	if piece := service.matches["reverse_flow"].Board[4][4]; piece != nil {
+	if piece := service.getMatchContainer("reverse_flow").state.Board[4][4]; piece != nil {
 		t.Fatalf("expected reversed black pawn to disappear from e5, got %#v", piece)
 	}
-	if piece := service.matches["reverse_flow"].Board[6][4]; piece == nil || piece.Type != "pawn" || piece.Color != "black" {
+	if piece := service.getMatchContainer("reverse_flow").state.Board[6][4]; piece == nil || piece.Type != "pawn" || piece.Color != "black" {
 		t.Fatalf("expected black pawn restored to e7, got %#v", piece)
 	}
 	if result.Match.Turn != "white" {
@@ -2902,7 +2910,7 @@ func TestMirrorMovesFirstMatchingPieceAndRefreshesCurrentHistoryState(t *testing
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "mirror_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "mirror")
 
-	state := service.matches["mirror_flow"]
+	state := service.getMatchContainer("mirror_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2944,7 +2952,7 @@ func TestFakePiecePlacesAuthoritativePawnOnEmptySquare(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "fakepiece_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "fakepiece")
 
-	state := service.matches["fakepiece_flow"]
+	state := service.getMatchContainer("fakepiece_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -2986,7 +2994,7 @@ func TestBlackHoleArmsAndExplodesAfterCountdown(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "blackhole_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "blackhole")
 
-	state := service.matches["blackhole_flow"]
+	state := service.getMatchContainer("blackhole_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -3102,7 +3110,7 @@ func TestSmallSacrificeRemovesPiecesAndDrawsRewardCards(t *testing.T) {
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "smallsacrifice_flow"}, now)
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "smallsacrifice")
 
-	state := service.matches["smallsacrifice_flow"]
+	state := service.getMatchContainer("smallsacrifice_flow").state
 	state.Board = emptyBoard()
 	state.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	state.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
@@ -3296,7 +3304,7 @@ func TestJokerTransformsIntoBackendOwnedCard(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 13, 30, 0, 0, time.UTC)
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "joker_flow"}, now)
-	state := service.matches["joker_flow"]
+	state := service.getMatchContainer("joker_flow").state
 	state.WhiteHand = []contracts.GameCard{cardTemplateByMechanic("joker")}
 	snapshot.Match.WhiteHand = state.WhiteHand
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "joker")

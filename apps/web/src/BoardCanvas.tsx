@@ -1645,12 +1645,27 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
   const touchStartSq = React.useRef<Sq | null>(null);
   const touchMoved = React.useRef(false);
 
+  const touchLongPressTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleTouchStart = (e: TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     touchMoved.current = false;
     const sq = getTouchSquare(e);
     if (!sq || sq.row < 0 || sq.row > 7 || sq.col < 0 || sq.col > 7) return;
     touchStartSq.current = sq;
+
+    // Long-press for analysis arrow on mobile
+    if (!cardPending && !isReviewing) {
+      touchLongPressTimer.current = setTimeout(() => {
+        const p = displayBoard[sq.row]?.[sq.col];
+        if (!localDrag) {
+          canvasRef.current?.style.setProperty('outline', '2px solid rgba(255,200,50,0.5)');
+          canvasRef.current?.style.setProperty('outline-offset', '-2px');
+          onClick(sq.row, sq.col);
+        }
+      }, 500);
+    }
+
     if (cardPending || isReviewing) return;
     onClearAnalysisArrows();
     const p = displayBoard[sq.row]?.[sq.col];
@@ -1668,6 +1683,11 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
 
   const handleTouchMove = (e: TouchEvent) => {
     if (e.cancelable) e.preventDefault();
+    if (touchLongPressTimer.current) {
+      clearTimeout(touchLongPressTimer.current);
+      touchLongPressTimer.current = null;
+    }
+    canvasRef.current?.style.removeProperty('outline');
     if (!localDrag) return;
     touchMoved.current = true;
     const canvas = canvasRef.current!;
@@ -1678,10 +1698,16 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
 
   const handleTouchEnd = (e: TouchEvent) => {
     e.preventDefault();
+    if (touchLongPressTimer.current) {
+      clearTimeout(touchLongPressTimer.current);
+      touchLongPressTimer.current = null;
+    }
+    canvasRef.current?.style.removeProperty('outline');
     const sq = getTouchSquare(e);
     if (localDrag) {
-      if (sq && sq.row >= 0 && sq.row <= 7 && sq.col >= 0 && sq.col <= 7) {
-        onDrop(sq.row, sq.col);
+      const dropTarget = sq ?? touchStartSq.current;
+      if (dropTarget && dropTarget.row >= 0 && dropTarget.row <= 7 && dropTarget.col >= 0 && dropTarget.col <= 7) {
+        onDrop(dropTarget.row, dropTarget.col);
       }
       setLocalDrag(null);
       setLocalDragPos(null);
@@ -1695,6 +1721,11 @@ export const BoardCanvas = React.memo(function BoardCanvas(props: BoardCanvasPro
   };
 
   const handleTouchCancel = () => {
+    if (touchLongPressTimer.current) {
+      clearTimeout(touchLongPressTimer.current);
+      touchLongPressTimer.current = null;
+    }
+    canvasRef.current?.style.removeProperty('outline');
     if (localDragRef.current) {
       setLocalDrag(null);
       setLocalDragPos(null);

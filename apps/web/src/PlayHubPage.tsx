@@ -30,6 +30,7 @@ interface PlayHubPageProps {
   matchDestinationNotice?: string | null;
   onReturnToMatch?: () => void;
   onCopyMatchLink?: (matchId: string) => void;
+  tutorialActive?: boolean;
 }
 
 
@@ -60,6 +61,7 @@ export default function PlayHubPage({
   matchDestinationNotice = null,
   onReturnToMatch,
   onCopyMatchLink,
+  tutorialActive = false,
 }: PlayHubPageProps): React.ReactElement {
   const queueRef = useRef<HTMLDivElement>(null);
   const lobbiesRef = useRef<HTMLDivElement>(null);
@@ -218,6 +220,7 @@ export default function PlayHubPage({
               recoveredWhiteTicket={queueRecovery?.white ?? null}
               recoveredBlackTicket={queueRecovery?.black ?? null}
               recoveryReady={queueRecovery !== null}
+              tutorialActive={tutorialActive}
             />
           </div>
 

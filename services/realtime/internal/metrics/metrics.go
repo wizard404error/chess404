@@ -3,6 +3,8 @@ package metrics
 import (
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,10 +17,27 @@ var (
 	matchesActive = newGauge("matches_active", "Currently active matches")
 	matchesCreated = newCounter("matches_created_total", "Total matches created")
 	queueDepth = newGauge("queue_depth", "Current matchmaking queue depth")
+	PushSnapshotDrops = newCounter("push_snapshot_drops_total", "Snapshots dropped due to full subscriber buffer")
 )
 
 func Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Require a valid internal service token for the metrics endpoint
+		// to prevent leaking operational data to unauthenticated clients.
+		token := strings.TrimSpace(r.Header.Get("Authorization"))
+		expected := strings.TrimSpace(os.Getenv("INTERNAL_SERVICE_TOKEN"))
+		if expected != "" {
+			const prefix = "Bearer "
+			if strings.HasPrefix(token, prefix) {
+				token = strings.TrimSpace(strings.TrimPrefix(token, prefix))
+			}
+			if token == "" || token != expected {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"unauthorized"}`))
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		data := Collect()
@@ -110,6 +129,10 @@ type standaloneCounter struct {
 }
 
 func newCounter(name, help string) *standaloneCounter {
+	return &standaloneCounter{name: name}
+}
+
+func NewCounter(name, help string) *standaloneCounter {
 	return &standaloneCounter{name: name}
 }
 

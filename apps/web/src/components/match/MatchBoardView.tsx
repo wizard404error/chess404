@@ -5,6 +5,8 @@ import type { Board, PieceType, PieceColor, Sq, GameCard, CardPendingState, Doub
 import { RARITY_STYLE, RARITY_WEIGHTS, OPP, FILES, RANKS, SQ, MAX_HAND_SIZE, ABORT_SECS, DRAW_FROM, DRAW_EVERY, INITIAL_DEAL_ROUND, PIECE_VALUE } from '../../constants';
 import { findKing, positionKey, toFEN, uciToSan } from '../../chessEngine';
 import { BoardCanvas, type TransformAnim, type SniperAnim, type TeleportAnim, type JumpAnim, type SacrificeAnim, type MindControlAnim, type FuseAnim, type BoardArrow } from '../../BoardCanvas';
+import CardHand from './CardHand';
+import PlayerCardInfo from './PlayerCardInfo';
 
 const DRAW_COOLDOWN_MS = 15000;
 
@@ -120,8 +122,6 @@ interface MatchBoardViewProps {
   isReviewing: boolean;
   reviewBoard: Board | null;
   reviewIdx: number;
-  renderHand: (hand: GameCard[], seat: PieceColor, side: 'top' | 'bottom') => React.ReactNode;
-  renderPlayerCard: (seat: PieceColor) => React.ReactNode;
   chatMessages: { sender: PieceColor; text: string }[];
   setChatMessages: (v: any | ((prev: any) => any)) => void;
   movHist: any[];
@@ -263,8 +263,6 @@ export function MatchBoardView(props: MatchBoardViewProps) {
     isReviewing,
     reviewBoard,
     reviewIdx,
-    renderHand,
-    renderPlayerCard,
     chatMessages,
     setChatMessages,
     movHist,
@@ -368,7 +366,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
 
       {/* ── Left column ── */}
       <div className={`match-layout__left${mobilePanel === 'left' ? ' is-open' : ''}`}>
-        {renderPlayerCard(topSeat)}
+        <PlayerCardInfo seat={topSeat} />
         {false && (
         <div style={{
           background: topSeat === 'white' ? 'rgba(8,45,18,0.50)' : 'rgba(40,10,80,0.50)',
@@ -635,7 +633,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
           )}
         </div>
 
-        {renderPlayerCard(bottomSeat)}
+        <PlayerCardInfo seat={bottomSeat} />
         {false && (
         <div style={{
           background:'rgba(8,45,18,0.50)',
@@ -714,7 +712,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
           </div>
         )}
 
-        {renderHand(topHand, topSeat, 'top')}
+        <CardHand hand={topHand} playerColor={topSeat} position="top" />
 
         <div
           ref={boardWrapperRef}
@@ -888,7 +886,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
             })()}
         </div>
 
-        {renderHand(bottomHand, bottomSeat, 'bottom')}
+        <CardHand hand={bottomHand} playerColor={bottomSeat} position="bottom" />
       </div>
 
       {/* ── Right panel ── */}

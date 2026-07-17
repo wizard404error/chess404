@@ -115,13 +115,14 @@ func (s *PostgresAccountStore) ClaimGuest(guest GuestProfile, handle string) (Ac
 
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
-		AccountID:      accountID,
-		Handle:         normalizedHandle,
-		PrimaryGuestID: guest.GuestID,
-		LinkedGuestIDs: []string{guest.GuestID},
-		CreatedAt:      now,
-		LastSeenAt:     now,
-		LastActiveAt:   now,
+		AccountID:           accountID,
+		Handle:              normalizedHandle,
+		PrimaryGuestID:      guest.GuestID,
+		LinkedGuestIDs:      []string{guest.GuestID},
+		PlacementsRemaining: defaultPlacementMatches,
+		CreatedAt:           now,
+		LastSeenAt:          now,
+		LastActiveAt:        now,
 	}
 	session := AccountSession{
 		Account:      account,
@@ -951,6 +952,12 @@ func (s *PostgresAccountStore) FinalizeMatch(matchID, whiteAccountID, blackAccou
 	}
 	whiteSession.Account.MatchesPlayed++
 	blackSession.Account.MatchesPlayed++
+	if whiteSession.Account.PlacementsRemaining > 0 {
+		whiteSession.Account.PlacementsRemaining--
+	}
+	if blackSession.Account.PlacementsRemaining > 0 {
+		blackSession.Account.PlacementsRemaining--
+	}
 	touchAccountPresence(&whiteSession.Account, now)
 	touchAccountPresence(&blackSession.Account, now)
 	modeID = contracts.NormalizeMatchModeID(string(modeID))

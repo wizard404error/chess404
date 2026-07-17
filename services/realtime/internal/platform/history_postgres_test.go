@@ -175,6 +175,9 @@ func TestPostgresArchiveStoreUpsertPersistsEntry(t *testing.T) {
 	if err := matchStore.Upsert(snapshot); err != nil {
 		t.Fatalf("expected postgres archive upsert to succeed, got %v", err)
 	}
+	if err := matchStore.Flush(); err != nil {
+		t.Fatalf("expected postgres archive flush to succeed, got %v", err)
+	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet postgres archive upsert expectations: %v", err)

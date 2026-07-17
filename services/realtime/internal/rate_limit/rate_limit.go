@@ -151,18 +151,23 @@ func (r *RedisRateLimiter) Close() {
 	_ = r.client.Close()
 }
 
+var rateLimitLua = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return count
+`)
+
 func (r *RedisRateLimiter) Allow(key string, window time.Duration, limit int) (bool, time.Duration) {
 	if key == "" || limit <= 0 {
 		return true, 0
 	}
 	ctx := context.Background()
-	count, err := r.client.Incr(ctx, key).Result()
+	count, err := rateLimitLua.Run(ctx, r.client, []string{key}, int(window.Seconds())).Int64()
 	if err != nil {
-		log.Printf("rate_limit:redis: INCR failed for key=%s err=%v, allowing request", key, err)
+		log.Printf("rate_limit:redis: script failed for key=%s err=%v, allowing request", key, err)
 		return true, 0
-	}
-	if count == 1 {
-		r.client.Expire(ctx, key, window)
 	}
 	if count > int64(limit) {
 		ttl, _ := r.client.TTL(ctx, key).Result()
@@ -415,7 +420,14 @@ func NewHeaderStrippingMiddleware(headers ...string) func(http.Handler) http.Han
 
 func trustForwardedHeaders() bool {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv("TRUST_FORWARDED_HEADERS")))
-	return value == "1" || value == "true" || value == "yes" || value == "on"
+	if value == "1" || value == "true" || value == "yes" || value == "on" {
+		return true
+	}
+	// Default to trusting forwarded headers on Railway (env var auto-set by Railway runtime)
+	if os.Getenv("RAILWAY_ENVIRONMENT") != "" {
+		return true
+	}
+	return false
 }
 
 // equalFoldOrigin reports whether two origin URLs are equivalent for CSRF

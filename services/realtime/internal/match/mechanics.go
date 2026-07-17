@@ -95,12 +95,9 @@ func applyPlayCard(state *contracts.MatchState, intent contracts.PlayerIntent, n
 		if oppKing := findKing(restored.Board, opposite(owner)); oppKing != nil && isAttackedWithFusion(restored.Board, *oppKing, owner) {
 			return nil, errors.New("cannot reverse because enemy king would be in check")
 		}
-		restorePositionState(state, restored)
-		removeCardFromHand(state, owner, card.ID)
-		if len(state.History) > 0 {
-			state.History = append([]contracts.PositionState{}, state.History[:len(state.History)-1]...)
-		}
-		state.UpdatedAt = now.UTC()
+	restorePositionState(state, restored)
+	removeCardFromHand(state, owner, card.ID)
+	state.UpdatedAt = now.UTC()
 		events := []contracts.ResolvedEvent{
 			makeEvent(state.MatchID, "card_played", now, intent.PlayerID, map[string]any{
 				"cardId":   card.ID,
@@ -514,11 +511,11 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if firstPiece == nil {
 			return nil, errors.New("swapme first piece no longer exists")
 		}
-		if secondPiece.Frozen {
-			return nil, errors.New("swapme cannot target a frozen piece")
-		}
 		if secondPiece == nil || secondPiece.Color != pending.OwnerColor || secondPiece.Type == "king" {
 			return nil, errors.New("swapme requires your own non-king second piece")
+		}
+		if secondPiece.Frozen {
+			return nil, errors.New("swapme cannot target a frozen piece")
 		}
 		if pending.Target.Row == intent.Target.Row && pending.Target.Col == intent.Target.Col {
 			return nil, errors.New("swapme requires two different pieces")
@@ -570,6 +567,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		}
 		if secondPiece.Frozen {
 			return nil, errors.New("swapus cannot target a frozen piece")
+		}
+		if fortressEntryBlocked(state.FortressZones, pending.OwnerColor, *intent.Target) {
+			return nil, errors.New("swapus cannot swap a piece into an enemy fortress")
 		}
 		nextBoard := cloneBoard(state.Board)
 		nextBoard[pending.Target.Row][pending.Target.Col], nextBoard[intent.Target.Row][intent.Target.Col] = nextBoard[intent.Target.Row][intent.Target.Col], nextBoard[pending.Target.Row][pending.Target.Col]
@@ -639,6 +639,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		if targetPiece.Frozen {
 			return nil, errors.New("borrow cannot target a frozen piece")
 		}
+		if fortressEntryBlocked(state.FortressZones, pending.OwnerColor, *intent.Target) {
+			return nil, errors.New("borrow cannot target a piece inside an enemy fortress")
+		}
 		nextBoard := cloneBoard(state.Board)
 		nextTarget := nextBoard[intent.Target.Row][intent.Target.Col]
 		nextTarget.Color = pending.OwnerColor
@@ -661,6 +664,9 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 		}
 		if targetPiece.Shielded {
 			return nil, errors.New("mindcontrol cannot target a shielded piece")
+		}
+		if fortressEntryBlocked(state.FortressZones, pending.OwnerColor, *intent.Target) {
+			return nil, errors.New("mindcontrol cannot target a piece inside an enemy fortress")
 		}
 		nextBoard := cloneBoard(state.Board)
 		nextTarget := nextBoard[intent.Target.Row][intent.Target.Col]
@@ -769,7 +775,6 @@ func applySelectTarget(state *contracts.MatchState, intent contracts.PlayerInten
 			ShieldTurn:     sourcePiece.ShieldTurn,
 			Frozen:         sourcePiece.Frozen,
 			Borrowed:       sourcePiece.Borrowed,
-			ParasiteTarget: sourcePiece.ParasiteTarget,
 			Bomb:           sourcePiece.Bomb,
 			Invisible:      sourcePiece.Invisible,
 			InvisibleTurn:  sourcePiece.InvisibleTurn,

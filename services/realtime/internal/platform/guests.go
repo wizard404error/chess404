@@ -20,15 +20,16 @@ var ErrUnauthorizedGuestSession = errors.New("unauthorized guest session")
 const defaultGuestSessionTTL = 24 * time.Hour
 
 type GuestProfile struct {
-	GuestID       string    `json:"guestId"`
-	DisplayName   string    `json:"displayName"`
-	Rating        int       `json:"rating"`
-	MatchesPlayed int       `json:"matchesPlayed"`
-	Wins          int       `json:"wins"`
-	Losses        int       `json:"losses"`
-	Draws         int       `json:"draws"`
-	CreatedAt     time.Time `json:"createdAt"`
-	LastSeenAt    time.Time `json:"lastSeenAt"`
+	GuestID           string    `json:"guestId"`
+	DisplayName       string    `json:"displayName"`
+	Rating            int       `json:"rating"`
+	MatchesPlayed     int       `json:"matchesPlayed"`
+	Wins              int       `json:"wins"`
+	Losses            int       `json:"losses"`
+	Draws             int       `json:"draws"`
+	PlacementsRemaining int     `json:"placementsRemaining"`
+	CreatedAt         time.Time `json:"createdAt"`
+	LastSeenAt        time.Time `json:"lastSeenAt"`
 }
 
 type GuestSession struct {
@@ -117,11 +118,12 @@ func (s *GuestStore) EnsureGuest(guestID, sessionSecret string) (GuestSession, e
 	}
 
 	entry := GuestProfile{
-		GuestID:     guestID,
-		DisplayName: generateGuestName(len(s.entries) + 1),
-		Rating:      1200,
-		CreatedAt:   now,
-		LastSeenAt:  now,
+		GuestID:             guestID,
+		DisplayName:         generateGuestName(len(s.entries) + 1),
+		Rating:              1200,
+		PlacementsRemaining: defaultPlacementMatches,
+		CreatedAt:           now,
+		LastSeenAt:          now,
 	}
 	s.entries[guestID] = entry
 	privateState := renewGuestPrivateState(GuestPrivateState{SessionSecret: strings.TrimSpace(sessionSecret)}, now)
@@ -244,7 +246,11 @@ func (s *GuestStore) FinalizeMatch(matchID, whiteGuestID, blackGuestID, winner s
 	}
 
 	now := time.Now().UTC()
-	newWhite, newBlack := ApplyEloMatchResult(white.Rating, black.Rating, winner)
+	kFactor := defaultEloKFactor
+	if white.PlacementsRemaining > 0 || black.PlacementsRemaining > 0 {
+		kFactor = defaultPlacementEloKFactor
+	}
+	newWhite, newBlack := ApplyEloMatchResultWithK(white.Rating, black.Rating, winner, kFactor, defaultEloMinRating)
 	switch winner {
 	case "white":
 		white.Rating = newWhite
@@ -266,6 +272,12 @@ func (s *GuestStore) FinalizeMatch(matchID, whiteGuestID, blackGuestID, winner s
 	}
 	white.MatchesPlayed++
 	black.MatchesPlayed++
+	if white.PlacementsRemaining > 0 {
+		white.PlacementsRemaining--
+	}
+	if black.PlacementsRemaining > 0 {
+		black.PlacementsRemaining--
+	}
 
 	white.LastSeenAt = now
 	black.LastSeenAt = now

@@ -2,15 +2,31 @@
 package match
 
 import (
+	"crypto/rand"
 	_ "embed"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	mrand "math/rand"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/chess404/realtime/internal/contracts"
 )
+
+var (
+	cardRand   *mrand.Rand
+	cardRandMu sync.Mutex
+)
+
+func init() {
+	var seedBuf [8]byte
+	if _, err := rand.Read(seedBuf[:]); err != nil {
+		seedBuf[0] = byte(time.Now().UnixNano())
+	}
+	cardRand = mrand.New(mrand.NewSource(int64(binary.LittleEndian.Uint64(seedBuf[:]))))
+}
 
 //go:embed cards.json
 var cardsJSON []byte
@@ -414,8 +430,8 @@ var starterCardsLegacy = []contracts.GameCard{
 		Desc:     "Reveal the enemy hand for the rest of your turn.",
 	},
 	{
-		ID:       "cheater",
-		Name:     "Cheater",
+		ID:       "oracle",
+		Name:     "Oracle",
 		Mechanic: "cheater",
 		Type:     "spell",
 		Rarity:   "trash",
@@ -519,20 +535,24 @@ func addRewardCards(state *contracts.MatchState, owner string, count int, now ti
 	return drawn
 }
 
-func drawRoundCards(state *contracts.MatchState, now time.Time) (white []contracts.GameCard, black []contracts.GameCard) {
+func drawRoundCards(state *contracts.MatchState, now time.Time) (white []contracts.GameCard, black []contracts.GameCard, whiteSkipped bool, blackSkipped bool) {
 	if state.Turn != "white" || state.FullMoveNum < drawFromRound {
-		return nil, nil
+		return nil, nil, false, false
 	}
 	if (state.FullMoveNum-drawFromRound)%drawEveryRounds != 0 {
-		return nil, nil
+		return nil, nil, false, false
 	}
-	if len(state.WhiteHand) < maxHandSize {
+	if len(state.WhiteHand) >= maxHandSize {
+		whiteSkipped = true
+	} else {
 		white = addRewardCards(state, "white", 1, now)
 	}
-	if len(state.BlackHand) < maxHandSize {
+	if len(state.BlackHand) >= maxHandSize {
+		blackSkipped = true
+	} else {
 		black = addRewardCards(state, "black", 1, now)
 	}
-	return white, black
+	return white, black, whiteSkipped, blackSkipped
 }
 
 func rewardTemplateForState(state *contracts.MatchState, offset int) contracts.GameCard {
@@ -545,8 +565,11 @@ func rewardTemplateForState(state *contracts.MatchState, offset int) contracts.G
 }
 
 func deterministicCardIndex(state *contracts.MatchState, offset int) int {
-	rng := state.RNGSeed + int64(len(state.MoveHistory))*7 + int64(len(state.History))*3 + int64(len(state.WhiteHand)+len(state.BlackHand)) + int64(offset)
-	return int(uint64(rng) % uint64(len(getStarterCards())))
+	pool := getStarterCards()
+	cardRandMu.Lock()
+	idx := cardRand.Intn(len(pool))
+	cardRandMu.Unlock()
+	return idx
 }
 
 func parseSquareOptions(options []string) []contracts.Square {
@@ -595,18 +618,19 @@ func selectedSquaresValue(board [][]*contracts.Piece, selected []contracts.Squar
 	return total
 }
 
-func addCardToHand(state *contracts.MatchState, owner string, card contracts.GameCard) {
+func addCardToHand(state *contracts.MatchState, owner string, card contracts.GameCard) bool {
 	if owner == "black" {
 		if len(state.BlackHand) >= maxHandSize {
-			return
+			return false
 		}
 		state.BlackHand = append(state.BlackHand, card)
-		return
+		return true
 	}
 	if len(state.WhiteHand) >= maxHandSize {
-		return
+		return false
 	}
 	state.WhiteHand = append(state.WhiteHand, card)
+	return true
 }
 
 func filterCardsNotMechanic(hand []contracts.GameCard, mechanic string) []contracts.GameCard {

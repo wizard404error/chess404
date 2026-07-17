@@ -19,6 +19,7 @@ interface QueuePageProps {
   recoveredBlackTicket?: QueueTicket | null;
   recoveryReady?: boolean;
   embedded?: boolean;
+  tutorialActive?: boolean;
 }
 
 type QueueSide = 'white' | 'black';
@@ -142,6 +143,7 @@ export default function QueuePage({
   recoveredBlackTicket = null,
   recoveryReady = false,
   embedded = false,
+  tutorialActive = false,
 }: QueuePageProps): React.ReactElement {
   const [hostedRuntime, setHostedRuntime] = React.useState(false);
   const [queue, setQueue] = React.useState<QueueName>(() => readStoredQueueSelection());
@@ -443,6 +445,10 @@ export default function QueuePage({
   }, [whiteTicket, blackTicket, applyQueueSnapshot, restoringTickets]);
 
   const handleJoin = React.useCallback(async (side: 'white' | 'black') => {
+    if (tutorialActive) {
+      setError('Complete the quick tutorial first to learn the basics before jumping into a match.');
+      return;
+    }
     const profile = side === 'white' ? whiteProfile : blackProfile;
     if (!profile) {
       setError('Guest profile is still loading. Try again in a moment.');
@@ -473,7 +479,7 @@ export default function QueuePage({
     } finally {
       setLoading(false);
     }
-  }, [whiteProfile, blackProfile, queue, modeId, refreshQueue, hostedRuntime]);
+  }, [whiteProfile, blackProfile, queue, modeId, refreshQueue, hostedRuntime, tutorialActive]);
 
   const handleCancel = React.useCallback(async (side: 'white' | 'black') => {
     const ticket = side === 'white' ? whiteTicket : blackTicket;

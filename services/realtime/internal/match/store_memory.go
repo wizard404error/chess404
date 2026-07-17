@@ -15,6 +15,7 @@ type MemoryMatchStore struct {
 	events   map[string][]byte
 	presence map[string][]byte
 	seqs     map[string]*int64
+	seenIDs  map[string][]byte
 }
 
 func NewMemoryMatchStore() *MemoryMatchStore {
@@ -25,6 +26,7 @@ func NewMemoryMatchStore() *MemoryMatchStore {
 		events:   make(map[string][]byte),
 		presence: make(map[string][]byte),
 		seqs:     make(map[string]*int64),
+		seenIDs:  make(map[string][]byte),
 	}
 }
 
@@ -143,6 +145,23 @@ func (s *MemoryMatchStore) LoadSeq(matchID string) (int64, error) {
 	return atomic.LoadInt64(ptr), nil
 }
 
+func (s *MemoryMatchStore) SaveSeenClientMoveIDs(matchID string, ids []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seenIDs[matchID] = ids
+	return nil
+}
+
+func (s *MemoryMatchStore) LoadSeenClientMoveIDs(matchID string) ([]byte, error) {
+	s.mu.RLock()
+	data, ok := s.seenIDs[matchID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("seenIDs not found")
+	}
+	return data, nil
+}
+
 func (s *MemoryMatchStore) DeleteMatch(matchID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,6 +171,7 @@ func (s *MemoryMatchStore) DeleteMatch(matchID string) error {
 	delete(s.events, matchID)
 	delete(s.presence, matchID)
 	delete(s.seqs, matchID)
+	delete(s.seenIDs, matchID)
 	return nil
 }
 

@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 
 function firstParam(value: string | string[] | undefined): string {
   if (Array.isArray(value)) {
@@ -55,5 +56,32 @@ export default async function HomePage({
     redirect(`/account?${accountParams.toString()}`);
   }
 
-  redirect('/play');
+  return (
+    <div className="landing-page">
+      <section className="hero">
+        <h1 className="hero-title">Chess404</h1>
+        <p className="hero-subtitle">
+          Competitive online chess with curated card powers. Outplay, outwit, outshine.
+        </p>
+        <div className="hero-actions">
+          <Link href="/play" className="btn-primary">Play Now</Link>
+          <Link href="/watch" className="btn-secondary">Watch Games</Link>
+        </div>
+      </section>
+      <section className="features">
+        <div className="feature-card">
+          <h3>Chess + Cards</h3>
+          <p>Every game combines classic chess with tactical card abilities. Freeze enemy pieces, teleport across the board, or shield your king.</p>
+        </div>
+        <div className="feature-card">
+          <h3>Ranked Play</h3>
+          <p>Climb the leaderboard with competitive matchmaking. Time controls, draws, and resignations all supported.</p>
+        </div>
+        <div className="feature-card">
+          <h3>Guest or Account</h3>
+          <p>Jump in as a guest instantly or create an account to save your progress, stats, and history.</p>
+        </div>
+      </section>
+    </div>
+  );
 }

@@ -254,6 +254,7 @@ export function connectToMatchStream(
       try {
         const snapshot = await fetchMatch(matchId);
         if (!disposed) {
+          if (snapshot.seqNum) recordMatchSeqNum(matchId, snapshot.seqNum);
           handlers.onSnapshot(snapshot);
           handlers.onStatusChange?.('connected');
         }
@@ -308,8 +309,10 @@ export function connectToMatchStream(
       authPromise = fetchAuthToken(matchId, playerIdentity.playerId.trim(), playerIdentity.playerSecret.trim())
         .then(token => ({ claimToken: token }));
     } else {
-      console.log('Spectate mode: no player identity for WebSocket auth');
-      handlers.onStatusChange?.('disconnected');
+      console.log('Spectate mode: no player identity — using polling');
+      handlers.onStatusChange?.('connected');
+      isWsConnected = true;
+      schedulePoll(0);
       return;
     }
 
@@ -349,7 +352,10 @@ export function connectToMatchStream(
                 if (!disposed) handlers.onSnapshot(fullSnapshot);
               }).catch(() => {});
             }
-            if (snapshot.seqNum) lastSeqNum = snapshot.seqNum;
+            if (snapshot.seqNum) {
+              lastSeqNum = snapshot.seqNum;
+              recordMatchSeqNum(matchId, snapshot.seqNum);
+            }
             handlers.onSnapshot(snapshot);
           }
         } catch {

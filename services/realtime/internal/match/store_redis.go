@@ -25,6 +25,8 @@ type MatchStore interface {
 	LoadSeq(matchID string) (int64, error)
 	DeleteMatch(matchID string) error
 	ListActiveMatchIDs() ([]string, error)
+	SaveSeenClientMoveIDs(matchID string, ids []byte) error
+	LoadSeenClientMoveIDs(matchID string) ([]byte, error)
 	Ping() error
 	Close() error
 }
@@ -69,6 +71,10 @@ func (s *RedisMatchStore) eventsKey(matchID string) string {
 
 func (s *RedisMatchStore) presenceKey(matchID string) string {
 	return fmt.Sprintf("%s:%s:presence", s.keyPrefix, matchID)
+}
+
+func (s *RedisMatchStore) seenIDsKey(matchID string) string {
+	return fmt.Sprintf("%s:%s:seenids", s.keyPrefix, matchID)
 }
 
 func (s *RedisMatchStore) seqKey(matchID string) string {
@@ -166,6 +172,16 @@ func (s *RedisMatchStore) LoadSeq(matchID string) (int64, error) {
 	return strconv.ParseInt(val, 10, 64)
 }
 
+func (s *RedisMatchStore) SaveSeenClientMoveIDs(matchID string, ids []byte) error {
+	ctx := context.Background()
+	return s.client.Set(ctx, s.seenIDsKey(matchID), ids, matchTTL).Err()
+}
+
+func (s *RedisMatchStore) LoadSeenClientMoveIDs(matchID string) ([]byte, error) {
+	ctx := context.Background()
+	return s.client.Get(ctx, s.seenIDsKey(matchID)).Bytes()
+}
+
 func (s *RedisMatchStore) DeleteMatch(matchID string) error {
 	ctx := context.Background()
 	pipe := s.client.Pipeline()
@@ -175,6 +191,7 @@ func (s *RedisMatchStore) DeleteMatch(matchID string) error {
 	pipe.Del(ctx, s.eventsKey(matchID))
 	pipe.Del(ctx, s.presenceKey(matchID))
 	pipe.Del(ctx, s.seqKey(matchID))
+	pipe.Del(ctx, s.seenIDsKey(matchID))
 	_, err := pipe.Exec(ctx)
 	return err
 }

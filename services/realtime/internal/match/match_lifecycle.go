@@ -3,6 +3,7 @@ package match
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -21,9 +22,6 @@ func redactToken(s string) string {
 }
 
 func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) contracts.MatchSnapshotResponse {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	matchID := req.MatchID
 	if matchID == "" {
 		b := make([]byte, 4)
@@ -94,34 +92,40 @@ func (s *Service) CreateMatch(req contracts.CreateMatchRequest, now time.Time) c
 		"turn": "white",
 	})
 
-	s.matches[matchID] = state
-	s.events[matchID] = []contracts.ResolvedEvent{startEvent}
-	s.subs[matchID] = make(map[chan contracts.MatchSnapshotResponse]string)
-	s.presence[matchID] = newMatchPresenceState(state, now)
+	c := newMatchContainer(state, []contracts.ResolvedEvent{startEvent}, newMatchPresenceState(state, now))
 
 	if string(req.ModeID) == "computer" {
 		diff := engine.ParseDifficulty(req.Difficulty)
-		s.computers[matchID] = engine.NewComputerOpponent(diff, "black")
+		c.computer = engine.NewComputerOpponent(diff, "black")
 		s.Log.Info("match:create: computer opponent initialized", "matchID", matchID, "difficulty", diff, "color", "black")
 	}
 
-	broadcastSnap := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), []contracts.ResolvedEvent{startEvent}, now)
-	persistSnap := buildSnapshotWithPresence(state, s.presence[matchID], len(s.events[matchID]), s.events[matchID], now)
+	s.matches.Store(matchID, c)
+	c.mu.Lock()
+
+	broadcastSnap := buildSnapshotWithPresence(c.state, c.presence, len(c.events), []contracts.ResolvedEvent{startEvent}, now)
+	persistSnap := buildSnapshotWithPresence(c.state, c.presence, len(c.events), c.events, now)
+	c.mu.Unlock()
+
 	s.persistSnapshot(persistSnap)
-	s.saveToRedis(persistSnap, s.presence[matchID])
-	s.Log.Info("match:create: ok", "matchID", matchID, "status", broadcastSnap.Match.Status, "turn", broadcastSnap.Match.Turn, "whiteFingerprint", redactPlayerSecret(broadcastSnap.Match.WhitePlayerSecret), "blackFingerprint", redactPlayerSecret(broadcastSnap.Match.BlackPlayerSecret), "computers", s.computers[matchID] != nil)
+	s.saveToRedis(persistSnap, c.presence)
+	s.Log.Info("match:create: ok", "matchID", matchID, "status", broadcastSnap.Match.Status, "turn", broadcastSnap.Match.Turn, "whiteFingerprint", redactPlayerSecret(broadcastSnap.Match.WhitePlayerSecret), "blackFingerprint", redactPlayerSecret(broadcastSnap.Match.BlackPlayerSecret), "computers", c.computer != nil)
 
 	return broadcastSnap
 }
 
 func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatRequest, now time.Time) (contracts.JoinMatchSeatResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	state, ok := s.ensureMatchLoadedLocked(matchID)
+	c, ok := s.ensureMatchLoadedLocked(matchID)
+	s.mu.Unlock()
 	if !ok {
 		return contracts.JoinMatchSeatResponse{}, ErrMatchNotFound
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	state := c.state
 	if state.Status == "finished" {
 		return contracts.JoinMatchSeatResponse{}, ErrMatchJoinFinished
 	}
@@ -225,14 +229,15 @@ func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatReque
 		state.UpdatedAt = now.UTC()
 	}
 
+	presence := s.ensurePresenceStateLocked(c, now)
+
 	if len(events) > 0 {
-		s.events[matchID] = append(s.events[matchID], events...)
-		presence := s.ensurePresenceStateLocked(matchID, state, now)
-		snapshot := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), events, now)
-		persistSnap := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), s.events[matchID], now)
+		c.events = append(c.events, events...)
+		snapshot := buildSnapshotWithPresence(state, presence, len(c.events), events, now)
+		persistSnap := buildSnapshotWithPresence(state, presence, len(c.events), c.events, now)
 		s.persistSnapshot(persistSnap)
 		s.saveToRedis(persistSnap, presence)
-		s.broadcastLocked(matchID, snapshot)
+		s.broadcastLocked(c, snapshot)
 		return contracts.JoinMatchSeatResponse{
 			Match:              snapshot,
 			SeatColor:          seatColor,
@@ -241,10 +246,10 @@ func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatReque
 		}, nil
 	}
 
-	fullSnapshot := buildSnapshotWithPresence(state, s.ensurePresenceStateLocked(matchID, state, now), len(s.events[matchID]), nil, now)
+	fullSnapshot := buildSnapshotWithPresence(state, presence, len(c.events), nil, now)
 	if updated {
 		s.persistSnapshot(fullSnapshot)
-		s.saveToRedis(fullSnapshot, s.presence[matchID])
+		s.saveToRedis(fullSnapshot, presence)
 	}
 	return contracts.JoinMatchSeatResponse{
 		Match:              fullSnapshot,
@@ -256,30 +261,34 @@ func (s *Service) JoinMatchSeat(matchID string, req contracts.JoinMatchSeatReque
 
 func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (contracts.MatchSnapshotResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	state, ok := s.ensureMatchLoadedLocked(intent.MatchID)
+	c, ok := s.ensureMatchLoadedLocked(intent.MatchID)
+	s.mu.Unlock()
 	if !ok {
 		return contracts.MatchSnapshotResponse{}, ErrMatchNotFound
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	state := c.state
+
 	if intent.ClientMoveID != "" {
 		for _, id := range state.SeenClientMoveIDs {
 			if id == intent.ClientMoveID {
-				presence := s.ensurePresenceStateLocked(intent.MatchID, state, now)
-				return buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), nil, now), nil
+				presence := s.ensurePresenceStateLocked(c, now)
+				return buildSnapshotWithPresence(state, presence, len(c.events), nil, now), nil
 			}
 		}
 	}
 
 	if intent.ExpectedSeqNum > 0 {
-		currentSeq := s.matchSeqNum[intent.MatchID]
+		currentSeq := c.seqNum
 		if currentSeq > 0 && intent.ExpectedSeqNum < currentSeq {
 			return contracts.MatchSnapshotResponse{}, ErrStaleClientState
 		}
 	}
 
-	presence := s.ensurePresenceStateLocked(intent.MatchID, state, now)
+	presence := s.ensurePresenceStateLocked(c, now)
 
 	actorColor, _ := requireIntentColor(state, intent.PlayerID, intent.PlayerSecret)
 	if err := rateLimitIntent(presence, actorColor, now); err != nil {
@@ -291,20 +300,20 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 		if events, err := applyIntent(state, intent, now); err == nil {
 			trackIntentTime(presence, actorColor, now)
 			events = append(events, timeoutEvents...)
-			s.events[intent.MatchID] = append(s.events[intent.MatchID], events...)
-			snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), events, now)
-			persistSnap := buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now)
+			c.events = append(c.events, events...)
+			snapshot := buildSnapshotWithPresence(state, presence, len(c.events), events, now)
+			persistSnap := buildSnapshot(state, len(c.events), c.events, now)
 			s.persistSnapshot(persistSnap)
 			s.saveToRedis(persistSnap, presence)
-			s.broadcastLocked(intent.MatchID, snapshot)
+			s.broadcastLocked(c, snapshot)
 			return snapshot, nil
 		}
-		s.events[intent.MatchID] = append(s.events[intent.MatchID], timeoutEvents...)
-		snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), timeoutEvents, now)
-		persistSnap := buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now)
+		c.events = append(c.events, timeoutEvents...)
+		snapshot := buildSnapshotWithPresence(state, presence, len(c.events), timeoutEvents, now)
+		persistSnap := buildSnapshot(state, len(c.events), c.events, now)
 		s.persistSnapshot(persistSnap)
 		s.saveToRedis(persistSnap, presence)
-		s.broadcastLocked(intent.MatchID, snapshot)
+		s.broadcastLocked(c, snapshot)
 		return snapshot, nil
 	}
 
@@ -338,68 +347,85 @@ func (s *Service) ApplyIntent(intent contracts.PlayerIntent, now time.Time) (con
 		}
 	}
 
-	s.events[intent.MatchID] = append(s.events[intent.MatchID], events...)
-	snapshot := buildSnapshotWithPresence(state, presence, len(s.events[intent.MatchID]), events, now)
-	persistSnap := buildSnapshot(state, len(s.events[intent.MatchID]), s.events[intent.MatchID], now)
+	c.events = append(c.events, events...)
+	snapshot := buildSnapshotWithPresence(state, presence, len(c.events), events, now)
+	persistSnap := buildSnapshot(state, len(c.events), c.events, now)
 	s.persistSnapshot(persistSnap)
 	s.saveToRedis(persistSnap, presence)
-	s.broadcastLocked(intent.MatchID, snapshot)
+	s.broadcastLocked(c, snapshot)
 
-	s.autoPlayComputer(intent.MatchID, state, presence, now)
+	s.autoPlayComputer(c, now)
 
 	return snapshot, nil
 }
 
-func (s *Service) autoPlayComputer(matchID string, state *contracts.MatchState, presence *matchPresenceState, now time.Time) {
-	s.autoPlayComputerDepthLimited(matchID, state, presence, now, 0)
+func (s *Service) autoPlayComputer(c *matchContainer, now time.Time) {
+	if c.computer == nil || c.state.Status != "active" || c.state.Turn != "black" {
+		return
+	}
+	select {
+	case s.computerCh <- computerMoveTask{c: c, now: now}:
+	default:
+		s.Log.Warn("computer move worker pool full, skipping computer move", "matchID", c.state.MatchID)
+	}
 }
 
-func (s *Service) autoPlayComputerDepthLimited(matchID string, state *contracts.MatchState, presence *matchPresenceState, now time.Time, depth int) {
+func (s *Service) autoPlayComputerDepthLimited(c *matchContainer, now time.Time, depth int) {
 	if depth > 5 {
-		s.Log.Info("match:autoPlay: max recursion depth reached", "matchID", matchID)
+		s.Log.Info("match:autoPlay: max recursion depth reached", "matchID", c.state.MatchID)
 		return
 	}
-	computer, ok := s.computers[matchID]
-	if !ok || state.Status != "active" || state.Turn != "black" {
+	if c.computer == nil || c.state.Status != "active" || c.state.Turn != "black" {
 		return
 	}
 
-	computerIntent := computer.MakeMove(state)
+	computerIntent := c.computer.MakeMove(c.state)
 	if computerIntent == nil {
-		s.Log.Info("match:autoPlay: computer returned NIL intent", "matchID", matchID, "turn", state.Turn, "status", state.Status)
+		s.Log.Info("match:autoPlay: computer returned NIL intent", "matchID", c.state.MatchID, "turn", c.state.Turn, "status", c.state.Status)
 		return
 	}
 
-	savedClock := state.Clock
-	savedStatus := state.Status
-	savedWinner := state.Winner
-	savedFinishReason := state.FinishReason
+	savedClock := c.state.Clock
+	savedStatus := c.state.Status
+	savedWinner := c.state.Winner
+	savedFinishReason := c.state.FinishReason
 
-	events, err := applyIntent(state, *computerIntent, now)
+	events, err := applyIntent(c.state, *computerIntent, now)
 	if err != nil {
-		state.Clock = savedClock
-		state.Status = savedStatus
-		state.Winner = savedWinner
-		state.FinishReason = savedFinishReason
+		c.state.Clock = savedClock
+		c.state.Status = savedStatus
+		c.state.Winner = savedWinner
+		c.state.FinishReason = savedFinishReason
 		return
 	}
 
-	if shouldEvaluateAutomaticMatchFinish(state, *computerIntent) {
-		events = finalizeAutomaticMatchFinish(state, events, now, "computer")
+	// If the card requires target selection, have the computer pick a target
+	if c.state.PendingCard != nil && c.computer != nil {
+		targetIntent := c.computer.HandleSelectTarget(c.state)
+		if targetIntent != nil {
+			targetEvents, targetErr := applyIntent(c.state, *targetIntent, now)
+			if targetErr == nil {
+				events = append(events, targetEvents...)
+			}
+		}
 	}
 
-	timeoutEvents := syncClockForMutation(state, now)
+	if shouldEvaluateAutomaticMatchFinish(c.state, *computerIntent) {
+		events = finalizeAutomaticMatchFinish(c.state, events, now, "computer")
+	}
+
+	timeoutEvents := syncClockForMutation(c.state, now)
 	events = append(events, timeoutEvents...)
 
-	s.events[matchID] = append(s.events[matchID], events...)
-	snapshot := buildSnapshotWithPresence(state, presence, len(s.events[matchID]), events, now)
-	persistSnap := buildSnapshot(state, len(s.events[matchID]), s.events[matchID], now)
+	c.events = append(c.events, events...)
+	snapshot := buildSnapshotWithPresence(c.state, c.presence, len(c.events), events, now)
+	persistSnap := buildSnapshot(c.state, len(c.events), c.events, now)
 	s.persistSnapshot(persistSnap)
-	s.saveToRedis(persistSnap, presence)
-	s.broadcastLocked(matchID, snapshot)
+	s.saveToRedis(persistSnap, c.presence)
+	s.broadcastLocked(c, snapshot)
 
-	if state.Turn == "black" && state.Status == "active" {
-		s.autoPlayComputerDepthLimited(matchID, state, presence, now, depth+1)
+	if c.state.Turn == "black" && c.state.Status == "active" {
+		s.autoPlayComputerDepthLimited(c, now, depth+1)
 	}
 }
 
@@ -711,7 +737,7 @@ func applyMove(state *contracts.MatchState, intent contracts.PlayerIntent, now t
 	resolveFortressEffects(state, justMovedColor)
 	bombExplodedSquares := resolveBombEffects(state)
 	blackHoleExplodedSquares := resolveBlackHoleEffects(state, justMovedColor)
-	roundDrawWhite, roundDrawBlack := drawRoundCards(state, now)
+	roundDrawWhite, roundDrawBlack, whiteSkipped, blackSkipped := drawRoundCards(state, now)
 	startedAt := now.UnixMilli()
 	if state.Clock.Increment > 0 {
 		if justMovedColor == "white" {
@@ -754,6 +780,20 @@ func applyMove(state *contracts.MatchState, intent contracts.PlayerIntent, now t
 		}, nil
 	}
 
+	extraEvents := make([]contracts.ResolvedEvent, 0)
+	if len(roundDrawWhite) > 0 {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_drawn", now, "", map[string]any{"owner": "white", "cards": roundDrawWhite}))
+	}
+	if len(roundDrawBlack) > 0 {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_drawn", now, "", map[string]any{"owner": "black", "cards": roundDrawBlack}))
+	}
+	if whiteSkipped {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_draw_lost", now, "", map[string]any{"owner": "white", "reason": "hand_full"}))
+	}
+	if blackSkipped {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_draw_lost", now, "", map[string]any{"owner": "black", "reason": "hand_full"}))
+	}
+
 	payload := map[string]any{
 		"from":     intent.From,
 		"to":       intent.To,
@@ -782,12 +822,14 @@ func applyMove(state *contracts.MatchState, intent contracts.PlayerIntent, now t
 		payload["roundDrawBlack"] = roundDrawBlack
 	}
 
-	return []contracts.ResolvedEvent{
+	result := []contracts.ResolvedEvent{
 		makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, payload),
 		makeEvent(state.MatchID, "clock_updated", now, intent.PlayerID, map[string]any{
 			"runningFor": state.Turn,
 		}),
-	}, nil
+	}
+	result = append(result, extraEvents...)
+	return result, nil
 }
 
 func applyInvisibleMove(state *contracts.MatchState, intent contracts.PlayerIntent, now time.Time) ([]contracts.ResolvedEvent, error) {
@@ -901,7 +943,7 @@ func applyInvisibleMove(state *contracts.MatchState, intent contracts.PlayerInte
 	resolveFortressEffects(state, justMovedColor)
 	bombExplodedSquares := resolveBombEffects(state)
 	blackHoleExplodedSquares := resolveBlackHoleEffects(state, justMovedColor)
-	roundDrawWhite, roundDrawBlack := drawRoundCards(state, now)
+	roundDrawWhite, roundDrawBlack, whiteSkipped, blackSkipped := drawRoundCards(state, now)
 	startedAt := now.UnixMilli()
 	if state.Clock.Increment > 0 {
 		if justMovedColor == "white" {
@@ -944,6 +986,20 @@ func applyInvisibleMove(state *contracts.MatchState, intent contracts.PlayerInte
 		}, nil
 	}
 
+	extraEvents := make([]contracts.ResolvedEvent, 0)
+	if len(roundDrawWhite) > 0 {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_drawn", now, "", map[string]any{"owner": "white", "cards": roundDrawWhite}))
+	}
+	if len(roundDrawBlack) > 0 {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_drawn", now, "", map[string]any{"owner": "black", "cards": roundDrawBlack}))
+	}
+	if whiteSkipped {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_draw_lost", now, "", map[string]any{"owner": "white", "reason": "hand_full"}))
+	}
+	if blackSkipped {
+		extraEvents = append(extraEvents, makeEvent(state.MatchID, "card_draw_lost", now, "", map[string]any{"owner": "black", "reason": "hand_full"}))
+	}
+
 	payload := map[string]any{
 		"from":     intent.From,
 		"to":       intent.To,
@@ -968,12 +1024,14 @@ func applyInvisibleMove(state *contracts.MatchState, intent contracts.PlayerInte
 		payload["roundDrawBlack"] = roundDrawBlack
 	}
 
-	return []contracts.ResolvedEvent{
+	result := []contracts.ResolvedEvent{
 		makeEvent(state.MatchID, "move_applied", now, intent.PlayerID, payload),
 		makeEvent(state.MatchID, "clock_updated", now, intent.PlayerID, map[string]any{
 			"runningFor": state.Turn,
 		}),
-	}, nil
+	}
+	result = append(result, extraEvents...)
+	return result, nil
 }
 
 func applyChat(state *contracts.MatchState, intent contracts.PlayerIntent, now time.Time) ([]contracts.ResolvedEvent, error) {
@@ -1221,8 +1279,12 @@ func opposite(color string) string {
 	return "white"
 }
 
-func chooseSeed(_ int64, fallback int64) int64 {
-	return fallback
+func chooseSeed(_ int64, _ int64) int64 {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err == nil {
+		return int64(binary.LittleEndian.Uint64(buf[:]))
+	}
+	return time.Now().UnixNano()
 }
 
 func makeEvent(matchID, eventType string, now time.Time, actorID string, payload map[string]any) contracts.ResolvedEvent {
@@ -1575,10 +1637,17 @@ func cleanupTemporaryEffects(state *contracts.MatchState, justMovedColor string)
 				piece.Shielded = false
 				piece.ShieldTurn = nil
 			}
-			if piece.Borrowed && piece.Color == justMovedColor {
+		// Borrow returns the piece to its owner after one turn, but only if the
+		// piece still exists. If the borrowed piece was destroyed by Death (or
+		// any other removal effect) while under the borrower's control, it is
+		// permanently lost — the owner does not get it back. This is intentional
+		// emergent gameplay: Borrow gives tempo at the risk of losing the piece.
+		if piece.Borrowed && piece.Color == justMovedColor {
+			if state.Board[r][c] != nil {
 				piece.Color = opposite(justMovedColor)
 				piece.Borrowed = false
 			}
+		}
 		}
 	}
 	if state.InvisiblePiece != nil {
@@ -1650,13 +1719,12 @@ func recoveredPresenceSeedTime(state *contracts.MatchState) time.Time {
 	return time.Time{}
 }
 
-func (s *Service) ensurePresenceStateLocked(matchID string, state *contracts.MatchState, now time.Time) *matchPresenceState {
-	if presence, ok := s.presence[matchID]; ok && presence != nil {
-		return presence
+func (s *Service) ensurePresenceStateLocked(c *matchContainer, now time.Time) *matchPresenceState {
+	if c.presence != nil {
+		return c.presence
 	}
-	presence := newMatchPresenceState(state, now)
-	s.presence[matchID] = presence
-	return presence
+	c.presence = newMatchPresenceState(c.state, now)
+	return c.presence
 }
 
 func presenceHeartbeat(presence *matchPresenceState, color string, now time.Time) bool {

@@ -33,6 +33,12 @@ func TestSQLiteMatchArchiveStoreUpsertAndReload(t *testing.T) {
 	if err := store.Upsert(snapshot); err != nil {
 		t.Fatalf("expected sqlite archive upsert to succeed, got %v", err)
 	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("expected sqlite archive flush to succeed, got %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("expected sqlite archive close to succeed, got %v", err)
+	}
 
 	reloaded, err := NewSQLiteMatchArchiveStore(storePath)
 	if err != nil {
@@ -95,6 +101,12 @@ func TestSQLiteMatchArchiveStoreLoadMatchRestoresPrivateState(t *testing.T) {
 
 	if err := store.Upsert(snapshot); err != nil {
 		t.Fatalf("expected sqlite archive upsert to succeed, got %v", err)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("expected sqlite archive flush to succeed, got %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("expected sqlite archive close to succeed, got %v", err)
 	}
 
 	reloaded, err := NewSQLiteMatchArchiveStore(storePath)

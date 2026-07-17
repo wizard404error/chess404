@@ -64,35 +64,13 @@ function buildAbsoluteUrl(pathname: string, params?: URLSearchParams): string | 
   return `${window.location.origin}${pathname}${query ? `?${query}` : ''}`;
 }
 
-// ── Obfuscation helpers ───────────────────────────────────────────────────────
-// NOTE: This is client-side obfuscation only, not true encryption.
-// XSS can read all stored tokens. Full mitigation requires HttpOnly
-// Secure SameSite cookies on auth endpoints.
-
-const STORAGE_KEY = 'cs404'; // XOR key
-
-function xorObfuscate(value: string): string {
-  try {
-    const bytes = new TextEncoder().encode(value);
-    const keyBytes = new TextEncoder().encode(STORAGE_KEY);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] ^= keyBytes[i % keyBytes.length];
-    }
-    return btoa(String.fromCharCode(...new Uint8Array(bytes)));
-  } catch { return value; }
-}
-
-function xorDeobfuscate(value: string): string {
-  try {
-    const raw = atob(value);
-    const bytes = new Uint8Array(raw.length);
-    const keyBytes = new TextEncoder().encode(STORAGE_KEY);
-    for (let i = 0; i < raw.length; i++) {
-      bytes[i] = raw.charCodeAt(i) ^ keyBytes[i % keyBytes.length];
-    }
-    return new TextDecoder().decode(bytes);
-  } catch { return value; }
-}
+// ── Security notice ───────────────────────────────────────────────────────────
+// localStorage is used for session persistence across page reloads. This is
+// inherently vulnerable to XSS — any injected script can read all stored tokens.
+// True mitigation requires HttpOnly Secure SameSite cookies on auth endpoints,
+// which is a future architectural shift. Storing in plaintext is honest about
+// this limitation and removes the false sense of security from client-side
+// XOR obfuscation.
 
 function isExpired(expiresAt: string | undefined): boolean {
   if (!expiresAt) return false;
@@ -110,13 +88,13 @@ function clearStorageKey(key: string): void {
 
 export function readStoredActiveMatchId(): string | null {
   if (typeof window === 'undefined') return null;
-  return xorDeobfuscate(window.localStorage.getItem(ACTIVE_MATCH_STORAGE_KEY) ?? '') || null;
+  return window.localStorage.getItem(ACTIVE_MATCH_STORAGE_KEY);
 }
 
 export function writeStoredActiveMatchId(matchId: string | null): void {
   if (typeof window === 'undefined') return;
   if (matchId) {
-    window.localStorage.setItem(ACTIVE_MATCH_STORAGE_KEY, xorObfuscate(matchId));
+    window.localStorage.setItem(ACTIVE_MATCH_STORAGE_KEY, matchId);
   } else {
     window.localStorage.removeItem(ACTIVE_MATCH_STORAGE_KEY);
   }
@@ -131,22 +109,22 @@ export function readStoredGuestIdentity(side: 'white' | 'black'): {
   sessionExpiresAt?: string;
 } {
   if (typeof window === 'undefined') return {};
-  const sessionExpiresAt = xorDeobfuscate(window.localStorage.getItem(
+  const sessionExpiresAt = window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
-  ) ?? '') || undefined;
+  ) || undefined;
   if (isExpired(sessionExpiresAt)) {
     clearStoredGuestIdentity(side);
     return {};
   }
-  const guestId = xorDeobfuscate(window.localStorage.getItem(
+  const guestId = window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY,
-  ) ?? '') || undefined;
-  const sessionSecret = xorDeobfuscate(window.localStorage.getItem(
+  ) || undefined;
+  const sessionSecret = window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
-  ) ?? '') || undefined;
-  const sessionToken = xorDeobfuscate(window.localStorage.getItem(
+  ) || undefined;
+  const sessionToken = window.localStorage.getItem(
     side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-  ) ?? '') || undefined;
+  ) || undefined;
   return { guestId, sessionSecret, sessionToken, sessionExpiresAt };
 }
 
@@ -159,12 +137,12 @@ export function writeStoredGuestIdentity(
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(
     side === 'white' ? WHITE_GUEST_ID_STORAGE_KEY : BLACK_GUEST_ID_STORAGE_KEY,
-    xorObfuscate(guestId),
+    guestId,
   );
   if (sessionSecret.trim()) {
     window.localStorage.setItem(
       side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY,
-      xorObfuscate(sessionSecret),
+      sessionSecret,
     );
   } else {
     clearStorageKey(side === 'white' ? WHITE_GUEST_SECRET_STORAGE_KEY : BLACK_GUEST_SECRET_STORAGE_KEY);
@@ -173,7 +151,7 @@ export function writeStoredGuestIdentity(
     if ((options.sessionToken ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY,
-        xorObfuscate(options.sessionToken ?? ''),
+        options.sessionToken ?? '',
       );
     } else {
       clearStorageKey(side === 'white' ? WHITE_GUEST_TOKEN_STORAGE_KEY : BLACK_GUEST_TOKEN_STORAGE_KEY);
@@ -183,7 +161,7 @@ export function writeStoredGuestIdentity(
     if ((options.sessionExpiresAt ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY,
-        xorObfuscate(options.sessionExpiresAt ?? ''),
+        options.sessionExpiresAt ?? '',
       );
     } else {
       clearStorageKey(side === 'white' ? WHITE_GUEST_TOKEN_EXPIRY_STORAGE_KEY : BLACK_GUEST_TOKEN_EXPIRY_STORAGE_KEY);
@@ -207,20 +185,20 @@ export function readStoredAccountIdentity(side: 'white' | 'black'): {
   expiresAt?: string;
 } {
   if (typeof window === 'undefined') return {};
-  const expiresAt = xorDeobfuscate(window.localStorage.getItem(
+  const expiresAt = window.localStorage.getItem(
     side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-  ) ?? '') || undefined;
+  ) || undefined;
   if (isExpired(expiresAt)) {
     clearStoredAccountIdentity(side);
     return {};
   }
   return {
-    accountId: xorDeobfuscate(window.localStorage.getItem(
+    accountId: window.localStorage.getItem(
       side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY,
-    ) ?? '') || undefined,
-    sessionToken: xorDeobfuscate(window.localStorage.getItem(
+    ) || undefined,
+    sessionToken: window.localStorage.getItem(
       side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
-    ) ?? '') || undefined,
+    ) || undefined,
     expiresAt,
   };
 }
@@ -233,13 +211,13 @@ export function writeStoredAccountIdentity(
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(
     side === 'white' ? WHITE_ACCOUNT_ID_STORAGE_KEY : BLACK_ACCOUNT_ID_STORAGE_KEY,
-    xorObfuscate(account.accountId),
+    account.accountId,
   );
   if (options.sessionToken !== undefined) {
     if ((options.sessionToken ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY,
-        xorObfuscate(options.sessionToken ?? ''),
+        options.sessionToken ?? '',
       );
     } else {
       clearStorageKey(side === 'white' ? WHITE_ACCOUNT_TOKEN_STORAGE_KEY : BLACK_ACCOUNT_TOKEN_STORAGE_KEY);
@@ -249,7 +227,7 @@ export function writeStoredAccountIdentity(
     if ((options.expiresAt ?? '').trim()) {
       window.localStorage.setItem(
         side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY,
-        xorObfuscate(options.expiresAt ?? ''),
+        options.expiresAt ?? '',
       );
     } else {
       clearStorageKey(side === 'white' ? WHITE_ACCOUNT_EXPIRY_STORAGE_KEY : BLACK_ACCOUNT_EXPIRY_STORAGE_KEY);

@@ -43,7 +43,16 @@ func main() {
 	defer func() { _ = archive.Close() }()
 
 	store, broadcaster := openMatchStore()
-	service := match.NewServiceWithStoreAndBroadcaster(newFinalizingArchiveStore(archive), store, broadcaster)
+	var tokenStore match.TokenStore
+	if redisURL := httputil.EnvOrDefault("MATCH_REDIS_URL", ""); redisURL != "" {
+		if ts, err := match.NewRedisTokenStore(redisURL); err == nil {
+			tokenStore = ts
+			log.Println("auth token store: redis backend")
+		} else {
+			log.Printf("WARNING: failed to connect to redis for auth token store, using in-memory: %v", err)
+		}
+	}
+	service := match.NewServiceWithStoreBroadcasterAndTokenStore(newFinalizingArchiveStore(archive), store, broadcaster, tokenStore)
 	rl, err := rate_limit.NewRateLimiter()
 	if err != nil {
 		log.Fatalf("failed to initialize rate limiter: %v", err)
@@ -137,12 +146,13 @@ func main() {
 			httputil.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		if r.Header.Get("X-Internal-Service-Token") == "" || r.Header.Get("X-Internal-Service-Token") != internalServiceToken() {
-			httputil.WriteError(w, http.StatusUnauthorized, "internal service token required")
+		expected := internalServiceToken()
+		if expected == "" {
+			httputil.WriteError(w, http.StatusServiceUnavailable, "internal service token not configured on server")
 			return
 		}
-		if internalServiceToken() == "" {
-			httputil.WriteError(w, http.StatusServiceUnavailable, "internal service token not configured on server")
+		if r.Header.Get("X-Internal-Service-Token") != expected {
+			httputil.WriteError(w, http.StatusUnauthorized, "internal service token required")
 			return
 		}
 		limit := platform.ParseListLimit(r.URL.Query().Get("limit"), 10)
@@ -451,10 +461,9 @@ func openMatchStore() (match.MatchStore, match.Broadcaster) {
 	}
 
 	if backend == "redis" {
-		log.Printf("WARNING: MATCH_STATE_BACKEND=redis but MATCH_REDIS_URL is unset, falling back to memory (DATA LOSS ON RESTART)")
-	} else {
-		log.Printf("WARNING: MATCH_STATE_BACKEND=%s, match state will be lost on restart", backend)
+		log.Fatalf("FATAL: MATCH_STATE_BACKEND=redis but MATCH_REDIS_URL is unset. Set MATCH_REDIS_URL or change MATCH_STATE_BACKEND to memory.")
 	}
+	log.Fatalf("FATAL: MATCH_STATE_BACKEND=%s is not supported. Supported values: redis, memory", backend)
 	return match.NewMemoryMatchStore(), match.NoopBroadcaster{}
 }
 
@@ -473,7 +482,16 @@ func writeMatchError(w http.ResponseWriter, err error) {
 	}
 }
 
+var wsConnSemaphore = make(chan struct{}, 500)
+
 func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Service, upgrader *websocket.Upgrader, matchID string, wsReadLimit int64) {
+	select {
+	case wsConnSemaphore <- struct{}{}:
+		defer func() { <-wsConnSemaphore }()
+	default:
+		httputil.WriteError(w, http.StatusTooManyRequests, "too many websocket connections")
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return

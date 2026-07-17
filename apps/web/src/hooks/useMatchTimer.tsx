@@ -23,12 +23,9 @@ export function useMatchTimer({
   const [timeW, setTimeW] = React.useState(initialClockStart);
   const [timeB, setTimeB] = React.useState(initialClockStart);
   const [clockActive, setClockActive] = React.useState(false);
-  const clockRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   const tickingRef = React.useRef<PieceColor | null>(null);
   const [tickingState, setTickingState] = React.useState<PieceColor | null>(null);
-
-  const [freezeUntilSnapshot, setFreezeUntilSnapshot] = React.useState(false);
 
   const [abortCountdown, setAbortCountdown] = React.useState(initialAbortSecs);
   const [abortActive, setAbortActive] = React.useState(true);
@@ -78,10 +75,6 @@ export function useMatchTimer({
   const resetTimer = React.useCallback(() => {
     setTimeW(initialClockStart);
     setTimeB(initialClockStart);
-    if (clockRef.current) clearInterval(clockRef.current);
-    clockRef.current = null;
-    if (extrapolationRef.current) clearInterval(extrapolationRef.current);
-    extrapolationRef.current = null;
     if (abortRef.current) clearInterval(abortRef.current);
     abortRef.current = null;
     setTicking(null);
@@ -90,54 +83,17 @@ export function useMatchTimer({
     setAbortActive(true);
   }, [initialClockStart, initialAbortSecs, setTicking]);
 
-  const extrapolationRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
-
-  React.useEffect(() => {
-    if (clockRef.current) clearInterval(clockRef.current);
-    if (extrapolationRef.current) clearInterval(extrapolationRef.current);
-    if (!clockActive || over) return;
-    if (authoritativeLive) {
-      extrapolationRef.current = setInterval(() => {
-        const ticking = tickingRef.current;
-        if (ticking === null || freezeUntilSnapshot) return;
-        if (ticking === 'white') {
-          setTimeW(t => Math.max(0, t - 0.1));
-        } else {
-          setTimeB(t => Math.max(0, t - 0.1));
-        }
-      }, 100);
-    } else {
-      clockRef.current = setInterval(() => {
-        const ticking = tickingRef.current;
-        if (ticking === null || freezeUntilSnapshot) return;
-        if (ticking === 'white') {
-          setTimeW(t => {
-            if (t <= 1) { clearInterval(clockRef.current!); onTimeoutRef.current('white'); return 0; }
-            return t - 1;
-          });
-        } else {
-          setTimeB(t => {
-            if (t <= 1) { clearInterval(clockRef.current!); onTimeoutRef.current('black'); return 0; }
-            return t - 1;
-          });
-        }
-      }, 1000);
-    }
-    return () => {
-      if (clockRef.current) clearInterval(clockRef.current);
-      if (extrapolationRef.current) clearInterval(extrapolationRef.current);
-    };
-  }, [clockActive, over, authoritativeLive, freezeUntilSnapshot]);
+  // Clock display is server-driven only — no local countdown.
+  // timeW/timeB are updated exclusively from authoritative snapshots or local game ticks.
 
   return {
     timeW, setTimeW,
     timeB, setTimeB,
     clockActive, setClockActive,
     tickingState, tickingRef, setTicking,
-    freezeUntilSnapshot, setFreezeUntilSnapshot,
     abortCountdown, setAbortCountdown,
     abortActive, setAbortActive,
     startAbortCountdown, stopAbortCountdown, resetTimer,
-    clockRef, abortRef, setTickingState,
+    abortRef, setTickingState,
   };
 }

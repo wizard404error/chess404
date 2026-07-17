@@ -203,7 +203,14 @@ func requestClientIP(r *http.Request) string {
 
 func trustAuthForwardedHeaders() bool {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv("TRUST_FORWARDED_HEADERS")))
-	return value == "1" || value == "true" || value == "yes" || value == "on"
+	if value == "1" || value == "true" || value == "yes" || value == "on" {
+		return true
+	}
+	// Default to trusting forwarded headers on Railway (env var auto-set by Railway runtime)
+	if os.Getenv("RAILWAY_ENVIRONMENT") != "" {
+		return true
+	}
+	return false
 }
 
 func writeAuthRateLimitError(w http.ResponseWriter, retryAfter time.Duration) {

@@ -33,6 +33,9 @@ func TestMatchArchiveStoreUpsertAndReload(t *testing.T) {
 	if err := store.Upsert(snapshot); err != nil {
 		t.Fatalf("expected upsert to succeed, got %v", err)
 	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("expected archive flush to succeed, got %v", err)
+	}
 
 	reloaded, err := NewMatchArchiveStore(storePath)
 	if err != nil {
@@ -239,6 +242,9 @@ func TestMatchArchiveStorePreservesReplayFrames(t *testing.T) {
 	if err := store.Upsert(snapshot); err != nil {
 		t.Fatalf("expected upsert to succeed, got %v", err)
 	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("expected archive flush to succeed, got %v", err)
+	}
 
 	reloaded, err := NewMatchArchiveStore(storePath)
 	if err != nil {
@@ -297,6 +303,9 @@ func TestMatchArchiveStoreLoadMatchRestoresPrivateState(t *testing.T) {
 
 	if err := store.Upsert(snapshot); err != nil {
 		t.Fatalf("expected archive upsert to succeed, got %v", err)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("expected archive flush to succeed, got %v", err)
 	}
 
 	reloaded, err := NewMatchArchiveStore(storePath)
