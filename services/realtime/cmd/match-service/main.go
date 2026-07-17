@@ -463,7 +463,8 @@ func openMatchStore() (match.MatchStore, match.Broadcaster) {
 	if backend == "redis" {
 		log.Fatalf("FATAL: MATCH_STATE_BACKEND=redis but MATCH_REDIS_URL is unset. Set MATCH_REDIS_URL or change MATCH_STATE_BACKEND to memory.")
 	}
-	log.Fatalf("FATAL: MATCH_STATE_BACKEND=%s is not supported. Supported values: redis, memory", backend)
+
+	log.Printf("match store: memory backend")
 	return match.NewMemoryMatchStore(), match.NoopBroadcaster{}
 }
 
