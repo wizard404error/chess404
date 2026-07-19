@@ -9,6 +9,7 @@ const MATCH_POLL_INTERVAL_MS = 750;
 const MATCH_POLL_RETRY_INTERVAL_MS = 900;
 
 const latestSeqByMatch = new Map<string, number>();
+const wsConnections = new Map<string, WebSocket>();
 
 export function recordMatchSeqNum(matchId: string, seqNum: number | undefined): void {
   if (seqNum && seqNum > 0) {
@@ -111,6 +112,23 @@ export async function ensureMatch(input: CreateMatchInput & { matchId: string })
     }
     throw err;
   }
+}
+
+export function sendIntentViaWs(matchId: string, intent: Omit<PlayerIntent, 'matchId'>): boolean {
+  const ws = wsConnections.get(matchId);
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return false;
+  }
+  const latestSeq = latestSeqByMatch.get(matchId) ?? 0;
+  const intentWithSeq = { ...intent, expectedSeqNum: latestSeq } as Omit<PlayerIntent, 'matchId'>;
+  ws.send(JSON.stringify({
+    type: 'apply_intent',
+    payload: {
+      ...intentWithSeq,
+      matchId
+    }
+  }));
+  return true;
 }
 
 export async function applyIntent(matchId: string, intent: Omit<PlayerIntent, 'matchId'>): Promise<MatchSnapshotMessage> {
@@ -324,6 +342,7 @@ export function connectToMatchStream(
       let authReceived = false;
 
       nextSocket.addEventListener('open', () => {
+        wsConnections.set(matchId, nextSocket);
         nextSocket.send(JSON.stringify({ type: 'auth', claimToken }));
       });
 
@@ -371,6 +390,7 @@ export function connectToMatchStream(
 
       nextSocket.addEventListener('close', () => {
         if (socket === nextSocket) socket = null;
+        if (wsConnections.get(matchId) === nextSocket) wsConnections.delete(matchId);
         isWsConnected = false;
         if (!disposed) scheduleReconnect();
       });
@@ -470,9 +490,6 @@ function buildMatchFetchHeaders(): Headers {
     }
     if (identity.sessionToken?.trim()) {
       headers.set(`x-chess404-${side}-session-token`, identity.sessionToken.trim());
-    }
-    if (identity.sessionSecret?.trim()) {
-      headers.set(`x-chess404-${side}-session-secret`, identity.sessionSecret.trim());
     }
   }
   return headers;

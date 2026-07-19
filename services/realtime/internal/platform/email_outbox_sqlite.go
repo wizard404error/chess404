@@ -39,6 +39,8 @@ func (s *SQLiteAccountEmailOutboxStore) init() error {
 	if s == nil || s.db == nil {
 		return os.ErrInvalid
 	}
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	if _, err := s.db.Exec(`
 		create table if not exists account_email_outbox (
 			delivery_id text primary key,

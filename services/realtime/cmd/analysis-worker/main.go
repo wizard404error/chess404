@@ -193,7 +193,7 @@ func (w *Worker) fetchFinishedMatchIDs(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	if w.serviceToken != "" {
-		req.Header.Set("X-Internal-Service-Token", w.serviceToken)
+		req.Header.Set("X-Chess404-Service-Token", w.serviceToken)
 	}
 
 	resp, err := w.httpClient.Do(req)

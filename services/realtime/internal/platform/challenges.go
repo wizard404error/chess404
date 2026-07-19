@@ -71,10 +71,10 @@ type fileDirectChallengeStore struct {
 }
 
 func NewDirectChallengeStore(path string) (*DirectChallengeStore, error) {
-	return newDirectChallengeStore(&fileDirectChallengeStore{path: path})
+	return NewDirectChallengeStoreFromDB(&fileDirectChallengeStore{path: path})
 }
 
-func newDirectChallengeStore(store directChallengePersistence) (*DirectChallengeStore, error) {
+func NewDirectChallengeStoreFromDB(store directChallengePersistence) (*DirectChallengeStore, error) {
 	challenges, err := store.load()
 	if err != nil {
 		return nil, err

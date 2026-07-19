@@ -1,23 +1,39 @@
 'use client';
 
-import React from 'react';
+import React, { createContext, useContext } from 'react';
+import { useMatchEngineFacade, type UseMatchEngineProps } from '../hooks/useMatchEngineFacade';
 import MatchStateContext from './MatchStateContext';
 import MatchAnimContext from './MatchAnimContext';
 import MatchCardContext from './MatchCardContext';
 
-interface MatchEngineProviderProps {
-  engine: ReturnType<typeof import('../hooks/useMatchEngine').useMatchEngine>;
+interface MatchEngineProviderProps extends UseMatchEngineProps {
   children: React.ReactNode;
-  hostedRuntime: boolean | null;
-  viewerSeat: import('../types').PieceColor | null;
-  authoritativeRematchBusy: boolean;
 }
 
-export default function MatchEngineProvider({
-  children, engine,
-  hostedRuntime, viewerSeat, authoritativeRematchBusy,
-}: MatchEngineProviderProps) {
+const MatchEngineRawContext = createContext<ReturnType<typeof useMatchEngineFacade> | null>(null);
+const MatchEnginePropsContext = createContext<UseMatchEngineProps | null>(null);
+
+export function useMatchEngineContext() {
+  const ctx = useContext(MatchEngineRawContext);
+  if (!ctx) throw new Error('useMatchEngineContext must be used within MatchEngineProvider');
+  return ctx;
+}
+
+export function useMatchEnginePropsContext(): UseMatchEngineProps {
+  const ctx = useContext(MatchEnginePropsContext);
+  if (!ctx) throw new Error('useMatchEnginePropsContext must be used within MatchEngineProvider');
+  return ctx;
+}
+
+export default function MatchEngineProvider(props: MatchEngineProviderProps) {
+  const { children, hostedRuntime: runtime, viewerSeat: vSeat, authoritativeRematchBusy: rematchBusy, ...restHookProps } = props;
+  const hookProps = { hostedRuntime: runtime, viewerSeat: vSeat, authoritativeRematchBusy: rematchBusy, ...restHookProps } as UseMatchEngineProps;
+  const engine = useMatchEngineFacade(hookProps);
+
   const stateValue = React.useMemo(() => ({
+    hostedRuntime: runtime,
+    viewerSeat: vSeat,
+    authoritativeRematchBusy: rematchBusy,
     board: engine.board,
     turn: engine.turn,
     sel: engine.sel,
@@ -40,9 +56,7 @@ export default function MatchEngineProvider({
     clockActive: engine.clockActive,
     tickingState: engine.tickingState,
     fmtClock: engine.fmtClock,
-    hostedRuntime,
     authoritativeMatchId: engine.authoritativeMatchId,
-    viewerSeat,
     authoritativeLive: engine.authoritativeLive,
     authoritativeStatus: engine.authoritativeStatus,
     topSeat: engine.topSeat,
@@ -99,7 +113,6 @@ export default function MatchEngineProvider({
     createAuthoritativeRematchRoom: engine.createAuthoritativeRematchRoom,
     stopAbortCountdown: engine.stopAbortCountdown,
     activeFinishReasonLabel: engine.activeFinishReasonLabel,
-    authoritativeRematchBusy,
     canCreateDirectRematch: engine.canCreateDirectRematch,
     canQueueSameLane: engine.canQueueSameLane,
     returnToSameQueueLane: engine.returnToSameQueueLane,
@@ -121,7 +134,44 @@ export default function MatchEngineProvider({
     roundNumber: engine.roundNumber,
     chatMessages: engine.chatMessages,
     setChatMessages: engine.setChatMessages,
-  }), [engine, hostedRuntime, viewerSeat, authoritativeRematchBusy]);
+    snapshots: engine.snapshots,
+    reviewPrev: engine.reviewPrev,
+    reviewNext: engine.reviewNext,
+    visibleSocialAlert: engine.visibleSocialAlert,
+    handleSocialAlertAction: engine.handleSocialAlertAction,
+    dismissSocialAlert: engine.dismissSocialAlert,
+    activeMatchRoomMeta: engine.activeMatchRoomMeta,
+    primaryAccountIdentity: engine.primaryAccountIdentity,
+    setAuthoritativeMatchId: engine.setAuthoritativeMatchId,
+    shellAccountNotice: engine.shellAccountNotice,
+    setShellAccountNotice: engine.setShellAccountNotice,
+    hasPrimaryAccountSession: engine.hasPrimaryAccountSession,
+    handlePrimaryShellAuthenticated: engine.handlePrimaryShellAuthenticated,
+    handleSeatAuthenticated: engine.handleSeatAuthenticated,
+    syncPrimaryAccountIdentity: engine.syncPrimaryAccountIdentity,
+    requestedMatchIdRef: engine.requestedMatchIdRef,
+    showReturnToMatch: engine.showReturnToMatch,
+    copyLiveMatchLink: engine.copyLiveMatchLink,
+    openLiveMatch: engine.openLiveMatch,
+    openReplayMatch: engine.openReplayMatch,
+    openProfileHandle: engine.openProfileHandle,
+    openGuestHistory: engine.openGuestHistory,
+    primaryNavItems: engine.primaryNavItems,
+    secondaryNavItems: engine.secondaryNavItems,
+    shellPageMeta: engine.shellPageMeta,
+    utilityGroups: engine.utilityGroups,
+    activeSecondaryNav: engine.activeSecondaryNav,
+    showPlayHub: engine.showPlayHub,
+    showBoardSurface: engine.showBoardSurface,
+    cardAnim: engine.cardAnim,
+    cardAnimLbl: engine.cardAnimLbl,
+    renderJokerPicker: engine.renderJokerPicker,
+    engineOn: engine.engineOn,
+    setEngineOn: engine.setEngineOn,
+    finalPositionRef: engine.finalPositionRef,
+    setPromo: engine.setPromo,
+    controlSender: engine.controlSender,
+  }), [engine, runtime, vSeat, rematchBusy]);
 
   const animValue = React.useMemo(() => ({
     cardAnim: engine.cardAnim,
@@ -153,12 +203,16 @@ export default function MatchEngineProvider({
   }), [engine]);
 
   return (
-    <MatchStateContext.Provider value={stateValue}>
-      <MatchAnimContext.Provider value={animValue}>
-        <MatchCardContext.Provider value={cardValue}>
-          {children}
-        </MatchCardContext.Provider>
-      </MatchAnimContext.Provider>
-    </MatchStateContext.Provider>
+    <MatchEnginePropsContext.Provider value={hookProps}>
+      <MatchStateContext.Provider value={stateValue}>
+        <MatchAnimContext.Provider value={animValue}>
+          <MatchCardContext.Provider value={cardValue}>
+            <MatchEngineRawContext.Provider value={engine}>
+              {children}
+            </MatchEngineRawContext.Provider>
+          </MatchCardContext.Provider>
+        </MatchAnimContext.Provider>
+      </MatchStateContext.Provider>
+    </MatchEnginePropsContext.Provider>
   );
 }

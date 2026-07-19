@@ -2,9 +2,7 @@
 package match
 
 import (
-	"crypto/rand"
 	_ "embed"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	mrand "math/rand"
@@ -15,18 +13,7 @@ import (
 	"github.com/chess404/realtime/internal/contracts"
 )
 
-var (
-	cardRand   *mrand.Rand
-	cardRandMu sync.Mutex
-)
 
-func init() {
-	var seedBuf [8]byte
-	if _, err := rand.Read(seedBuf[:]); err != nil {
-		seedBuf[0] = byte(time.Now().UnixNano())
-	}
-	cardRand = mrand.New(mrand.NewSource(int64(binary.LittleEndian.Uint64(seedBuf[:]))))
-}
 
 //go:embed cards.json
 var cardsJSON []byte
@@ -566,10 +553,10 @@ func rewardTemplateForState(state *contracts.MatchState, offset int) contracts.G
 
 func deterministicCardIndex(state *contracts.MatchState, offset int) int {
 	pool := getStarterCards()
-	cardRandMu.Lock()
-	idx := cardRand.Intn(len(pool))
-	cardRandMu.Unlock()
-	return idx
+	seed := state.RNGSeed + int64(state.FullMoveNum*1000) + int64(offset)
+	source := mrand.NewSource(seed)
+	rng := mrand.New(source)
+	return rng.Intn(len(pool))
 }
 
 func parseSquareOptions(options []string) []contracts.Square {

@@ -24,10 +24,11 @@ func NewPostgresAnticheatStore(rawURL string) (*PostgresAnticheatStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(15)
-	db.SetMaxIdleConns(3)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(3 * time.Minute)
+	configurePostgresPool(db, 15, 3)
+	return NewPostgresAnticheatStoreWithDB(db)
+}
+
+func NewPostgresAnticheatStoreWithDB(db *sql.DB) (*PostgresAnticheatStore, error) {
 	store := &PostgresAnticheatStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

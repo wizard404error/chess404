@@ -65,3 +65,38 @@ func (s *fileArchiveStore) persist(entries map[string]MatchArchiveEntry, private
 func (s *fileArchiveStore) close() error {
 	return nil
 }
+
+// query* methods for the file backend are not implemented — the store falls
+// back to the in-memory map populated by load().
+
+func (s *fileArchiveStore) queryGet(_ string) (MatchArchiveEntry, bool, error) {
+	return MatchArchiveEntry{}, false, nil
+}
+
+func (s *fileArchiveStore) queryPrivate(_ string) (MatchArchivePrivateEntry, bool, error) {
+	return MatchArchivePrivateEntry{}, false, nil
+}
+
+func (s *fileArchiveStore) queryList(_, _ int) ([]MatchArchiveEntry, error) {
+	return nil, nil
+}
+
+func (s *fileArchiveStore) queryUnfinishedIDs(_ int) ([]string, error) {
+	return nil, nil
+}
+
+func (s *fileArchiveStore) queryFinishedIDs(_ int) ([]string, error) {
+	return nil, nil
+}
+
+func (s *fileArchiveStore) queryByGuest(_ string, _, _ int) ([]MatchArchiveEntry, error) {
+	return nil, nil
+}
+
+func (s *fileArchiveStore) queryByAccount(_ string, _ []string, _, _ int) ([]MatchArchiveEntry, error) {
+	return nil, nil
+}
+
+func (s *fileArchiveStore) queryStats() (MatchArchiveStats, error) {
+	return MatchArchiveStats{}, nil
+}

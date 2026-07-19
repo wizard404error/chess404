@@ -71,6 +71,7 @@ type Service struct {
 	queuedTTL           time.Duration
 	matchedRecoveryTTL  time.Duration
 	cancelledTicketTTL  time.Duration
+	cleanupStopCh       chan struct{}
 }
 
 type MatchAssignment struct {
@@ -142,14 +143,34 @@ func newPersistentService(store ticketStore) (*Service, error) {
 }
 
 func newService(store ticketStore) *Service {
-	return &Service{
+	s := &Service{
 		store:              store,
 		tickets:            make(map[string]Ticket),
 		now:                time.Now,
 		queuedTTL:          defaultQueuedTTL,
 		matchedRecoveryTTL: defaultMatchedRecoveryTTL,
 		cancelledTicketTTL: defaultCancelledTicketTTL,
+		cleanupStopCh:      make(chan struct{}),
 	}
+	s.startCleanupLoop()
+	return s
+}
+
+func (s *Service) startCleanupLoop() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.cleanupStopCh:
+				return
+			case <-ticker.C:
+				s.mu.Lock()
+				s.pruneExpiredLocked(s.nowUTC())
+				s.mu.Unlock()
+			}
+		}
+	}()
 }
 
 func (s *Service) SetMatchCreator(creator MatchCreator) {
@@ -159,6 +180,7 @@ func (s *Service) SetMatchCreator(creator MatchCreator) {
 }
 
 func (s *Service) Close() error {
+	close(s.cleanupStopCh)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.store == nil {
@@ -256,34 +278,33 @@ func (s *Service) EnqueueWithAccount(queue QueueName, modeID contracts.MatchMode
 			s.mu.Unlock()
 			err := <-resultCh
 			s.mu.Lock()
+			// Reload fresh tickets after re-acquiring lock (TOCTOU guard)
+			currentTicket, ticketOK := s.tickets[ticket.TicketID]
+			currentOpponent, opponentOK := s.tickets[opponent.TicketID]
 			if err != nil {
-				delete(s.tickets, ticket.TicketID)
-				delete(s.tickets, opponent.TicketID)
+				if ticketOK {
+					delete(s.tickets, ticket.TicketID)
+				}
+				if opponentOK {
+					delete(s.tickets, opponent.TicketID)
+				}
 				if err2 := s.persistLocked(); err2 != nil {
 					log.Printf("failed to persist after CreateMatch rollback: %v", err2)
 				}
 				return Ticket{}, err
 			}
-			// Re-check both tickets still queued after lock re-acquire (TOCTOU guard)
-			currentTicket, ticketOK := s.tickets[ticket.TicketID]
-			currentOpponent, opponentOK := s.tickets[opponent.TicketID]
-			if ticketOK && currentTicket.Status != StatusQueued {
+			if !ticketOK || !opponentOK {
+				return Ticket{}, errors.New("ticket disappeared during match creation")
+			}
+			if currentTicket.Status != StatusQueued {
 				return Ticket{}, errors.New("ticket status changed during match creation")
 			}
-			if opponentOK && currentOpponent.Status != StatusQueued {
-				// restore our ticket if only opponent was claimed
-				if ticketOK && currentTicket.Status == StatusQueued {
-					s.tickets[ticket.TicketID] = currentTicket
-				}
+			if currentOpponent.Status != StatusQueued {
 				return Ticket{}, errors.New("opponent ticket status changed during match creation")
 			}
-			// Ensure tickets exist with fresh status
-			currTicket := s.tickets[ticket.TicketID]
-			currOpponent := s.tickets[opponent.TicketID]
-			currTicket.Status = StatusQueued
-			currOpponent.Status = StatusQueued
-			s.tickets[ticket.TicketID] = currTicket
-			s.tickets[opponent.TicketID] = currOpponent
+			// Use re-fetched tickets for the remainder
+			ticket = currentTicket
+			opponent = currentOpponent
 		}
 
 		ticket.Status = StatusMatched

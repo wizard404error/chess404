@@ -74,10 +74,10 @@ type fileFriendshipStore struct {
 }
 
 func NewFriendshipStore(path string) (*FriendshipStore, error) {
-	return newFriendshipStore(&fileFriendshipStore{path: path})
+	return NewFriendshipStoreFromDB(&fileFriendshipStore{path: path})
 }
 
-func newFriendshipStore(store friendshipPersistence) (*FriendshipStore, error) {
+func NewFriendshipStoreFromDB(store friendshipPersistence) (*FriendshipStore, error) {
 	requests, friendships, err := store.load()
 	if err != nil {
 		return nil, err

@@ -89,9 +89,17 @@ func (s *sqliteArchiveStore) persist(entries map[string]MatchArchiveEntry, priva
 		_ = tx.Rollback()
 	}()
 
-	if _, err := tx.Exec(`delete from archives`); err != nil {
+	upsertStmt, err := tx.Prepare(`
+		insert into archives(match_id, entry_json, private_json)
+		values(?, ?, ?)
+		on conflict(match_id) do update set
+			entry_json = excluded.entry_json,
+			private_json = excluded.private_json
+	`)
+	if err != nil {
 		return err
 	}
+	defer upsertStmt.Close()
 
 	for matchID, entry := range entries {
 		entryJSON, err := json.Marshal(entry)
@@ -108,10 +116,7 @@ func (s *sqliteArchiveStore) persist(entries map[string]MatchArchiveEntry, priva
 			privateJSON = string(encodedPrivate)
 		}
 
-		if _, err := tx.Exec(`
-			insert into archives(match_id, entry_json, private_json)
-			values(?, ?, ?)
-		`, matchID, string(entryJSON), privateJSON); err != nil {
+		if _, err := upsertStmt.Exec(matchID, string(entryJSON), privateJSON); err != nil {
 			return err
 		}
 	}
@@ -126,7 +131,44 @@ func (s *sqliteArchiveStore) close() error {
 	return s.db.Close()
 }
 
+// query* methods for the SQLite backend are not implemented — the store falls
+// back to the in-memory map populated by load().
+
+func (s *sqliteArchiveStore) queryGet(_ string) (MatchArchiveEntry, bool, error) {
+	return MatchArchiveEntry{}, false, nil
+}
+
+func (s *sqliteArchiveStore) queryPrivate(_ string) (MatchArchivePrivateEntry, bool, error) {
+	return MatchArchivePrivateEntry{}, false, nil
+}
+
+func (s *sqliteArchiveStore) queryList(_, _ int) ([]MatchArchiveEntry, error) {
+	return nil, nil
+}
+
+func (s *sqliteArchiveStore) queryUnfinishedIDs(_ int) ([]string, error) {
+	return nil, nil
+}
+
+func (s *sqliteArchiveStore) queryFinishedIDs(_ int) ([]string, error) {
+	return nil, nil
+}
+
+func (s *sqliteArchiveStore) queryByGuest(_ string, _, _ int) ([]MatchArchiveEntry, error) {
+	return nil, nil
+}
+
+func (s *sqliteArchiveStore) queryByAccount(_ string, _ []string, _, _ int) ([]MatchArchiveEntry, error) {
+	return nil, nil
+}
+
+func (s *sqliteArchiveStore) queryStats() (MatchArchiveStats, error) {
+	return MatchArchiveStats{}, nil
+}
+
 func (s *sqliteArchiveStore) init() error {
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists archives (
 			match_id text primary key,

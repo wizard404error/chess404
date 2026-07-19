@@ -3,7 +3,8 @@ package platform
 import (
 	"database/sql"
 	"encoding/json"
-	"time"
+	"fmt"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -17,14 +18,11 @@ func newPostgresArchiveStore(dsn string) (*postgresArchiveStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(3 * time.Minute)
-	return newPostgresArchiveStoreWithDB(db)
+	configurePostgresPool(db, 25, 5)
+	return NewPostgresArchiveStoreWithDB(db)
 }
 
-func newPostgresArchiveStoreWithDB(db *sql.DB) (*postgresArchiveStore, error) {
+func NewPostgresArchiveStoreWithDB(db *sql.DB) (*postgresArchiveStore, error) {
 	store := &postgresArchiveStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()
@@ -38,47 +36,215 @@ func (s *postgresArchiveStore) backend() string {
 }
 
 func (s *postgresArchiveStore) load() (map[string]MatchArchiveEntry, map[string]MatchArchivePrivateEntry, error) {
+	// Postgres backend uses lazy-loading and DB-backed queries.
+	// Return empty maps; data is fetched on demand via query* methods.
+	return make(map[string]MatchArchiveEntry), make(map[string]MatchArchivePrivateEntry), nil
+}
+
+func scanSingleEntry(row interface{ Scan(...any) error }) (MatchArchiveEntry, bool, error) {
+	var matchID string
+	var entryJSON, privateJSON []byte
+	if err := row.Scan(&matchID, &entryJSON, &privateJSON); err != nil {
+		if err == sql.ErrNoRows {
+			return MatchArchiveEntry{}, false, nil
+		}
+		return MatchArchiveEntry{}, false, err
+	}
+	var entry MatchArchiveEntry
+	if err := json.Unmarshal(entryJSON, &entry); err != nil {
+		return MatchArchiveEntry{}, false, err
+	}
+	return entry, true, nil
+}
+
+func (s *postgresArchiveStore) queryGet(matchID string) (MatchArchiveEntry, bool, error) {
+	return scanSingleEntry(s.db.QueryRow(`
+		select match_id, entry_json, private_json
+		from archives
+		where match_id = $1
+	`, matchID))
+}
+
+func (s *postgresArchiveStore) queryPrivate(matchID string) (MatchArchivePrivateEntry, bool, error) {
+	var privateJSON []byte
+	err := s.db.QueryRow(`select private_json from archives where match_id = $1`, matchID).Scan(&privateJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return MatchArchivePrivateEntry{}, false, nil
+		}
+		return MatchArchivePrivateEntry{}, false, err
+	}
+	if len(privateJSON) == 0 {
+		return MatchArchivePrivateEntry{}, true, nil
+	}
+	var privateEntry MatchArchivePrivateEntry
+	if err := json.Unmarshal(privateJSON, &privateEntry); err != nil {
+		return MatchArchivePrivateEntry{}, false, err
+	}
+	return privateEntry, true, nil
+}
+
+func (s *postgresArchiveStore) scanEntryRows(rows *sql.Rows) ([]MatchArchiveEntry, error) {
+	defer rows.Close()
+	var items []MatchArchiveEntry
+	for rows.Next() {
+		var matchID string
+		var entryJSON, privateJSON []byte
+		if err := rows.Scan(&matchID, &entryJSON, &privateJSON); err != nil {
+			return nil, err
+		}
+		var entry MatchArchiveEntry
+		if err := json.Unmarshal(entryJSON, &entry); err != nil {
+			return nil, err
+		}
+		items = append(items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *postgresArchiveStore) queryList(limit, offset int) ([]MatchArchiveEntry, error) {
 	rows, err := s.db.Query(`
 		select match_id, entry_json, private_json
 		from archives
-	`)
+		order by updated_at desc
+		limit $1 offset $2
+	`, limit, offset)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	return s.scanEntryRows(rows)
+}
+
+func (s *postgresArchiveStore) queryUnfinishedIDs(limit int) ([]string, error) {
+	rows, err := s.db.Query(`
+		select match_id
+		from archives
+		where status != 'finished'
+		order by updated_at desc
+		limit $1
+	`, limit)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
-
-	entries := make(map[string]MatchArchiveEntry)
-	private := make(map[string]MatchArchivePrivateEntry)
-
+	var ids []string
 	for rows.Next() {
-		var (
-			matchID     string
-			entryJSON   []byte
-			privateJSON []byte
-		)
-		if err := rows.Scan(&matchID, &entryJSON, &privateJSON); err != nil {
-			return nil, nil, err
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
 
-		var entry MatchArchiveEntry
-		if err := json.Unmarshal(entryJSON, &entry); err != nil {
-			return nil, nil, err
+func (s *postgresArchiveStore) queryFinishedIDs(limit int) ([]string, error) {
+	rows, err := s.db.Query(`
+		select match_id
+		from archives
+		where status = 'finished'
+		order by updated_at desc
+		limit $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
-		entries[matchID] = entry
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
 
-		if len(privateJSON) > 0 {
-			var privateEntry MatchArchivePrivateEntry
-			if err := json.Unmarshal(privateJSON, &privateEntry); err != nil {
-				return nil, nil, err
-			}
-			private[matchID] = privateEntry
+func (s *postgresArchiveStore) queryByGuest(guestID string, limit, offset int) ([]MatchArchiveEntry, error) {
+	rows, err := s.db.Query(`
+		select match_id, entry_json, private_json
+		from archives
+		where white_guest_id = $1 or black_guest_id = $1
+		order by updated_at desc
+		limit $2 offset $3
+	`, guestID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return s.scanEntryRows(rows)
+}
+
+func (s *postgresArchiveStore) queryByAccount(accountID string, linkedGuestIDs []string, limit, offset int) ([]MatchArchiveEntry, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return nil, nil
+	}
+
+	guestIDSet := make(map[string]struct{}, len(linkedGuestIDs))
+	for _, gid := range linkedGuestIDs {
+		if gid != "" {
+			guestIDSet[gid] = struct{}{}
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, err
+
+	args := []any{accountID, limit, offset}
+	where := fmt.Sprintf("(white_account_id = $1 or black_account_id = $1)")
+
+	if len(guestIDSet) > 0 {
+		placeholders := make([]string, 0, len(guestIDSet))
+		for gid := range guestIDSet {
+			args = append(args, gid)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		guestIDs := strings.Join(placeholders, ", ")
+		where = fmt.Sprintf("((%s) or white_guest_id in (%s) or black_guest_id in (%s))",
+			where, guestIDs, guestIDs)
 	}
 
-	return entries, private, nil
+	query := fmt.Sprintf(`
+		select match_id, entry_json, private_json
+		from archives
+		where %s
+		order by updated_at desc
+		limit $2 offset $3
+	`, where)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return s.scanEntryRows(rows)
+}
+
+func (s *postgresArchiveStore) queryStats() (MatchArchiveStats, error) {
+	var stats MatchArchiveStats
+	row := s.db.QueryRow(`select count(*) from archives`)
+	if err := row.Scan(&stats.TotalMatches); err != nil {
+		return stats, err
+	}
+
+	row = s.db.QueryRow(`select count(*) from archives where status = 'finished'`)
+	if err := row.Scan(&stats.FinishedMatches); err != nil {
+		return stats, err
+	}
+
+	stats.ActiveMatches = stats.TotalMatches - stats.FinishedMatches
+
+	row = s.db.QueryRow(`select count(*) from archives where queue = 'rated'`)
+	if err := row.Scan(&stats.RatedMatches); err != nil {
+		return stats, err
+	}
+
+	row = s.db.QueryRow(`select count(*) from archives where queue = 'casual'`)
+	if err := row.Scan(&stats.CasualMatches); err != nil {
+		return stats, err
+	}
+
+	stats.DirectMatches = stats.TotalMatches - stats.RatedMatches - stats.CasualMatches
+	return stats, nil
 }
 
 func (s *postgresArchiveStore) persist(entries map[string]MatchArchiveEntry, private map[string]MatchArchivePrivateEntry) error {
@@ -90,9 +256,31 @@ func (s *postgresArchiveStore) persist(entries map[string]MatchArchiveEntry, pri
 		_ = tx.Rollback()
 	}()
 
-	if _, err := tx.Exec(`delete from archives`); err != nil {
+	upsertStmt, err := tx.Prepare(`
+		insert into archives(
+			match_id,
+			status,
+			queue,
+			white_guest_id,
+			black_guest_id,
+			updated_at,
+			entry_json,
+			private_json
+		)
+		values($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+		on conflict (match_id) do update set
+			status = excluded.status,
+			queue = excluded.queue,
+			white_guest_id = excluded.white_guest_id,
+			black_guest_id = excluded.black_guest_id,
+			updated_at = excluded.updated_at,
+			entry_json = excluded.entry_json,
+			private_json = excluded.private_json
+	`)
+	if err != nil {
 		return err
 	}
+	defer upsertStmt.Close()
 
 	for matchID, entry := range entries {
 		entryJSON, err := json.Marshal(entry)
@@ -109,19 +297,7 @@ func (s *postgresArchiveStore) persist(entries map[string]MatchArchiveEntry, pri
 			privateJSON = encodedPrivate
 		}
 
-		if _, err := tx.Exec(`
-			insert into archives(
-				match_id,
-				status,
-				queue,
-				white_guest_id,
-				black_guest_id,
-				updated_at,
-				entry_json,
-				private_json
-			)
-			values($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
-		`,
+		if _, err := upsertStmt.Exec(
 			matchID,
 			entry.Status,
 			entry.Queue,

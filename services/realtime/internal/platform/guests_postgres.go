@@ -21,14 +21,11 @@ func NewPostgresGuestStore(dsn string) (*PostgresGuestStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(3 * time.Minute)
-	return newPostgresGuestStoreWithDB(db)
+	configurePostgresPool(db, 25, 5)
+	return NewPostgresGuestStoreWithDB(db)
 }
 
-func newPostgresGuestStoreWithDB(db *sql.DB) (*PostgresGuestStore, error) {
+func NewPostgresGuestStoreWithDB(db *sql.DB) (*PostgresGuestStore, error) {
 	store := &PostgresGuestStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

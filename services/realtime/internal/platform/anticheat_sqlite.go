@@ -50,6 +50,8 @@ func (s *SqliteAnticheatStore) init() error {
 	if s == nil || s.db == nil {
 		return os.ErrInvalid
 	}
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists anticheat_analyses (
 			analysis_id text primary key,

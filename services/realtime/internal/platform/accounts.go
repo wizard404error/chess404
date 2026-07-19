@@ -172,13 +172,17 @@ func (s *AccountStore) ClaimGuest(guest GuestProfile, handle string) (AccountSes
 		}
 	}
 
+	placements := guest.PlacementsRemaining
+	if placements == 0 && guest.MatchesPlayed == 0 {
+		placements = defaultPlacementMatches
+	}
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
 		AccountID:           accountID,
 		Handle:              normalizedHandle,
 		PrimaryGuestID:      guest.GuestID,
 		LinkedGuestIDs:      []string{guest.GuestID},
-		PlacementsRemaining: defaultPlacementMatches,
+		PlacementsRemaining: placements,
 		CreatedAt:           now,
 		LastSeenAt:          now,
 		LastActiveAt:        now,
@@ -259,15 +263,20 @@ func (s *AccountStore) RegisterGuestAccount(guest GuestProfile, handle, email, p
 		return AccountSession{}, ErrAccountEmailTaken
 	}
 
+	placements := guest.PlacementsRemaining
+	if placements == 0 && guest.MatchesPlayed == 0 {
+		placements = defaultPlacementMatches
+	}
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
-		AccountID:      accountID,
-		Handle:         normalizedHandle,
-		PrimaryGuestID: resolvedGuestID,
-		LinkedGuestIDs: []string{resolvedGuestID},
-		CreatedAt:      now,
-		LastSeenAt:     now,
-		LastActiveAt:   now,
+		AccountID:           accountID,
+		Handle:              normalizedHandle,
+		PrimaryGuestID:      resolvedGuestID,
+		LinkedGuestIDs:      []string{resolvedGuestID},
+		PlacementsRemaining: placements,
+		CreatedAt:           now,
+		LastSeenAt:          now,
+		LastActiveAt:        now,
 	}
 	privateState, record := issueAccountPrivateSession(AccountPrivateState{
 		Email:        normalizedEmail,
@@ -808,6 +817,22 @@ func (s *AccountStore) ListAccounts(limit int) []AccountProfile {
 	return items
 }
 
+func (s *AccountStore) FindAccountByHandle(handle string) (AccountProfile, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := strings.ToLower(strings.TrimSpace(handle))
+	if query == "" {
+		return AccountProfile{}, false
+	}
+	for _, account := range s.accounts {
+		if strings.ToLower(strings.TrimSpace(account.Handle)) == query {
+			return account, true
+		}
+	}
+	return AccountProfile{}, false
+}
+
 func (s *AccountStore) load() error {
 	if s.path == "" {
 		return nil
@@ -888,6 +913,11 @@ func seedAccountStatsFromGuestIfNeeded(account AccountProfile, guest GuestProfil
 	account.Wins = guest.Wins
 	account.Losses = guest.Losses
 	account.Draws = guest.Draws
+	placements := guest.PlacementsRemaining
+	if placements == 0 && guest.MatchesPlayed == 0 {
+		placements = defaultPlacementMatches
+	}
+	account.PlacementsRemaining = placements
 	return account
 }
 

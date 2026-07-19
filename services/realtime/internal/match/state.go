@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -144,17 +144,17 @@ func (mm *matchMap) RangeLocked(fn func(matchID string, c *matchContainer)) {
 }
 
 type Service struct {
-	mu          sync.Mutex
-	matches     *matchMap
-	archive     MatchArchiver
-	store       MatchStore
-	broadcaster Broadcaster
-	stopCh      chan struct{}
-	authTokens  map[string]authTokenEntry
-	tokenStore  TokenStore
-	Log         *logging.Logger
-	broadcastWG sync.WaitGroup
-	computerCh  chan computerMoveTask
+	mu               sync.Mutex
+	matches          *matchMap
+	archive          MatchArchiver
+	store            MatchStore
+	broadcaster      Broadcaster
+	stopCh           chan struct{}
+	authTokens       map[string]authTokenEntry
+	tokenStore       TokenStore
+	Log              *logging.Logger
+	computerCh       chan computerMoveTask
+	computerWorkerWg sync.WaitGroup
 }
 
 type authTokenEntry struct {
@@ -231,7 +231,15 @@ func NewServiceWithStoreBroadcasterAndTokenStore(archive MatchArchiver, store Ma
 	go service.startBroadcaster()
 	go service.startGC()
 	go service.cleanupAuthTokensLoop()
-	go service.computerWorker()
+	numWorkers := runtime.NumCPU()
+	if numWorkers < 2 {
+		numWorkers = 2
+	}
+	for i := 0; i < numWorkers; i++ {
+		service.computerWorkerWg.Add(1)
+		go service.computerWorker()
+	}
+	service.Log.Info("computer worker pool started", "workers", numWorkers)
 
 	return service
 }
@@ -533,7 +541,6 @@ func (s *Service) Stats() ServiceStats {
 
 func (s *Service) Close() {
 	close(s.stopCh)
-	s.broadcastWG.Wait()
 }
 
 func (s *Service) persistSnapshot(snapshot contracts.MatchSnapshotResponse) {
@@ -556,11 +563,14 @@ func (s *Service) saveToRedis(snapshot contracts.MatchSnapshotResponse, presence
 	}
 	matchID := snapshot.Match.MatchID
 
-	if err := s.store.SaveState(matchID, snapshot); err != nil {
+	stateForRedis := snapshot
+	stateForRedis.Match.WhitePlayerSecret = ""
+	stateForRedis.Match.BlackPlayerSecret = ""
+	if err := s.store.SaveState(matchID, stateForRedis); err != nil {
 		s.Log.Error("failed to save state to redis", "matchId", matchID, "error", err)
 	}
 
-	if err := s.store.SaveSecrets(matchID, snapshot.Match.WhitePlayerSecret, snapshot.Match.BlackPlayerSecret); err != nil {
+	if err := s.store.SaveSecrets(matchID, hashSecret(snapshot.Match.WhitePlayerSecret), hashSecret(snapshot.Match.BlackPlayerSecret)); err != nil {
 		s.Log.Error("failed to save secrets to redis", "matchId", matchID, "error", err)
 	}
 
@@ -609,6 +619,11 @@ func (s *Service) broadcastLocked(c *matchContainer, snapshot contracts.MatchSna
 	c.seqNum++
 	snapshot.SeqNum = c.seqNum
 
+	// Strip replay frames from periodic broadcasts to reduce bandwidth.
+	// Replay frames are still sent on initial Subscribe and via ApplyIntent
+	// so clients can resync on reconnect.
+	snapshot.ReplayFrames = nil
+
 	s.publishToRedis(c.state.MatchID, snapshot)
 
 	if len(subscribers) == 0 {
@@ -617,10 +632,13 @@ func (s *Service) broadcastLocked(c *matchContainer, snapshot contracts.MatchSna
 
 	cachedWhite := snapshot
 	cachedWhite.Match = filterStateForColor(snapshot.Match, "white")
+	cachedWhite.Events = filterEventsForColor(snapshot.Events, "white")
 	cachedBlack := snapshot
 	cachedBlack.Match = filterStateForColor(snapshot.Match, "black")
+	cachedBlack.Events = filterEventsForColor(snapshot.Events, "black")
 	cachedSpec := snapshot
 	cachedSpec.Match = filterStateForColor(snapshot.Match, "")
+	cachedSpec.Events = filterEventsForColor(snapshot.Events, "")
 
 	for ch, color := range subscribers {
 		if color == "white" {
@@ -660,12 +678,12 @@ func (s *Service) startBroadcaster() {
 			if !ok {
 				return
 			}
-			s.broadcastWG.Add(1)
 			s.collectAndBroadcast(now.UTC())
-			s.broadcastWG.Done()
 		}
 	}
 }
+
+const broadcastConcurrency = 20
 
 func (s *Service) startGC() {
 	ticker := time.NewTicker(30 * time.Second)
@@ -685,51 +703,65 @@ func (s *Service) startGC() {
 }
 
 func (s *Service) collectAndBroadcast(now time.Time) {
+	sem := make(chan struct{}, broadcastConcurrency)
+	var wg sync.WaitGroup
+
 	s.matches.Range(func(_ string, c *matchContainer) bool {
-		c.mu.Lock()
-
-		if c.state.Status == "finished" {
-			c.mu.Unlock()
-			return true
-		}
-
-		presence := s.ensurePresenceStateLocked(c, now)
-
-		recentCutoff := now.Add(-presenceHeartbeatTimeout)
-		hasRecentActivity := (!presence.WhiteLastSeenAt.IsZero() && presence.WhiteLastSeenAt.After(recentCutoff)) ||
-			(!presence.BlackLastSeenAt.IsZero() && presence.BlackLastSeenAt.After(recentCutoff))
-		if hasRecentActivity {
-			timeoutEvents := syncClockForMutation(c.state, now)
-			if len(timeoutEvents) > 0 {
-				c.events = append(c.events, timeoutEvents...)
-				s.broadcastLocked(c, buildSnapshotWithPresence(c.state, presence, len(c.events), timeoutEvents, now))
-			}
-			s.persistSnapshot(buildSnapshot(c.state, len(c.events), c.events, now))
-			if len(timeoutEvents) > 0 {
-				c.mu.Unlock()
-				return true
-			}
-		}
-
-		runtimeEvents := evaluatePresenceRuntime(c.state, presence, now)
-		if len(runtimeEvents) > 0 {
-			c.events = append(c.events, runtimeEvents...)
-			s.persistSnapshot(buildSnapshot(c.state, len(c.events), c.events, now))
-			s.broadcastLocked(c, buildSnapshotWithPresence(c.state, presence, len(c.events), runtimeEvents, now))
-			c.mu.Unlock()
-			return true
-		}
-		if len(c.subs) == 0 {
-			c.mu.Unlock()
-			return true
-		}
-		s.broadcastLocked(c, buildSnapshotWithPresence(c.state, presence, len(c.events), nil, now))
-		c.mu.Unlock()
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(mc *matchContainer) {
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+			s.processMatchBroadcast(mc, now)
+		}(c)
 		return true
 	})
+
+	wg.Wait()
+}
+
+func (s *Service) processMatchBroadcast(c *matchContainer, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.state.Status == "finished" {
+		return
+	}
+
+	presence := s.ensurePresenceStateLocked(c, now)
+
+	recentCutoff := now.Add(-presenceHeartbeatTimeout)
+	hasRecentActivity := (!presence.WhiteLastSeenAt.IsZero() && presence.WhiteLastSeenAt.After(recentCutoff)) ||
+		(!presence.BlackLastSeenAt.IsZero() && presence.BlackLastSeenAt.After(recentCutoff))
+	if hasRecentActivity {
+		timeoutEvents := syncClockForMutation(c.state, now)
+		if len(timeoutEvents) > 0 {
+			c.events = append(c.events, timeoutEvents...)
+			s.broadcastLocked(c, buildSnapshotWithPresence(c.state, presence, len(c.events), timeoutEvents, now))
+		}
+		s.persistSnapshot(buildSnapshot(c.state, len(c.events), c.events, now))
+		if len(timeoutEvents) > 0 {
+			return
+		}
+	}
+
+	runtimeEvents := evaluatePresenceRuntime(c.state, presence, now)
+	if len(runtimeEvents) > 0 {
+		c.events = append(c.events, runtimeEvents...)
+		s.persistSnapshot(buildSnapshot(c.state, len(c.events), c.events, now))
+		s.broadcastLocked(c, buildSnapshotWithPresence(c.state, presence, len(c.events), runtimeEvents, now))
+		return
+	}
+	if len(c.subs) == 0 {
+		return
+	}
+	s.broadcastLocked(c, buildSnapshotWithPresence(c.state, presence, len(c.events), nil, now))
 }
 
 func (s *Service) computerWorker() {
+	defer s.computerWorkerWg.Done()
 	for {
 		select {
 		case <-s.stopCh:
@@ -743,8 +775,8 @@ func (s *Service) computerWorker() {
 }
 
 func (s *Service) gcFinishedMatches(now time.Time) {
-	const finishedMatchTTL = 5 * time.Minute
-	const waitingMatchTTL = 5 * time.Minute
+	const finishedMatchTTL = 30 * time.Minute
+	const waitingMatchTTL = 30 * time.Minute
 
 	s.matches.Range(func(matchID string, c *matchContainer) bool {
 		c.mu.Lock()
@@ -765,49 +797,4 @@ func (s *Service) gcFinishedMatches(now time.Time) {
 	})
 }
 
-const (
-	maxIntentBurst    = 5.0
-	intentRefillRate  = 10.0
-)
 
-func rateLimitIntent(presence *matchPresenceState, actorColor string, now time.Time) error {
-	if presence == nil || actorColor == "" {
-		return nil
-	}
-	var tokens *float64
-	var lastRefill *time.Time
-	if actorColor == "white" {
-		tokens = &presence.WhiteTokens
-		lastRefill = &presence.WhiteLastRefill
-	} else if actorColor == "black" {
-		tokens = &presence.BlackTokens
-		lastRefill = &presence.BlackLastRefill
-	} else {
-		return nil
-	}
-	// Refill tokens based on elapsed time
-	if !lastRefill.IsZero() {
-		elapsed := now.Sub(*lastRefill).Seconds()
-		*tokens = math.Min(maxIntentBurst, *tokens+elapsed*intentRefillRate)
-	} else {
-		*tokens = maxIntentBurst
-	}
-	*lastRefill = now
-
-	if *tokens < 1.0 {
-		return fmt.Errorf("rate limited: too many intents (max %.0f/sec burst %.0f)", intentRefillRate, maxIntentBurst)
-	}
-	*tokens--
-	return nil
-}
-
-func trackIntentTime(presence *matchPresenceState, actorColor string, now time.Time) {
-	if presence == nil || actorColor == "" {
-		return
-	}
-	if actorColor == "white" {
-		presence.WhiteLastIntentAt = now
-	} else if actorColor == "black" {
-		presence.BlackLastIntentAt = now
-	}
-}

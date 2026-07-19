@@ -7,6 +7,9 @@ import { findKing, positionKey, toFEN, uciToSan } from '../../chessEngine';
 import { BoardCanvas, type TransformAnim, type SniperAnim, type TeleportAnim, type JumpAnim, type SacrificeAnim, type MindControlAnim, type FuseAnim, type BoardArrow } from '../../BoardCanvas';
 import CardHand from './CardHand';
 import PlayerCardInfo from './PlayerCardInfo';
+import { useMatchEngineContext } from '../../contexts/MatchEngineProvider';
+import { useSound } from '../../hooks/useSound';
+import { useAccessibility } from '../../hooks/useAccessibility';
 
 const DRAW_COOLDOWN_MS = 15000;
 
@@ -35,147 +38,7 @@ const useFocusTrap = (ref: React.RefObject<HTMLElement | null>, active: boolean)
   }, [active, ref]);
 };
 
-interface MatchBoardViewProps {
-  board: Board;
-  turn: PieceColor;
-  sel: Sq | null;
-  hints: Sq[];
-  lm: { from: Sq; to: Sq } | null;
-  drag: Sq | null;
-  dragPos: { x: number; y: number } | null;
-  check: boolean;
-  kingPos: Sq | null;
-  over: boolean;
-  winner: PieceColor | 'draw' | 'aborted' | null;
-  topSeat: PieceColor;
-  bottomSeat: PieceColor;
-  topPlayerName: string;
-  bottomPlayerName: string;
-  topSeatBadge: string | null;
-  bottomSeatBadge: string | null;
-  displayedWhiteRating: number;
-  displayedBlackRating: number;
-  displayedWhiteName: string;
-  displayedBlackName: string;
-  whiteSeatBadge: string | null;
-  blackSeatBadge: string | null;
-  timeW: number;
-  timeB: number;
-  clockActive: boolean;
-  tickingState: PieceColor | null;
-  fmtClock: (ms: number) => string;
-  hostedRuntime: boolean | null;
-  authoritativeMatchId: string | null;
-  authoritativeMatchIdRef: React.MutableRefObject<string | null>;
-  viewerSeat: PieceColor | null;
-  controlSender: PieceColor;
-  authoritativeLive: boolean;
-  authoritativeStatus: string | null;
-  engineOn: boolean;
-  setEngineOn: (v: boolean | ((prev: boolean) => boolean)) => void;
-  ev: { score: number; mate: number | null; best: string } | null;
-  selectedCard: GameCard | null;
-  cardPending: CardPendingState | null;
-  whiteHand: GameCard[];
-  blackHand: GameCard[];
-  topHand: GameCard[];
-  bottomHand: GameCard[];
-  cardUsedBy: Record<string, boolean>;
-  canUseCard: (card: GameCard, ownerColor: PieceColor) => boolean;
-  applyCard: (card: GameCard, ownerColor: PieceColor) => void;
-  cancelCard: () => void;
-  cardMsg: string;
-  setCardMsg: (msg: string) => void;
-  streamDisconnected: boolean;
-  onReconnect: () => void;
-  clickSq: (r: number, c: number) => void;
-  getMoves: (r: number, c: number) => Sq[];
-  doMove: (fr: number, fc: number, tr: number, tc: number) => void;
-  promo: { row: number; col: number; color: PieceColor } | null;
-  doPromo: (type: PieceType) => void;
-  promoPicker: { options: PieceType[] } | null;
-  handlePromoPick: (type: PieceType) => void;
-  cardPromo: { sq: { row: number; col: number }; color: PieceColor } | null;
-  setCardPromo: (v: any) => void;
-  getCardHighlight: (r: number, c: number) => string | null;
-  getDoubleMoveHighlight: (r: number, c: number) => string | null;
-  bombPieces: BombPiece[];
-  bombExploding: Sq[];
-  lavaSquares: LavaSquare[];
-  lavaExploding: Sq[];
-  swapAnim: { sq1: Sq; sq2: Sq; color1: string; color2: string } | null;
-  transformAnim: TransformAnim | null;
-  sniperAnim: SniperAnim | null;
-  teleportAnim: TeleportAnim | null;
-  jumpAnim: JumpAnim | null;
-  sacrificeAnim: SacrificeAnim | null;
-  mindControlAnim: MindControlAnim | null;
-  fuseAnim: FuseAnim | null;
-  fogZones: any[];
-  ghostPiece: any;
-  ghostRef: React.MutableRefObject<any>;
-  analysisArrows: BoardArrow[];
-  toggleAnalysisArrow: (from: Sq, to: Sq) => void;
-  clearAnalysisArrows: () => void;
-  premove: any;
-  setPremove: (v: any) => void;
-  isReviewing: boolean;
-  reviewBoard: Board | null;
-  reviewIdx: number;
-  chatMessages: { sender: PieceColor; text: string }[];
-  setChatMessages: (v: any | ((prev: any) => any)) => void;
-  movHist: any[];
-  submitAuthoritativeIntent: (intent: any) => void;
-  authoritativeActorForColor: (color: PieceColor) => any;
-  createAuthoritativeRematchRoom: () => void;
-  hostedActionLocked: boolean;
-  drawOffer: PieceColor | null;
-  canRespondToDrawOffer: boolean;
-  setDrawOffer: (v: PieceColor | null) => void;
-  abortActive: boolean;
-  abortCountdown: number;
-  stopAbortCountdown: () => void;
-  activeFinishReasonLabel: string | null;
-  authoritativeRematchBusy: boolean;
-  canCreateDirectRematch: boolean;
-  canQueueSameLane: boolean;
-  returnToSameQueueLane: () => void;
-  returnToQueueHome: () => void;
-  newGame: () => void;
-  finishedPrimaryActionLabel: string;
-  finishedSecondaryActionLabel: string;
-  boardStatusLabel: string;
-  roundNumber: number;
-  lastDrawAnim: { rarity: Rarity } | null;
-  soundEnabled: boolean;
-  toggleSound: () => void;
-  colorBlindMode: boolean;
-  toggleColorBlind: () => void;
-  showHostedReconnectWarning: boolean | null;
-  intentInFlight: boolean;
-  activeDisconnectGraceFor: PieceColor | null;
-  bootstrapAuthoritativeMatch: () => void;
-  showHostedSoloBanner: boolean | null;
-  isAttackedWithFusion: (board: Board, r: number, c: number, byColor: PieceColor) => boolean;
-  checkEndGame: (board: Board, turn: PieceColor, moved: Set<string>, lm: { from: Sq; to: Sq } | null, hmc: number, posHist: string[], posKey: string, fen: string, opp: PieceColor) => void;
-  setSel: (v: Sq | null) => void;
-  setHints: (v: Sq[]) => void;
-  setDrag: (v: Sq | null) => void;
-  setDragPos: (v: { x: number; y: number } | null) => void;
-  setBoard: (b: Board) => void;
-  setPosHist: (h: string[]) => void;
-  setOver: (v: boolean) => void;
-  setWinner: (v: PieceColor | 'draw' | 'aborted') => void;
-  moved: any;
-  hmc: number;
-  fmn: number;
-  posHist: string[];
-  doubleMove: DoubleMove | null;
-  radarActive: boolean;
-  finalPositionRef: React.MutableRefObject<any>;
-}
-
-export function MatchBoardView(props: MatchBoardViewProps) {
+export function MatchBoardView() {
   const {
     board,
     turn,
@@ -228,7 +91,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
     cardMsg,
     setCardMsg,
     streamDisconnected,
-    onReconnect,
+    onStreamReconnect,
     clickSq,
     getMoves,
     doMove,
@@ -288,10 +151,6 @@ export function MatchBoardView(props: MatchBoardViewProps) {
     boardStatusLabel,
     roundNumber,
     lastDrawAnim,
-    soundEnabled,
-    toggleSound,
-    colorBlindMode,
-    toggleColorBlind,
     showHostedReconnectWarning,
     intentInFlight,
     activeDisconnectGraceFor,
@@ -314,7 +173,9 @@ export function MatchBoardView(props: MatchBoardViewProps) {
     doubleMove,
     radarActive,
     finalPositionRef,
-  } = props;
+  } = useMatchEngineContext();
+  const { soundEnabled, toggleSound } = useSound();
+  const { colorBlindMode, toggleColorBlind } = useAccessibility();
 
   const boardWrapperRef = React.useRef<HTMLDivElement>(null);
   const [boardWrapperPx, setBoardWrapperPx] = React.useState(SQ * 8);
@@ -596,7 +457,7 @@ export function MatchBoardView(props: MatchBoardViewProps) {
               {streamDisconnected && (
                 <button
                   type="button"
-                  onClick={onReconnect}
+                  onClick={onStreamReconnect}
                   style={{ padding:'6px 12px', background:'rgba(74,222,128,0.15)', border:'1px solid rgba(74,222,128,0.5)', borderRadius:'6px', color:'#4ade80', fontWeight:700, fontSize:'11px', cursor:'pointer' }}
                 >
                   ↻ Reconnect

@@ -113,13 +113,17 @@ func (s *SQLiteAccountStore) ClaimGuest(guest GuestProfile, handle string) (Acco
 		return AccountSession{}, ErrAccountHandleTaken
 	}
 
+	placements := guest.PlacementsRemaining
+	if placements == 0 && guest.MatchesPlayed == 0 {
+		placements = defaultPlacementMatches
+	}
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
 		AccountID:           accountID,
 		Handle:              normalizedHandle,
 		PrimaryGuestID:      guest.GuestID,
 		LinkedGuestIDs:      []string{guest.GuestID},
-		PlacementsRemaining: defaultPlacementMatches,
+		PlacementsRemaining: placements,
 		CreatedAt:           now,
 		LastSeenAt:          now,
 		LastActiveAt:        now,
@@ -240,15 +244,20 @@ func (s *SQLiteAccountStore) RegisterGuestAccount(guest GuestProfile, handle, em
 		return AccountSession{}, ErrAccountEmailTaken
 	}
 
+	placements := guest.PlacementsRemaining
+	if placements == 0 && guest.MatchesPlayed == 0 {
+		placements = defaultPlacementMatches
+	}
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
-		AccountID:      accountID,
-		Handle:         normalizedHandle,
-		PrimaryGuestID: resolvedGuestID,
-		LinkedGuestIDs: []string{resolvedGuestID},
-		CreatedAt:      now,
-		LastSeenAt:     now,
-		LastActiveAt:   now,
+		AccountID:           accountID,
+		Handle:              normalizedHandle,
+		PrimaryGuestID:      resolvedGuestID,
+		LinkedGuestIDs:      []string{resolvedGuestID},
+		PlacementsRemaining: placements,
+		CreatedAt:           now,
+		LastSeenAt:          now,
+		LastActiveAt:        now,
 	}
 	session := AccountSession{
 		Account:      account,
@@ -1029,7 +1038,17 @@ func (s *SQLiteAccountStore) ListAccounts(limit int) []AccountProfile {
 	return items
 }
 
+func (s *SQLiteAccountStore) FindAccountByHandle(handle string) (AccountProfile, bool) {
+	session, ok, err := lookupSQLiteAccountSessionByHandle(s.db, strings.TrimSpace(handle))
+	if err != nil || !ok {
+		return AccountProfile{}, false
+	}
+	return session.Account, true
+}
+
 func (s *SQLiteAccountStore) init() error {
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists accounts (
 			account_id text primary key,
@@ -1144,6 +1163,12 @@ func lookupSQLiteAccountSessionByID(queryable interface {
 	QueryRow(query string, args ...any) *sql.Row
 }, accountID string) (AccountSession, bool, error) {
 	return scanSQLiteAccountSession(queryable.QueryRow(`select account_id, handle, primary_guest_id, linked_guest_ids, rating, matches_played, wins, losses, draws, rating_history, created_at, last_seen_at, last_active_at, session_token, session_expires_at from accounts where account_id = ?`, accountID))
+}
+
+func lookupSQLiteAccountSessionByHandle(queryable interface {
+	QueryRow(query string, args ...any) *sql.Row
+}, handle string) (AccountSession, bool, error) {
+	return scanSQLiteAccountSession(queryable.QueryRow(`select account_id, handle, primary_guest_id, linked_guest_ids, rating, matches_played, wins, losses, draws, rating_history, created_at, last_seen_at, last_active_at, session_token, session_expires_at from accounts where handle = ?`, handle))
 }
 
 func lookupSQLiteAccountSessionByGuest(queryable interface {

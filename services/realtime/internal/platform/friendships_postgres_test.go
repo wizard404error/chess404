@@ -41,13 +41,9 @@ func TestPostgresFriendshipStoreLoadAndPersist(t *testing.T) {
 	mock.ExpectQuery(`select friendship_id, low_account_id, high_account_id, created_at from friendships`).
 		WillReturnRows(sqlmock.NewRows([]string{"friendship_id", "low_account_id", "high_account_id", "created_at"}))
 
-	persistence, err := newPostgresFriendshipPersistenceWithDB(db)
+	store, err := NewPostgresFriendshipStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres friendship store to initialize, got %v", err)
-	}
-	store, err := newFriendshipStore(persistence)
-	if err != nil {
-		t.Fatalf("expected wrapped postgres friendship store to initialize, got %v", err)
 	}
 	defer func() { _ = store.Close() }()
 

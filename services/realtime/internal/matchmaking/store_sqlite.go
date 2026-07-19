@@ -214,6 +214,8 @@ func (s *sqliteTicketStore) close() error {
 }
 
 func (s *sqliteTicketStore) init() error {
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists tickets (
 			ticket_id text primary key,

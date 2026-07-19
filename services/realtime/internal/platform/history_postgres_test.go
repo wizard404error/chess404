@@ -76,11 +76,7 @@ func TestPostgresArchiveStoreLoadRestoresPrivateState(t *testing.T) {
 	entryJSON, _ := json.Marshal(entry)
 	privateJSON, _ := json.Marshal(privateEntry)
 
-	mock.ExpectQuery(`select match_id, entry_json, private_json from archives`).
-		WillReturnRows(sqlmock.NewRows([]string{"match_id", "entry_json", "private_json"}).
-			AddRow("pg_archive_test", entryJSON, privateJSON))
-
-	archiveStore, err := newPostgresArchiveStoreWithDB(db)
+	archiveStore, err := NewPostgresArchiveStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres archive store to initialize, got %v", err)
 	}
@@ -90,10 +86,23 @@ func TestPostgresArchiveStoreLoadRestoresPrivateState(t *testing.T) {
 	}
 	defer func() { _ = matchStore.Close() }()
 
+	// Postgres backend lazy-loads: load() returns empty maps, Get() queries on demand.
+	mock.ExpectQuery(regexp.QuoteMeta(
+		`select match_id, entry_json, private_json from archives where match_id = $1`,
+	)).WithArgs("pg_archive_test").
+		WillReturnRows(sqlmock.NewRows([]string{"match_id", "entry_json", "private_json"}).
+			AddRow("pg_archive_test", entryJSON, privateJSON))
+
 	entryOut, ok := matchStore.Get("pg_archive_test")
 	if !ok || entryOut.LastMove != "e5" {
 		t.Fatalf("expected postgres archive entry to load, got %#v ok=%v", entryOut, ok)
 	}
+
+	// LoadMatch uses the cached entry but lazy-loads private data on demand.
+	mock.ExpectQuery(regexp.QuoteMeta(`select private_json from archives where match_id = $1`)).
+		WithArgs("pg_archive_test").
+		WillReturnRows(sqlmock.NewRows([]string{"private_json"}).AddRow(privateJSON))
+
 	match, events, ok := matchStore.LoadMatch("pg_archive_test")
 	if !ok {
 		t.Fatalf("expected postgres archive match to load")
@@ -117,10 +126,8 @@ func TestPostgresArchiveStoreUpsertPersistsEntry(t *testing.T) {
 	}
 	mock.ExpectExec(regexp.QuoteMeta(postgresArchiveInitSQL)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`select match_id, entry_json, private_json from archives`).
-		WillReturnRows(sqlmock.NewRows([]string{"match_id", "entry_json", "private_json"}))
 
-	archiveStore, err := newPostgresArchiveStoreWithDB(db)
+	archiveStore, err := NewPostgresArchiveStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres archive store to initialize, got %v", err)
 	}
@@ -156,8 +163,7 @@ func TestPostgresArchiveStoreUpsertPersistsEntry(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`delete from archives`).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectPrepare(`insert into archives\(`)
 	mock.ExpectExec(`insert into archives\(`).
 		WithArgs(
 			"pg_persist_test",

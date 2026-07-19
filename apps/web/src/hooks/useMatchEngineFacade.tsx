@@ -108,6 +108,8 @@ import { useMatchConnection } from './useMatchConnection';
 import { useBoardInteraction } from './useBoardInteraction';
 import { useMatchNav } from './useMatchNav';
 import { useMatchAnimations } from './useMatchAnimations';
+import { useCardEngine } from './useCardEngine';
+import { useGameState } from './useGameState';
 
 function buildStoredRoomMeta(
   base: StoredRoomMeta | null | undefined,
@@ -198,6 +200,7 @@ export interface UseMatchEngineProps {
     white: QueueTicket | null;
     black: QueueTicket | null;
   } | null>>;
+  setCommunityFocusGuestId: React.Dispatch<React.SetStateAction<string | null>>;
   setQueueLaunchIntent: React.Dispatch<React.SetStateAction<{ modeId: MatchModeId; queue: QueueName } | null>>;
   setSecondaryMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setSocialAlert: React.Dispatch<React.SetStateAction<SocialAlert | null>>;
@@ -231,7 +234,7 @@ const useFocusTrap = (ref: React.RefObject<HTMLElement | null>, active: boolean)
   }, [active, ref]);
 };
 
-export function useMatchEngine(props: UseMatchEngineProps) {
+export function useMatchEngineFacade(props: UseMatchEngineProps) {
   const { accountActionQueryDetected, activePage, authoritativeRematchBusy, blackProfile, communityFocusGuestId, friendsAttentionCount, guestProfilesReady, historyFocusGuestId, historyFocusMatchId, historyQueryReady, hostedRuntime, inboxUnreadCount, matchDestinationNotice, matchQueryReady, matchSeatMeta, openedBoardMatchRef, pathname, profileFocusHandle, profileQueryReady, queueLaunchIntent, router, setAccountActionQueryDetected, setActivePage, setAuthoritativeRematchBusy, setBlackProfile, setFriendsAttentionCount, setGuestProfilesReady, setHistoryFocusGuestId, setHistoryFocusMatchId, setHistoryQueryReady, setHostedRuntime, setInboxUnreadCount, setMatchDestinationNotice, setMatchQueryReady, setMatchSeatMeta, setProfileFocusHandle, setProfileQueryReady, setBootstrapQueueRecovery, setQueueLaunchIntent, setSecondaryMenuOpen, setSocialAlert, setSocialLiveToken, setViewerSeat, setWhiteProfile, socialAlert, socialLiveToken, viewerSeat, whiteProfile } = props;
 
   const platformState = usePlatformState({
@@ -376,25 +379,28 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
   }, []);
 
-  // Card state
-  const [whiteHand,    setWhiteHand]    = React.useState<GameCard[]>([]);
-  const [blackHand,    setBlackHand]    = React.useState<GameCard[]>([]);
-  const [selectedCard, setSelectedCard] = React.useState<GameCard | null>(null);
-  const [dealPhase,    setDealPhase]    = React.useState<'idle'|'dealing'|'done'>('idle');
-  const [lastDrawAnim, setLastDrawAnim] = React.useState<{ color: PieceColor; rarity: Rarity } | null>(null);
-  const [cardPending,  setCardPending]  = React.useState<CardPendingState>(null);
-  const [cardMsg,      setCardMsg]      = React.useState<string>('');
-  const [promoPicker,  setPromoPicker]  = React.useState<{ sq: Sq; options: PieceType[]; mechanic: CardMechanic } | null>(null);
-  const [cardPromo, setCardPromo] = React.useState<{ sq: Sq; color: PieceColor } | null>(null);
-  const [cardUsedBy,   setCardUsedBy]   = React.useState<{ white: boolean; black: boolean }>({ white: false, black: false });
+  const [authoritativeMatchId, setAuthoritativeMatchId] = React.useState<string | null>(null);
 
-  // ── NEW: Joker picker state ────────────────────────────────────────────────
-  const [jokerPicker, setJokerPicker] = React.useState<{
-    card: GameCard; // the Joker card in hand
-    playerColor: PieceColor;
-    filterRarity: Rarity | 'all';
-    transforming: boolean;
-  } | null>(null);
+  // ── Card engine: owns all card + joker + doubleMove state ───────────────────
+  const {
+    whiteHand, setWhiteHand,
+    blackHand, setBlackHand,
+    selectedCard, setSelectedCard,
+    dealPhase, setDealPhase,
+    lastDrawAnim, setLastDrawAnim,
+    cardPending, setCardPending,
+    cardMsg, setCardMsg,
+    promoPicker, setPromoPicker,
+    cardPromo, setCardPromo,
+    cardUsedBy, setCardUsedBy,
+    jokerPicker, setJokerPicker,
+    doubleMove, setDoubleMove,
+    doubleMoveRef,
+    cardUsedByRef,
+    pendingCardUseRef,
+    lastDrawRound,
+    roundNumber,
+  } = useCardEngine(board, turn, moved, lm, fmn, fmnRef, boardRef, turnRef, authoritativeMatchId, hostedRuntime, viewerSeatRef);
   const jokerRef = React.useRef<HTMLDivElement>(null);
   useFocusTrap(jokerRef, jokerPicker !== null);
 
@@ -431,8 +437,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     triggerTeleportAnim,
   } = useMatchAnimations();
 
-  const pendingCardUseRef = React.useRef<Set<string>>(new Set());
-  const cardUsedByRef     = React.useRef<{ white: boolean; black: boolean }>({ white: false, black: false });
   const cardMsgTimerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(() => {
     return () => {
@@ -453,9 +457,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
     setRadarActive(false);
   }, []);
-
-  const lastDrawRound = React.useRef(0);
-  const roundNumber   = React.useMemo(() => Math.floor(fmn), [fmn]);
 
   const [chatMessages, setChatMessages] = React.useState<{ sender: 'white' | 'black'; text: string }[]>([]);
   const [chatInput,    setChatInput]    = React.useState('');
@@ -504,7 +505,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   });
   React.useEffect(() => { stopAbortRef.current = stopAbortCountdown; });
 
-  const [authoritativeMatchId, setAuthoritativeMatchId] = React.useState<string | null>(null);
   const allSyncReady = profileQueryReady && historyQueryReady && matchQueryReady;
   React.useEffect(() => {
     if (!allSyncReady) return;
@@ -576,9 +576,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
   const cheaterActive = cheaterTurnsLeft > 0;
   const [radarActive,   setRadarActive]   = React.useState(false);
 
-  const [doubleMove, setDoubleMove] = React.useState<DoubleMove | null>(null);
-  const doubleMoveRef = React.useRef<DoubleMove | null>(null);
-  React.useEffect(() => { doubleMoveRef.current = doubleMove; }, [doubleMove]);
 
   const [lavaSquares,   setLavaSquares]   = React.useState<LavaSquare[]>([]);
   const [lavaExploding, setLavaExploding] = React.useState<Sq[]>([]);
@@ -613,8 +610,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     resetEval,
   });
   const movRef = React.useRef<HTMLDivElement>(null);
-  const finalPositionRef = React.useRef<{ fen: string; turn: PieceColor } | null>(null);
-
   React.useEffect(() => { movRef.current?.scrollTo({ top: movRef.current.scrollHeight }); }, [movHist]);
   React.useEffect(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight }); }, [chatMessages]);
 
@@ -633,267 +628,56 @@ export function useMatchEngine(props: UseMatchEngineProps) {
 
   const gameIdRef = React.useRef(0);
   const [gameKey, setGameKey] = React.useState(0);
-  const authoritativeBootstrapRef = React.useRef(0);
-  const finalizedResultRef = React.useRef<string | null>(null);
-  const lastAppliedSeqNumRef = React.useRef<number>(0);
+  // ── Game state: authoritative snapshot / bootstrap / submit / player auth ────
+  const {
+    finalizedResultRef,
+    finalPositionRef,
+    lastAppliedSeqNumRef,
+    authoritativeBootstrapRef,
+    buildMoveRows,
+    buildPendingCardFromSnapshot,
+    applyAuthoritativeSnapshot,
+    bootstrapAuthoritativeMatch,
+    submitAuthoritativeIntent: _submitGameIntent,
+    authoritativePlayerIdForColor,
+    authoritativePlayerSecretForColor,
+    authoritativePlayerClaimTokenForColor,
+    authoritativeActorForColor,
+  } = useGameState(
+    { setBoard, setTurn, setMoved, setLm, setHmc, setFmn, setCheck, setMate, setStale, setInsuf, setOver, setWinner, setDrawOffer, setMovHist, setPosHist, setSnapshots, setChatMessages, setReviewIdx, setReviewBoard, setTimeW, setTimeB, setClockActive, setTicking },
+    { setWhiteHand, setBlackHand, setSelectedCard, setLastDrawAnim, setCardPending, setPromoPicker, setCardUsedBy, setDealPhase },
+    { setViewerSeat, setMatchSeatMeta },
+    { setLavaSquares, setBombPieces, setFogZones, setDoubleMove, setGhostPiece, setRadarActive, setCheaterTurnsLeft, setCheaterColor },
+    { setAuthoritativeMatchId, setAuthoritativeLive, setAuthoritativeStatus, setAuthoritativeFinishReason, setAuthoritativeWhiteConnected, setAuthoritativeBlackConnected, setAuthoritativeDisconnectGraceFor, setAuthoritativeDisconnectGraceDeadline },
+    { turnRef, cheaterColorRef, authoritativeSeatIdsRef, authoritativeSeatSecretsRef, authoritativeClaimTokensRef, cardUsedByRef, pendingCardUseRef },
+    hostedRuntime,
+    whiteProfileRef,
+    blackProfileRef,
+    requestedMatchIdRef,
+    gatewayRecoveredMatchIdRef,
+  );
 
-  const buildMoveRows = React.useCallback((history: string[]) => {
-    const rows: { n: string; w?: string; b?: string }[] = [];
-    for (let i = 0; i < history.length; i += 2) {
-      rows.push({
-        n: `${Math.floor(i / 2) + 1}.`,
-        w: history[i],
-        b: history[i + 1]
-      });
+  const submitAuthoritativeIntent = React.useCallback(async (intent: any) => {
+    const matchId = authoritativeMatchIdRef.current;
+    if (!matchId) return false;
+    if (hostedRuntime && !viewerSeatRef.current) {
+      setCardMsg('Spectators cannot control this hosted match.');
+      setTimeout(() => setCardMsg(''), 2500);
+      return false;
     }
-    return rows;
-  }, []);
-
-  const buildPendingCardFromSnapshot = React.useCallback((
-    pending: AuthoritativeMatchState['pendingCard'],
-    whiteCards: GameCard[],
-    blackCards: GameCard[],
-  ): CardPendingState => {
-    if (!pending) return null;
-    if (pending.mechanic === 'joker') return null;
-    const ownerCards = pending.ownerColor === 'white' ? whiteCards : blackCards;
-    const card = ownerCards.find(item => item.id === pending.cardId);
-    if (!card) return null;
-    return {
-      card,
-      playerColor: pending.ownerColor,
-      mechanic: pending.mechanic,
-      step: pending.target ? 2 : 1,
-      data: {
-        sq: pending.target ?? undefined,
-        from: pending.mechanic === 'teleport' || pending.mechanic === 'jump' || pending.mechanic === 'clone' ? (pending.target ?? undefined) : undefined,
-        sq1: pending.mechanic === 'swapme' || pending.mechanic === 'swapus' || pending.mechanic === 'swaphim' || pending.mechanic === 'halffuse' || pending.mechanic === 'fullfusion' ? (pending.target ?? undefined) : undefined,
-        hostSq: pending.mechanic === 'parasite' ? (pending.target ?? undefined) : undefined,
-        hostValue: pending.mechanic === 'parasite' && pending.options?.[0] ? Number(pending.options[0]) : undefined,
-        type1: pending.mechanic === 'halffuse' || pending.mechanic === 'fullfusion' ? (pending.options?.[0] as PieceType | undefined) : undefined,
-        val1: pending.mechanic === 'halffuse' && pending.options?.[1] ? Number(pending.options[1]) : undefined,
-        selected: pending.mechanic === 'smallsacrifice' || pending.mechanic === 'bigsacrifice'
-          ? (pending.options ?? []).map(value => {
-              const [row, col] = value.split(',').map(Number);
-              return { row, col };
-            }).filter(sq => Number.isInteger(sq.row) && Number.isInteger(sq.col))
-          : undefined,
-        options: pending.options ?? undefined,
-      },
-    };
-  }, []);
-
-  const applyAuthoritativeSnapshot = React.useCallback((snapshot: MatchSnapshotMessage) => {
-    if (snapshot.seqNum != null && snapshot.seqNum <= lastAppliedSeqNumRef.current) {
-      return;
+    try {
+      setIntentInFlight(true);
+      const snapshot = await _submitGameIntent(intent, matchId);
+      setIntentInFlight(false);
+      return true;
+    } catch (err) {
+      setIntentInFlight(false);
+      const message = err instanceof Error ? err.message : 'Backend request failed';
+      setCardMsg(`Backend action failed: ${message}`);
+      setTimeout(() => setCardMsg(''), 2500);
+      return false;
     }
-    if (snapshot.seqNum != null) {
-      lastAppliedSeqNumRef.current = snapshot.seqNum;
-    }
-    const match = snapshot.match as AuthoritativeMatchState;
-    const nextBoard = cloneBoard(match.board as Board);
-    const nextMoved = new Set(match.moved);
-    const nextLm = match.lastMove;
-    const nextTurn = match.turn;
-      const nextHmc = match.halfMoveClock;
-        const nextFmn = match.fullMoveNumber;
-        const nextLavaSquares = (match.lavaSquares ?? []) as LavaSquare[];
-    const nextBombPieces = (match.bombPieces ?? []) as BombPiece[];
-    const nextFogZones = (match.fogZones ?? []) as { centerRow: number; centerCol: number; ownerColor: PieceColor; turnsLeft: number }[];
-    const nextDoubleMove = (match.doubleMove ?? null) as DoubleMove | null;
-    const nextRadarRevealFor = (match.radarRevealFor ?? null) as PieceColor | null;
-    const nextCheaterState = match.cheaterState
-      ? { ownerColor: match.cheaterState.ownerColor as PieceColor, turnsLeft: match.cheaterState.turnsLeft }
-      : null;
-    const nextInvisiblePiece = match.invisiblePiece
-      ? {
-          row: match.invisiblePiece.row,
-          col: match.invisiblePiece.col,
-          piece: match.invisiblePiece.piece as Piece,
-          ownerColor: match.invisiblePiece.ownerColor,
-          roundsLeft: match.invisiblePiece.roundsLeft,
-        }
-      : null;
-    const nextTicking = match.clock.runningFor ?? null;
-    const nextClockActive = nextTicking !== null && match.status === 'active';
-    const nextPosKey = positionKey(nextBoard, nextTurn, nextMoved, nextLm);
-    const nextFen = toFEN(nextBoard, nextTurn, nextMoved, nextLm, nextHmc, nextFmn);
-    const nextStatus = gameStatus(nextBoard, nextTurn, nextLm, nextMoved);
-    const nextInsuf = insuffMat(nextBoard);
-    const nextOver = match.status === 'finished' || nextStatus.isMate || nextStatus.isStale || nextInsuf;
-    const nextWinner = match.winner ?? (nextStatus.isMate ? OPP[nextTurn] : (nextStatus.isStale || nextInsuf ? 'draw' : null));
-
-    const storedRoomMeta = readStoredRoomMeta(match.matchId);
-    authoritativeMatchIdRef.current = match.matchId;
-    authoritativeSeatIdsRef.current = {
-      white: match.whiteGuestId ?? null,
-      black: match.blackGuestId ?? null,
-    };
-    const storedMeta = storedRoomMeta?.viewerSeat;
-    const localWhiteGuestId = whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId ?? null;
-    const localBlackGuestId = blackProfileRef.current?.guestId ?? readStoredGuestIdentity('black').guestId ?? null;
-    const matchWhiteOk = Boolean(localWhiteGuestId) && match.whiteGuestId === localWhiteGuestId;
-    const matchBlackOk = Boolean(localBlackGuestId) && match.blackGuestId === localBlackGuestId;
-    let derivedViewerSeat: PieceColor | null = null;
-    if (hostedRuntime) {
-      derivedViewerSeat = matchWhiteOk ? 'white' : matchBlackOk ? 'black' : storedMeta ?? null;
-    }
-    if (!derivedViewerSeat && storedMeta) {
-      derivedViewerSeat = storedMeta;
-    }
-    setViewerSeat(derivedViewerSeat);
-    authoritativeSeatSecretsRef.current = {
-      white: storedRoomMeta?.whitePlayerSecret ?? authoritativeSeatSecretsRef.current.white,
-      black: storedRoomMeta?.blackPlayerSecret ?? authoritativeSeatSecretsRef.current.black,
-    };
-    authoritativeClaimTokensRef.current = {
-      white: storedRoomMeta?.whiteClaimToken ?? authoritativeClaimTokensRef.current.white,
-      black: storedRoomMeta?.blackClaimToken ?? authoritativeClaimTokensRef.current.black,
-    };
-    authoritativeClaimExpiresAtRef.current = {
-      white: storedRoomMeta?.whiteClaimExpiresAt ?? authoritativeClaimExpiresAtRef.current.white,
-      black: storedRoomMeta?.blackClaimExpiresAt ?? authoritativeClaimExpiresAtRef.current.black,
-    };
-    const nextRoomMeta: StoredRoomMeta = {
-      ...storedRoomMeta,
-      queue: match.queue ?? storedRoomMeta?.queue,
-      modeId: match.modeId ?? storedRoomMeta?.modeId ?? DEFAULT_MATCH_MODE_ID,
-      viewerSeat: derivedViewerSeat ?? storedRoomMeta?.viewerSeat ?? null,
-      whiteGuestId: match.whiteGuestId ?? storedRoomMeta?.whiteGuestId,
-      blackGuestId: match.blackGuestId ?? storedRoomMeta?.blackGuestId,
-      whiteAccountId: match.whiteAccountId ?? storedRoomMeta?.whiteAccountId,
-      blackAccountId: match.blackAccountId ?? storedRoomMeta?.blackAccountId,
-      whiteName: match.whiteName ?? storedRoomMeta?.whiteName ?? whiteProfileRef.current?.displayName,
-      blackName: match.blackName ?? storedRoomMeta?.blackName ?? blackProfileRef.current?.displayName,
-      whitePlayerSecret: authoritativeSeatSecretsRef.current.white ?? storedRoomMeta?.whitePlayerSecret,
-      blackPlayerSecret: authoritativeSeatSecretsRef.current.black ?? storedRoomMeta?.blackPlayerSecret,
-      whiteClaimToken: authoritativeClaimTokensRef.current.white ?? storedRoomMeta?.whiteClaimToken,
-      blackClaimToken: authoritativeClaimTokensRef.current.black ?? storedRoomMeta?.blackClaimToken,
-      whiteClaimExpiresAt: authoritativeClaimExpiresAtRef.current.white ?? storedRoomMeta?.whiteClaimExpiresAt,
-      blackClaimExpiresAt: authoritativeClaimExpiresAtRef.current.black ?? storedRoomMeta?.blackClaimExpiresAt,
-    };
-    if (hostedRuntime && derivedViewerSeat === 'white') {
-      delete nextRoomMeta.blackPlayerSecret;
-      delete nextRoomMeta.blackClaimToken;
-      delete nextRoomMeta.blackClaimExpiresAt;
-    } else if (hostedRuntime && derivedViewerSeat === 'black') {
-      delete nextRoomMeta.whitePlayerSecret;
-      delete nextRoomMeta.whiteClaimToken;
-      delete nextRoomMeta.whiteClaimExpiresAt;
-    }
-    writeStoredRoomMeta(match.matchId, nextRoomMeta);
-    setMatchSeatMeta({
-      whiteGuestId: match.whiteGuestId ?? nextRoomMeta.whiteGuestId,
-      blackGuestId: match.blackGuestId ?? nextRoomMeta.blackGuestId,
-      whiteName: match.whiteName ?? nextRoomMeta.whiteName,
-      blackName: match.blackName ?? nextRoomMeta.blackName,
-    });
-    setAuthoritativeMatchId(match.matchId);
-    setAuthoritativeLive(true);
-    setAuthoritativeStatus(match.status);
-    setAuthoritativeFinishReason((match.finishReason as MatchFinishReason | undefined) ?? null);
-    setAuthoritativeWhiteConnected(Boolean(match.whiteConnected));
-    setAuthoritativeBlackConnected(Boolean(match.blackConnected));
-    setAuthoritativeDisconnectGraceFor((match.disconnectGraceFor as PieceColor | undefined) ?? null);
-    setAuthoritativeDisconnectGraceDeadline(match.disconnectGraceDeadline ?? null);
-    setWhiteHand(match.whiteHand as GameCard[]);
-    setBlackHand(match.blackHand as GameCard[]);
-    const latestRoundDrawEvent = [...(snapshot.events ?? [])].reverse().find(event => {
-      const payload = event.payload as { roundDrawWhite?: GameCard[]; roundDrawBlack?: GameCard[] } | undefined;
-      return Boolean(payload?.roundDrawWhite?.length || payload?.roundDrawBlack?.length);
-    });
-    const roundDrawPayload = latestRoundDrawEvent?.payload as { roundDrawWhite?: GameCard[]; roundDrawBlack?: GameCard[] } | undefined;
-    const roundDrawColor: PieceColor | null =
-      roundDrawPayload?.roundDrawWhite?.[0] ? 'white'
-      : roundDrawPayload?.roundDrawBlack?.[0] ? 'black'
-      : null;
-    const roundDrawCard = roundDrawPayload?.roundDrawWhite?.[0] ?? roundDrawPayload?.roundDrawBlack?.[0];
-    if (roundDrawCard && roundDrawColor) {
-      setLastDrawAnim({ color: roundDrawColor, rarity: roundDrawCard.rarity as Rarity });
-      setTimeout(() => setLastDrawAnim(null), 2000);
-    }
-    if (nextTurn !== turnRef.current) {
-      cardUsedByRef.current = { ...cardUsedByRef.current, [nextTurn]: false };
-      setCardUsedBy(prev => ({ ...prev, [nextTurn]: false }));
-    }
-    setBoard(nextBoard);
-    setTurn(nextTurn);
-    setMoved(nextMoved);
-    setLm(nextLm);
-    setHmc(nextHmc);
-    setFmn(nextFmn);
-      setLavaSquares(nextLavaSquares);
-    setBombPieces(nextBombPieces);
-    setFogZones(nextFogZones);
-    setDoubleMove(nextDoubleMove);
-    setGhostPiece(nextInvisiblePiece);
-    setRadarActive(Boolean(nextRadarRevealFor));
-    setCheaterTurnsLeft(nextCheaterState?.turnsLeft ?? 0);
-    setCheaterColor(nextCheaterState?.ownerColor ?? null);
-    cheaterColorRef.current = nextCheaterState?.ownerColor ?? null;
-    setDrawOffer(match.drawOfferedBy ?? null);
-    setMovHist(buildMoveRows(match.moveHistory));
-    setChatMessages(match.chatMessages.map(msg => ({ sender: msg.sender, text: msg.text })));
-    setCardPending(buildPendingCardFromSnapshot(match.pendingCard ?? null, match.whiteHand as GameCard[], match.blackHand as GameCard[]));
-    if (match.pendingCard?.target && match.pendingCard.options?.length && (match.pendingCard.mechanic === 'promote' || match.pendingCard.mechanic === 'demote' || match.pendingCard.mechanic === 'promotehim' || match.pendingCard.mechanic === 'demotehim')) {
-      setPromoPicker({
-        sq: match.pendingCard.target,
-        options: match.pendingCard.options as PieceType[],
-        mechanic: (match.pendingCard.mechanic === 'promotehim' ? 'promote' : match.pendingCard.mechanic === 'demotehim' ? 'demote' : match.pendingCard.mechanic),
-      });
-    } else {
-      setPromoPicker(null);
-    }
-    setSelectedCard(prev => {
-      if (!prev) return null;
-      const allCards = [...(match.whiteHand as GameCard[]), ...(match.blackHand as GameCard[])];
-      const updated = allCards.find(card => card.id === prev.id);
-      return updated ?? null;
-    });
-    setPosHist(prev => {
-      if (prev.length === 0) {
-        return match.moveHistory.length > 0 ? [nextPosKey] : [];
-      }
-      const capped = prev.slice(0, Math.max(1, match.moveHistory.length));
-      if (capped.length === 0 || capped[capped.length - 1] !== nextPosKey) {
-        capped.push(nextPosKey);
-      }
-      return capped;
-    });
-    setSnapshots(prev => {
-      const nextSnap: Snapshot = {
-        board: cloneBoard(nextBoard),
-        turn: nextTurn,
-        moved: new Set(nextMoved),
-        lm: nextLm,
-        hmc: nextHmc,
-        fmn: nextFmn,
-        fen: nextFen
-      };
-      if (match.moveHistory.length === 0) {
-        return [];
-      }
-      if (prev.length >= match.moveHistory.length) {
-        const trimmed = prev.slice(0, match.moveHistory.length - 1);
-        return [...trimmed, nextSnap];
-      }
-      return [...prev, nextSnap];
-    });
-    setCheck(nextStatus.isCheck);
-    setMate(nextStatus.isMate);
-    setStale(nextStatus.isStale);
-    setInsuf(nextInsuf);
-    setOver(nextOver);
-    setWinner(nextWinner);
-    setReviewIdx(-1);
-    setReviewBoard(null);
-    setTimeW(Math.max(0, Math.ceil(match.clock.whiteMs / 1000)));
-    setTimeB(Math.max(0, Math.ceil(match.clock.blackMs / 1000)));
-    setClockActive(nextClockActive);
-    setTicking(nextTicking);
-    finalPositionRef.current = nextOver ? { fen: nextFen, turn: nextTurn } : null;
-  }, [buildMoveRows, buildPendingCardFromSnapshot, setTicking, hostedRuntime]);
-  // Stream disconnect handling — timer updates are server-driven, no local freeze needed.
+  }, [_submitGameIntent, hostedRuntime]);
 
   React.useEffect(() => { onSnapshotRef.current = applyAuthoritativeSnapshot; });
 
@@ -919,394 +703,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     prevTurnRef.current = turn;
   }, [turn, viewerSeat, premove, over, applyAuthoritativeSnapshot]);
 
-  const bootstrapAuthoritativeMatch = React.useCallback(async () => {
-    const bootstrapId = authoritativeBootstrapRef.current + 1;
-    authoritativeBootstrapRef.current = bootstrapId;
-    try {
-      const explicitMatchId = requestedMatchIdRef.current;
-      const restoredMatchId = explicitMatchId
-        ?? (hostedRuntime ? gatewayRecoveredMatchIdRef.current : readStoredActiveMatchId());
-      console.log('[DEBUG] bootstrapAuthoritativeMatch: explicitMatchId=', explicitMatchId, 'restoredMatchId=', restoredMatchId, 'hostedRuntime=', hostedRuntime);
-      if (hostedRuntime && !explicitMatchId && !restoredMatchId) {
-        console.log('[DEBUG] bootstrapAuthoritativeMatch: no match, returning early');
-        authoritativeMatchIdRef.current = null;
-        setAuthoritativeMatchId(null);
-        setAuthoritativeLive(false);
-        setAuthoritativeStatus(null);
-        setAuthoritativeFinishReason(null);
-        setAuthoritativeWhiteConnected(false);
-        setAuthoritativeBlackConnected(false);
-        setAuthoritativeDisconnectGraceFor(null);
-        setAuthoritativeDisconnectGraceDeadline(null);
-        writeStoredActiveMatchId(null);
-        return;
-      }
-      let roomMeta = restoredMatchId ? readStoredRoomMeta(restoredMatchId) : null;
-      if (roomMeta?.viewerSeat) {
-        setViewerSeat(roomMeta.viewerSeat);
-      }
-      let nextSeatSecrets = {
-        white: roomMeta?.whitePlayerSecret ?? null,
-        black: roomMeta?.blackPlayerSecret ?? null,
-      };
-      let snapshot: MatchSnapshotMessage | undefined;
-      if (restoredMatchId) {
-        try {
-          snapshot = await fetchMatch(restoredMatchId);
-          if (hostedRuntime && explicitMatchId && snapshot.match.status === 'waiting') {
-            const hostedWhiteIdentity = readStoredGuestIdentity('white');
-            const hostedBlackIdentity = readStoredGuestIdentity('black');
-            const hostedAccountIdentity = readStoredAccountIdentity('white');
-            const hostedGuestId = whiteProfileRef.current?.guestId ?? hostedWhiteIdentity.guestId ?? blackProfileRef.current?.guestId ?? hostedBlackIdentity.guestId ?? null;
-            const alreadyOwnsSeat = Boolean(
-              hostedGuestId && (
-                snapshot.match.whiteGuestId === hostedGuestId ||
-                snapshot.match.blackGuestId === hostedGuestId
-              )
-            );
-            const openSeat: PieceColor | null =
-              snapshot.match.whiteGuestId ? (snapshot.match.blackGuestId ? null : 'black') : 'white';
-            if (!alreadyOwnsSeat && openSeat && hostedWhiteIdentity.guestId) {
-              try {
-                const joined = await joinPrivateMatch({
-                  matchId: restoredMatchId,
-                  identity: {
-                    guestId: hostedWhiteIdentity.guestId,
-                    sessionSecret: hostedWhiteIdentity.sessionSecret,
-                    sessionToken: hostedWhiteIdentity.sessionToken,
-                    accountId: hostedAccountIdentity.accountId,
-                    accountSessionToken: hostedAccountIdentity.sessionToken,
-                  },
-                  preferredSeat: openSeat,
-                });
-                applyGatewayMatchClaims(restoredMatchId, joined.claim
-                  ? {
-                      white: joined.claim.seatColor === 'white' ? joined.claim : undefined,
-                      black: joined.claim.seatColor === 'black' ? joined.claim : undefined,
-                    }
-                  : null);
-                if (!joined.claim && joined.seatColor) {
-                  setViewerSeat(joined.seatColor);
-                }
-                snapshot = joined.snapshot;
-              } catch (joinErr) {
-                if (!(joinErr instanceof Error) || !/no open seats|finished|forbidden|conflict|unknown match/i.test(joinErr.message)) {
-                  throw joinErr;
-                }
-                snapshot = await fetchMatch(restoredMatchId);
-              }
-            }
-          }
-        } catch (err) {
-          if ((explicitMatchId || roomMeta) && err instanceof Error && /404|not found/i.test(err.message)) {
-            if (hostedRuntime && restoredMatchId) {
-              let retries = 0;
-              const maxRetries = 10;
-              for (; retries < maxRetries; retries++) {
-                await new Promise(r => setTimeout(r, 1000));
-                try {
-                  snapshot = await fetchMatch(restoredMatchId);
-                  break;
-                } catch (retryErr) {
-                  if (!(retryErr instanceof Error) || !/404|not found/i.test(retryErr.message)) {
-                    throw retryErr;
-                  }
-                }
-              }
-              if (!snapshot) {
-                writeStoredActiveMatchId(null);
-                gatewayRecoveredMatchIdRef.current = null;
-                clearRequestedMatchQuery();
-                requestedMatchIdRef.current = null;
-                authoritativeMatchIdRef.current = null;
-                setAuthoritativeMatchId(null);
-                setAuthoritativeLive(false);
-                setAuthoritativeStatus(null);
-                setAuthoritativeFinishReason(null);
-                setAuthoritativeWhiteConnected(false);
-                setAuthoritativeBlackConnected(false);
-                setAuthoritativeDisconnectGraceFor(null);
-                setAuthoritativeDisconnectGraceDeadline(null);
-                setViewerSeat(null);
-                setMatchSeatMeta(null);
-                setActivePage('Play');
-                return;
-              }
-            } else if (hostedRuntime) {
-              writeStoredActiveMatchId(null);
-              gatewayRecoveredMatchIdRef.current = null;
-              clearRequestedMatchQuery();
-              requestedMatchIdRef.current = null;
-              authoritativeMatchIdRef.current = null;
-              setAuthoritativeMatchId(null);
-              setAuthoritativeLive(false);
-              setAuthoritativeStatus(null);
-              setAuthoritativeFinishReason(null);
-              setAuthoritativeWhiteConnected(false);
-              setAuthoritativeBlackConnected(false);
-              setAuthoritativeDisconnectGraceFor(null);
-              setAuthoritativeDisconnectGraceDeadline(null);
-              setViewerSeat(null);
-              setMatchSeatMeta(null);
-              setActivePage('Play');
-              return;
-            }
-            if (!snapshot) {
-              roomMeta = buildStoredRoomMeta(
-                roomMeta,
-                whiteProfileRef.current,
-                blackProfileRef.current,
-                guestSessionSecretsRef.current.white,
-                guestSessionSecretsRef.current.black,
-                { ensureSecrets: true }
-              );
-              nextSeatSecrets = {
-                white: roomMeta.whitePlayerSecret ?? null,
-                black: roomMeta.blackPlayerSecret ?? null,
-              };
-              snapshot = await ensureMatch({
-                matchId: restoredMatchId,
-                clockSeconds: CLOCK_START,
-                starterHandMode: 'starter_three',
-                queue: roomMeta.queue,
-                modeId: roomMeta.modeId,
-                whiteGuestId: roomMeta.whiteGuestId,
-                blackGuestId: roomMeta.blackGuestId,
-                whiteName: roomMeta.whiteName,
-                blackName: roomMeta.blackName,
-                whitePlayerSecret: roomMeta.whitePlayerSecret,
-                blackPlayerSecret: roomMeta.blackPlayerSecret,
-              });
-            }
-          } else if (!explicitMatchId && err instanceof Error && /404|not found/i.test(err.message)) {
-            writeStoredActiveMatchId(null);
-            gatewayRecoveredMatchIdRef.current = null;
-            if (hostedRuntime) {
-              authoritativeMatchIdRef.current = null;
-              setAuthoritativeMatchId(null);
-              setAuthoritativeLive(false);
-              setAuthoritativeStatus(null);
-              setAuthoritativeFinishReason(null);
-              setAuthoritativeWhiteConnected(false);
-              setAuthoritativeBlackConnected(false);
-              setAuthoritativeDisconnectGraceFor(null);
-              setAuthoritativeDisconnectGraceDeadline(null);
-              setViewerSeat(null);
-              setMatchSeatMeta(null);
-              setActivePage('Play');
-              return;
-            }
-            roomMeta = buildStoredRoomMeta(
-              null,
-              whiteProfileRef.current,
-              blackProfileRef.current,
-              guestSessionSecretsRef.current.white,
-              guestSessionSecretsRef.current.black,
-              { ensureSecrets: true }
-            );
-            nextSeatSecrets = {
-              white: roomMeta.whitePlayerSecret ?? null,
-              black: roomMeta.blackPlayerSecret ?? null,
-            };
-            snapshot = await createMatch({
-              clockSeconds: CLOCK_START,
-              starterHandMode: 'starter_three',
-              queue: roomMeta.queue,
-              modeId: roomMeta.modeId,
-              whiteGuestId: roomMeta.whiteGuestId,
-              blackGuestId: roomMeta.blackGuestId,
-              whiteAccountId: roomMeta.whiteAccountId,
-              blackAccountId: roomMeta.blackAccountId,
-              whiteName: roomMeta.whiteName,
-              blackName: roomMeta.blackName,
-              whitePlayerSecret: roomMeta.whitePlayerSecret,
-              blackPlayerSecret: roomMeta.blackPlayerSecret,
-            });
-          } else {
-            if (!explicitMatchId) {
-              writeStoredActiveMatchId(null);
-            }
-            throw err;
-          }
-        }
-      } else {
-        roomMeta = buildStoredRoomMeta(
-          null,
-          whiteProfileRef.current,
-          blackProfileRef.current,
-          guestSessionSecretsRef.current.white,
-          guestSessionSecretsRef.current.black,
-          { ensureSecrets: true }
-        );
-        nextSeatSecrets = {
-          white: roomMeta.whitePlayerSecret ?? null,
-          black: roomMeta.blackPlayerSecret ?? null,
-        };
-        snapshot = await createMatch({
-          clockSeconds: CLOCK_START,
-          starterHandMode: 'starter_three',
-          queue: roomMeta.queue,
-          modeId: roomMeta.modeId,
-          whiteGuestId: roomMeta.whiteGuestId,
-          blackGuestId: roomMeta.blackGuestId,
-          whiteAccountId: roomMeta.whiteAccountId,
-          blackAccountId: roomMeta.blackAccountId,
-          whiteName: roomMeta.whiteName,
-          blackName: roomMeta.blackName,
-          whitePlayerSecret: roomMeta.whitePlayerSecret,
-          blackPlayerSecret: roomMeta.blackPlayerSecret,
-        });
-      }
-      if ((snapshot.match.whiteHand.length > MAX_HAND_SIZE || snapshot.match.blackHand.length > MAX_HAND_SIZE) && snapshot.match.moveHistory.length === 0) {
-        writeStoredActiveMatchId(null);
-        if (explicitMatchId) {
-          clearRequestedMatchQuery();
-          requestedMatchIdRef.current = null;
-        }
-        roomMeta = buildStoredRoomMeta(
-          null,
-          whiteProfileRef.current,
-          blackProfileRef.current,
-          guestSessionSecretsRef.current.white,
-          guestSessionSecretsRef.current.black,
-          { ensureSecrets: true }
-        );
-        nextSeatSecrets = {
-          white: roomMeta.whitePlayerSecret ?? null,
-          black: roomMeta.blackPlayerSecret ?? null,
-        };
-        snapshot = await createMatch({
-          clockSeconds: CLOCK_START,
-          starterHandMode: 'starter_three',
-          queue: roomMeta.queue,
-          modeId: roomMeta.modeId,
-          whiteGuestId: roomMeta.whiteGuestId,
-          blackGuestId: roomMeta.blackGuestId,
-          whiteAccountId: roomMeta.whiteAccountId,
-          blackAccountId: roomMeta.blackAccountId,
-          whiteName: roomMeta.whiteName,
-          blackName: roomMeta.blackName,
-          whitePlayerSecret: roomMeta.whitePlayerSecret,
-          blackPlayerSecret: roomMeta.blackPlayerSecret,
-        });
-      }
-      if (authoritativeBootstrapRef.current !== bootstrapId) return;
-      if (gatewayBootstrapClaimsRef.current.matchId === snapshot.match.matchId) {
-        nextSeatSecrets = {
-          white: nextSeatSecrets.white ?? gatewayBootstrapClaimsRef.current.whiteSecret,
-          black: nextSeatSecrets.black ?? gatewayBootstrapClaimsRef.current.blackSecret,
-        };
-        authoritativeClaimTokensRef.current = {
-          white: authoritativeClaimTokensRef.current.white ?? gatewayBootstrapClaimsRef.current.whiteToken,
-          black: authoritativeClaimTokensRef.current.black ?? gatewayBootstrapClaimsRef.current.blackToken,
-        };
-        authoritativeClaimExpiresAtRef.current = {
-          white: authoritativeClaimExpiresAtRef.current.white ?? gatewayBootstrapClaimsRef.current.whiteExpiresAt,
-          black: authoritativeClaimExpiresAtRef.current.black ?? gatewayBootstrapClaimsRef.current.blackExpiresAt,
-        };
-      }
-      if (snapshot.match.matchId && (!nextSeatSecrets.white || !nextSeatSecrets.black)) {
-        const bootstrap = await fetchGatewayBootstrap(buildGatewayBootstrapRequest(snapshot.match.matchId)).catch(() => null);
-        if (authoritativeBootstrapRef.current !== bootstrapId) return;
-        if (bootstrap) {
-          applyGatewayGuestSessions(bootstrap.guestSessions);
-          applyGatewayMatchClaims(snapshot.match.matchId, bootstrap.matchClaims);
-          applyGatewayAccountSessions(bootstrap.accountSessions);
-          nextSeatSecrets = {
-            white: nextSeatSecrets.white ?? authoritativeSeatSecretsRef.current.white,
-            black: nextSeatSecrets.black ?? authoritativeSeatSecretsRef.current.black,
-          };
-        }
-      }
-      const resolveSessionSecretForGuest = (guestId?: string | null): string | null => {
-        if (hostedRuntime) {
-          return null;
-        }
-        if (!guestId) return null;
-        if (whiteProfileRef.current?.guestId === guestId) {
-          return guestSessionSecretsRef.current.white;
-        }
-        if (blackProfileRef.current?.guestId === guestId) {
-          return guestSessionSecretsRef.current.black;
-        }
-        const whiteStored = readStoredGuestIdentity('white');
-        if (whiteStored.guestId === guestId) {
-          return whiteStored.sessionSecret ?? null;
-        }
-        const blackStored = readStoredGuestIdentity('black');
-        if (blackStored.guestId === guestId) {
-          return blackStored.sessionSecret ?? null;
-        }
-        return null;
-      };
-      nextSeatSecrets = {
-        white: nextSeatSecrets.white ?? resolveSessionSecretForGuest(snapshot.match.whiteGuestId),
-        black: nextSeatSecrets.black ?? resolveSessionSecretForGuest(snapshot.match.blackGuestId),
-      };
-      authoritativeSeatSecretsRef.current = nextSeatSecrets;
-      applyAuthoritativeSnapshot(snapshot);
-      if (hostedRuntime && !viewerSeat) {
-        const hostedId = whiteProfileRef.current?.guestId ?? readStoredGuestIdentity('white').guestId;
-        if (hostedId) {
-          if (snapshot.match.whiteGuestId === hostedId) {
-            setViewerSeat('white');
-          } else if (snapshot.match.blackGuestId === hostedId) {
-            setViewerSeat('black');
-          }
-        }
-      }
-    } catch (err) {
-      if (authoritativeBootstrapRef.current !== bootstrapId) return;
-      const message = err instanceof Error ? err.message : 'Failed to create backend match';
-      setAuthoritativeLive(false);
-      setAuthoritativeStatus(null);
-      setAuthoritativeFinishReason(null);
-      setAuthoritativeWhiteConnected(false);
-      setAuthoritativeBlackConnected(false);
-      setAuthoritativeDisconnectGraceFor(null);
-      setAuthoritativeDisconnectGraceDeadline(null);
-      setCardMsg(`Backend sync failed: ${message}`);
-      setTimeout(() => setCardMsg(''), 3000);
-    }
-  }, [applyAuthoritativeSnapshot, applyGatewayGuestSessions, applyGatewayMatchClaims, applyGatewayAccountSessions, hostedRuntime, buildGatewayBootstrapRequest]);
-
-  const submitAuthoritativeIntent = React.useCallback(async (
-    intent:
-      | Omit<Extract<PlayerIntent, { type: 'send_chat' }>, 'matchId'>
-      | Omit<Extract<PlayerIntent, { type: 'offer_draw' }>, 'matchId'>
-      | Omit<Extract<PlayerIntent, { type: 'respond_draw' }>, 'matchId'>
-      | Omit<Extract<PlayerIntent, { type: 'abort' }>, 'matchId'>
-      | Omit<Extract<PlayerIntent, { type: 'resign' }>, 'matchId'>
-  ) => {
-    const matchId = authoritativeMatchIdRef.current;
-    if (!matchId) return false;
-    if (hostedRuntime && !viewerSeatRef.current) {
-      setCardMsg('Spectators cannot control this hosted match.');
-      setTimeout(() => setCardMsg(''), 2500);
-      return false;
-    }
-
-    try {
-      setIntentInFlight(true);
-      const snapshot = await applyIntent(matchId, intent);
-      applyAuthoritativeSnapshot(snapshot);
-      setIntentInFlight(false);
-      return true;
-    } catch (err) {
-      setIntentInFlight(false);
-      const message = err instanceof Error ? err.message : 'Backend request failed';
-      setCardMsg(`Backend action failed: ${message}`);
-      setTimeout(() => setCardMsg(''), 2500);
-      return false;
-    }
-  }, [applyAuthoritativeSnapshot, hostedRuntime]);
-  const authoritativePlayerIdForColor = React.useCallback((color: PieceColor): string => {
-    const seatId = authoritativeSeatIdsRef.current[color];
-    if (seatId) {
-      return seatId;
-    }
-    return color === 'white' ? 'white_player' : 'black_player';
-  }, []);
   const authoritativeGuestSessionSecretForColor = React.useCallback((color: PieceColor): string | undefined => {
     const seatGuestId = authoritativeSeatIdsRef.current[color];
     if (!seatGuestId) {
@@ -1328,33 +724,6 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     }
     return undefined;
   }, []);
-  const authoritativePlayerSecretForColor = React.useCallback((color: PieceColor): string | undefined => {
-    return authoritativeSeatSecretsRef.current[color] ?? authoritativeGuestSessionSecretForColor(color);
-  }, [authoritativeGuestSessionSecretForColor]);
-  const authoritativePlayerClaimTokenForColor = React.useCallback((color: PieceColor): string | undefined => {
-    const token = authoritativeClaimTokensRef.current[color];
-    const expiresAt = authoritativeClaimExpiresAtRef.current[color];
-    if (!token) {
-      return undefined;
-    }
-    if (expiresAt) {
-      const expiry = Date.parse(expiresAt);
-      if (!Number.isNaN(expiry) && expiry <= Date.now()) {
-        return undefined;
-      }
-    }
-    return token;
-  }, []);
-  const authoritativeActorForColor = React.useCallback((color: PieceColor): { playerId: string; playerSecret?: string; playerClaimToken?: string } => {
-    const effectiveColor = hostedRuntime ? (viewerSeatRef.current ?? color) : color;
-    const playerId = authoritativePlayerIdForColor(effectiveColor);
-    const playerSecret = authoritativePlayerSecretForColor(effectiveColor);
-    const playerClaimToken = authoritativePlayerClaimTokenForColor(effectiveColor);
-    if (playerClaimToken) {
-      return { playerId, playerClaimToken };
-    }
-    return playerSecret ? { playerId, playerSecret } : { playerId };
-  }, [authoritativePlayerIdForColor, authoritativePlayerSecretForColor, authoritativePlayerClaimTokenForColor, hostedRuntime]);
   premoveActorRef.current = authoritativeActorForColor;
   React.useEffect(() => { actorForColorRef.current = authoritativeActorForColor; });
 
@@ -4504,6 +3873,9 @@ export function useMatchEngine(props: UseMatchEngineProps) {
     setReviewBoard,
     engineOn,
     setEngineOn,
+    hostedRuntime,
+    viewerSeat,
+    authoritativeRematchBusy,
     authoritativeLive,
     setAuthoritativeLive,
     streamDisconnected,

@@ -219,7 +219,7 @@ func main() {
 	addr := httputil.ListenAddr("GATEWAY_ADDR", 8080)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           rate_limit.NewHeaderStrippingMiddleware("X-Powered-By")(httputil.WithRecovery(httputil.WithLogging("gateway", rate_limit.SecurityHeadersMiddleware(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(rate_limit.ContentTypeMiddleware(mux)), httputil.ParseAllowedOrigins(), ""))))),
+		Handler:           rate_limit.NewHeaderStrippingMiddleware("X-Powered-By")(httputil.WithRecovery(httputil.WithLogging("gateway", rate_limit.SecurityHeadersMiddleware(rate_limit.CSRFMiddleware(rate_limit.GlobalIPRateLimitMiddleware(rl)(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(rate_limit.ContentTypeMiddleware(mux))), httputil.ParseAllowedOrigins(), ""))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -317,8 +317,9 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 		}
 
 		// Set HttpOnly cookies for account session tokens as defense-in-depth.
-		// The JSON response still carries the tokens for JS usage; the cookie
-		// provides XSS mitigation and a path to future server-side auth.
+		// TODO: Migrate to cookie-based auth and remove tokens from JSON body.
+		// The JSON response still carries the tokens for JS usage until the
+		// frontend and backend are migrated to read/write auth via cookies.
 		if payload.AccountSessions != nil {
 			for side, session := range map[string]*platform.AccountSession{
 				"white": payload.AccountSessions.White,
@@ -334,6 +335,28 @@ func buildGatewayMux(config GatewayConfig, client *http.Client) http.Handler {
 						SameSite: http.SameSiteStrictMode,
 						Expires:  session.ExpiresAt,
 					})
+				}
+			}
+		}
+		if payload.GuestSessions != nil {
+			for side, session := range map[string]*platform.GuestSession{
+				"white": payload.GuestSessions.White,
+				"black": payload.GuestSessions.Black,
+			} {
+				if session != nil {
+					http.SetCookie(w, &http.Cookie{
+						Name:     "session_secret_" + side,
+						Value:    session.SessionSecret,
+						Path:     "/",
+						HttpOnly: true,
+						Secure:   true,
+						SameSite: http.SameSiteStrictMode,
+					})
+					// Strip secrets from JSON response — client already has them
+					// from the initial session creation and reads them via HttpOnly
+					// cookies for server-side auth.
+					session.SessionSecret = ""
+					session.SessionToken = ""
 				}
 			}
 		}
@@ -782,7 +805,7 @@ func syncMatchSnapshotToPlatformService(config GatewayConfig, client *http.Clien
 		return
 	}
 	if !result.Healthy {
-		log.Printf("gw:sync-match: platform-service returned status=%d body=%v", result.StatusCode, result.Payload)
+		log.Printf("gw:sync-match: platform-service returned status=%d", result.StatusCode)
 		return
 	}
 	log.Printf("gw:sync-match: ok matchID=%s", snapshot.Match.MatchID)
@@ -1311,7 +1334,7 @@ func createGatewayPrivateMatchForSession(
 		return GatewayPrivateMatchResponse{}, http.StatusBadGateway, fmt.Errorf("match-service unreachable: %v", result.Error)
 	}
 	if !result.Healthy {
-		log.Printf("gw:create-private: match-service returned status=%d body=%v", result.StatusCode, result.Payload)
+		log.Printf("gw:create-private: match-service returned status=%d", result.StatusCode)
 		return GatewayPrivateMatchResponse{}, statusOrDefault(result.StatusCode, http.StatusBadGateway), errors.New(formatUpstreamError(result, "failed to create private match"))
 	}
 	snapshot, err := decodeGatewayPayload[contracts.MatchSnapshotResponse](result.Payload)

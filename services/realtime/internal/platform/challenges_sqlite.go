@@ -20,7 +20,7 @@ func NewSQLiteDirectChallengeStore(path string) (*DirectChallengeStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newDirectChallengeStore(store)
+	return NewDirectChallengeStoreFromDB(store)
 }
 
 func newSQLiteDirectChallengePersistence(path string) (*sqliteDirectChallengeStore, error) {
@@ -118,6 +118,8 @@ func (s *sqliteDirectChallengeStore) close() error {
 }
 
 func (s *sqliteDirectChallengeStore) init() error {
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists direct_challenges (
 			challenge_id text primary key,

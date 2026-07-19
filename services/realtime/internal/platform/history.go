@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"database/sql"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,14 +46,16 @@ type matchArchiveFile struct {
 }
 
 type MatchArchiveStore struct {
-	mu        sync.Mutex
-	store     archivePersistence
-	entries   map[string]MatchArchiveEntry
-	private   map[string]MatchArchivePrivateEntry
-	writeCh   chan struct{}
-	closeCh   chan struct{}
-	closed    bool
-	persistMu sync.Mutex
+	mu          sync.Mutex
+	store       archivePersistence
+	entries     map[string]MatchArchiveEntry
+	private     map[string]MatchArchivePrivateEntry
+	dirty       map[string]struct{}
+	writeCh     chan struct{}
+	closeCh     chan struct{}
+	closed      bool
+	persistMu   sync.Mutex
+	useQueries  bool // when true, read ops query the DB instead of scanning in-memory maps
 }
 
 type MatchArchiveStats struct {
@@ -84,13 +87,26 @@ func NewPostgresMatchArchiveStore(dsn string) (*MatchArchiveStore, error) {
 	return newMatchArchiveStore(store)
 }
 
+func NewPostgresMatchArchiveStoreWithDB(db *sql.DB) (*MatchArchiveStore, error) {
+	store, err := NewPostgresArchiveStoreWithDB(db)
+	if err != nil {
+		return nil, err
+	}
+	return newMatchArchiveStore(store)
+}
+
 func newMatchArchiveStore(persistence archivePersistence) (*MatchArchiveStore, error) {
 	store := &MatchArchiveStore{
 		store:   persistence,
 		entries: make(map[string]MatchArchiveEntry),
 		private: make(map[string]MatchArchivePrivateEntry),
+		dirty:   make(map[string]struct{}),
 		writeCh: make(chan struct{}, 64),
 		closeCh: make(chan struct{}),
+	}
+	// Postgres uses lazy-loaded DB queries; file/SQLite load everything.
+	if persistence != nil && persistence.backend() == "postgres" {
+		store.useQueries = true
 	}
 	if err := store.load(); err != nil {
 		if store.store != nil {
@@ -152,7 +168,15 @@ func (s *MatchArchiveStore) Flush() error {
 	if s.closed {
 		return nil
 	}
-	return s.persistLocked()
+	// Flush always persists ALL entries (used for forced/manual saves).
+	if s.store == nil {
+		return nil
+	}
+	if err := s.store.persist(s.entries, s.private); err != nil {
+		return err
+	}
+	s.dirty = make(map[string]struct{})
+	return nil
 }
 
 func (s *MatchArchiveStore) Close() error {
@@ -166,13 +190,16 @@ func (s *MatchArchiveStore) Close() error {
 	s.mu.Unlock()
 
 	s.persistMu.Lock()
+	s.mu.Lock()
+	// On close, persist ALL entries (not just dirty) to ensure nothing is lost.
 	if s.store != nil {
+		_ = s.store.persist(s.entries, s.private)
 		s.store.close()
 	}
-	s.mu.Lock()
 	s.store = nil
 	s.entries = nil
 	s.private = nil
+	s.dirty = nil
 	s.mu.Unlock()
 	s.persistMu.Unlock()
 	return nil
@@ -211,6 +238,7 @@ func (s *MatchArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) err
 		BlackPlayerSecret: match.BlackPlayerSecret,
 		History:           clonePositionHistory(match.History),
 	}
+	s.dirty[match.MatchID] = struct{}{}
 	select {
 	case s.writeCh <- struct{}{}:
 	default:
@@ -220,25 +248,52 @@ func (s *MatchArchiveStore) Upsert(snapshot contracts.MatchSnapshotResponse) err
 
 func (s *MatchArchiveStore) Get(matchID string) (MatchArchiveEntry, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	entry, ok := s.entries[matchID]
-	if !ok {
-		return entry, false
+	if ok {
+		s.mu.Unlock()
+		return cloneArchiveEntry(entry), true
 	}
-	return cloneArchiveEntry(entry), true
+	if s.useQueries && s.store != nil {
+		queried, found, err := s.store.queryGet(matchID)
+		if err == nil && found {
+			s.entries[matchID] = queried
+			s.mu.Unlock()
+			return cloneArchiveEntry(queried), true
+		}
+	}
+	s.mu.Unlock()
+	return MatchArchiveEntry{}, false
 }
 
 func (s *MatchArchiveStore) LoadMatch(matchID string) (contracts.MatchState, []contracts.ResolvedEvent, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	entry, ok := s.entries[matchID]
+	if !ok && s.useQueries && s.store != nil {
+		queried, found, err := s.store.queryGet(matchID)
+		if err == nil && found {
+			privateQ, _, _ := s.store.queryPrivate(matchID)
+			s.entries[matchID] = queried
+			s.private[matchID] = privateQ
+			entry = queried
+			ok = true
+		}
+	}
 	if !ok {
+		s.mu.Unlock()
 		return contracts.MatchState{}, nil, false
 	}
 
+	// Ensure private data is cached when using lazy-load queries.
+	privateEntry, privateExists := s.private[matchID]
+	if !privateExists && s.useQueries && s.store != nil {
+		queriedPrivate, _, _ := s.store.queryPrivate(matchID)
+		s.private[matchID] = queriedPrivate
+		privateEntry = queriedPrivate
+	}
+
 	snapshot := cloneSnapshot(entry.Snapshot)
-	privateEntry := s.private[matchID]
+	s.mu.Unlock()
+
 	snapshot.Match.WhitePlayerSecret = privateEntry.WhitePlayerSecret
 	snapshot.Match.BlackPlayerSecret = privateEntry.BlackPlayerSecret
 	snapshot.Match.History = clonePositionHistory(privateEntry.History)
@@ -247,6 +302,13 @@ func (s *MatchArchiveStore) LoadMatch(matchID string) (contracts.MatchState, []c
 }
 
 func (s *MatchArchiveStore) Stats() MatchArchiveStats {
+	if s.useQueries && s.store != nil {
+		stats, err := s.store.queryStats()
+		if err == nil {
+			return stats
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -273,6 +335,18 @@ func (s *MatchArchiveStore) Stats() MatchArchiveStats {
 }
 
 func (s *MatchArchiveStore) List(limit int) []MatchArchiveEntry {
+	if s.useQueries && s.store != nil {
+		items, err := s.store.queryList(limit, 0)
+		if err == nil {
+			for i := range items {
+				s.mu.Lock()
+				s.entries[items[i].MatchID] = items[i]
+				s.mu.Unlock()
+			}
+			return items
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -287,6 +361,13 @@ func (s *MatchArchiveStore) List(limit int) []MatchArchiveEntry {
 }
 
 func (s *MatchArchiveStore) ListUnfinishedMatchIDs(limit int) []string {
+	if s.useQueries && s.store != nil {
+		ids, err := s.store.queryUnfinishedIDs(limit)
+		if err == nil {
+			return ids
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -308,6 +389,13 @@ func (s *MatchArchiveStore) ListUnfinishedMatchIDs(limit int) []string {
 }
 
 func (s *MatchArchiveStore) ListFinishedMatchIDs(limit int) []string {
+	if s.useQueries && s.store != nil {
+		ids, err := s.store.queryFinishedIDs(limit)
+		if err == nil {
+			return ids
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -329,6 +417,13 @@ func (s *MatchArchiveStore) ListFinishedMatchIDs(limit int) []string {
 }
 
 func (s *MatchArchiveStore) ListByGuest(guestID string, limit int) []MatchArchiveEntry {
+	if s.useQueries && s.store != nil {
+		items, err := s.store.queryByGuest(guestID, limit, 0)
+		if err == nil {
+			return items
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -348,12 +443,19 @@ func (s *MatchArchiveStore) ListByGuest(guestID string, limit int) []MatchArchiv
 }
 
 func (s *MatchArchiveStore) ListByAccount(accountID string, linkedGuestIDs []string, limit int) []MatchArchiveEntry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if strings.TrimSpace(accountID) == "" {
 		return nil
 	}
+
+	if s.useQueries && s.store != nil {
+		items, err := s.store.queryByAccount(accountID, linkedGuestIDs, limit, 0)
+		if err == nil {
+			return items
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	guestIDs := make(map[string]struct{}, len(linkedGuestIDs))
 	for _, guestID := range linkedGuestIDs {
@@ -405,6 +507,9 @@ func ParseListLimit(value string, fallback int) int {
 	if err != nil || parsed <= 0 {
 		return fallback
 	}
+	if parsed > 100 {
+		return 100
+	}
 	return parsed
 }
 
@@ -431,7 +536,24 @@ func (s *MatchArchiveStore) persistLocked() error {
 	if s.store == nil {
 		return nil
 	}
-	return s.store.persist(s.entries, s.private)
+	if len(s.dirty) == 0 {
+		return nil
+	}
+	dirtyEntries := make(map[string]MatchArchiveEntry, len(s.dirty))
+	dirtyPrivate := make(map[string]MatchArchivePrivateEntry, len(s.dirty))
+	for matchID := range s.dirty {
+		if entry, ok := s.entries[matchID]; ok {
+			dirtyEntries[matchID] = entry
+		}
+		if privateEntry, ok := s.private[matchID]; ok {
+			dirtyPrivate[matchID] = privateEntry
+		}
+	}
+	if err := s.store.persist(dirtyEntries, dirtyPrivate); err != nil {
+		return err
+	}
+	s.dirty = make(map[string]struct{})
+	return nil
 }
 
 func cloneSnapshot(snapshot contracts.MatchSnapshotResponse) contracts.MatchSnapshotResponse {

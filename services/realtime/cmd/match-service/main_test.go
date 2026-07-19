@@ -79,10 +79,8 @@ func TestFinalizingArchiveStoreCallsPlatformForFinishedRatedMatch(t *testing.T) 
 var withCORSPreflightHeaders = []string{
 	"X-Chess404-White-Guest-Id",
 	"X-Chess404-White-Session-Token",
-	"X-Chess404-White-Session-Secret",
 	"X-Chess404-Black-Guest-Id",
 	"X-Chess404-Black-Session-Token",
-	"X-Chess404-Black-Session-Secret",
 }
 
 func TestWithCORSPreflightAllowsChess404Headers(t *testing.T) {

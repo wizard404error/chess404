@@ -19,7 +19,7 @@ func NewSQLiteModerationStore(path string) (*ModerationStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newModerationStore(store)
+	return NewModerationStoreFromDB(store)
 }
 
 func newSQLiteModerationPersistence(path string) (*sqliteModerationStore, error) {
@@ -297,6 +297,8 @@ func (s *sqliteModerationStore) close() error {
 }
 
 func (s *sqliteModerationStore) init() error {
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists account_blocks (
 			block_id text primary key,

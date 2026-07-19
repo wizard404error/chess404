@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -22,10 +23,35 @@ import (
 	"github.com/chess404/realtime/internal/metrics"
 	"github.com/chess404/realtime/internal/platform"
 	"github.com/chess404/realtime/internal/rate_limit"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+// sharedPostgresPool is the single *sql.DB shared by all Postgres-backed
+// stores in this service. Created once at startup; avoids the previous
+// pattern of 10+ independent pools exhausting Postgres connections.
+var sharedPostgresPool *sql.DB
+
+func initPostgresPool() {
+	rawURL := strings.TrimSpace(os.Getenv("PLATFORM_POSTGRES_URL"))
+	if rawURL == "" {
+		// When PLATFORM_POSTGRES_URL is unset, each store falls back to its
+		// per-store env var and opens its own pool (backward compat).
+		return
+	}
+	db, err := sql.Open("pgx", rawURL)
+	if err != nil {
+		log.Fatalf("failed to open shared Postgres pool: %v", err)
+	}
+	platform.ConfigurePostgresPool(db, 25, 5)
+	sharedPostgresPool = db
+	log.Printf("platform: shared Postgres pool opened")
+}
+
+var accountsCache = platform.NewLeaderboardCache(10 * time.Second)
 
 func main() {
 	envutil.Require("ALLOWED_ORIGINS")
+	initPostgresPool()
 	archive, err := openArchiveStore()
 	if err != nil {
 		log.Fatalf("failed to initialize archive store: %v", err)
@@ -103,7 +129,7 @@ func main() {
 		// carry the proper Access-Control-Allow-* headers. Otherwise the
 		// browser reports "blocked by CORS policy" on legitimate cross-origin
 		// POSTs whose Origin happens to mismatch the same-origin self check.
-		Handler:           rate_limit.NewHeaderStrippingMiddleware("X-Powered-By")(httputil.WithRecovery(httputil.WithLogging("platform-service", rate_limit.SecurityHeadersMiddleware(httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins(), configuredInternalServiceToken()))))))),
+		Handler:           rate_limit.NewHeaderStrippingMiddleware("X-Powered-By")(httputil.WithRecovery(httputil.WithLogging("platform-service", rate_limit.SecurityHeadersMiddleware(httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rate_limit.GlobalIPRateLimitMiddleware(rl)(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux)), httputil.ParseAllowedOrigins(), configuredInternalServiceToken()))))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -141,12 +167,12 @@ func withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE, PUT")
-		// Allow the custom identity headers used by the web client (x-chess404-{white|black}-{guest-id|session-token|session-secret}).
-		// Safe to use explicit list because no `credentials: include` is set on the client side, and explicit list is the
-		// conservative default for any future credentials-bearing requests.
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Chess404-White-Guest-Id, X-Chess404-White-Session-Token, X-Chess404-White-Session-Secret, X-Chess404-Black-Guest-Id, X-Chess404-Black-Session-Token, X-Chess404-Black-Session-Secret")
+		// Allow the custom identity headers used by the web client (x-chess404-{white|black}-{guest-id|session-token}).
+		// Session secrets are transmitted via HttpOnly cookies, not headers.
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Chess404-White-Guest-Id, X-Chess404-White-Session-Token, X-Chess404-Black-Guest-Id, X-Chess404-Black-Session-Token")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Type, X-Request-Id")
 		w.Header().Set("Access-Control-Max-Age", "600")
+		w.Header().Set("Cache-Control", "public, max-age=600")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -364,6 +390,7 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 				http.Error(w, `{"error":"unauthorized guest session"}`, http.StatusUnauthorized)
 				return
 			}
+			log.Printf("ERROR: failed to create guest session for guestId=%q: %v", payload.GuestID, err)
 			http.Error(w, `{"error":"failed to create guest session"}`, http.StatusInternalServerError)
 			return
 		}
@@ -2224,7 +2251,16 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 		seasonID := strings.TrimSpace(r.URL.Query().Get("seasonId"))
 		modeID := parseOptionalModeID(r.URL.Query().Get("modeId"))
 		query := normalizeAccountQuery(r.URL.Query().Get("query"))
-		accountItems := filterAccountsByQuery(accounts.ListAccounts(0), query)
+
+		cacheKey := fmt.Sprintf("%s|%s|%s|%s|%d", sortMode, seasonID, modeID, query, limit)
+		if cached, ok := accountsCache.Get(cacheKey); ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			_ = json.NewEncoder(w).Encode(cached)
+			return
+		}
+
+		accountItems := filterAccountsByQuery(accounts.ListAccounts(limit), query)
 		seasonOptions := platform.BuildAvailableSeasonOptionsForMode(accountItems, modeID)
 		accountsList := make([]platform.PublicAccountProfile, 0, len(accountItems))
 		for _, account := range accountItems {
@@ -2248,15 +2284,18 @@ func buildPlatformMux(archive *platform.MatchArchiveStore, guests platform.Guest
 			accountsList = accountsList[:limit]
 		}
 		summary := platform.BuildAccountLeaderboardSummary(accountsList, seasonID, modeID)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		result := map[string]any{
 			"accounts":         accountsList,
 			"seasons":          seasonOptions,
 			"summary":          summary,
 			"selectedSeasonId": seasonID,
 			"selectedModeId":   modeID,
 			"selectedQuery":    query,
-		})
+		}
+		accountsCache.Set(cacheKey, result)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "MISS")
+		_ = json.NewEncoder(w).Encode(result)
 	})
 
 	mux.HandleFunc("/api/platform/accounts/by-guest/", func(w http.ResponseWriter, r *http.Request) {
@@ -2859,6 +2898,9 @@ func finalizeLinkedAccounts(
 	if err != nil {
 		return platform.AccountProfile{}, platform.AccountProfile{}, false, err
 	}
+	if changed {
+		accountsCache.Invalidate()
+	}
 	return finalWhite, finalBlack, changed, nil
 }
 
@@ -2902,16 +2944,7 @@ func filterAccountsByQuery(accounts []platform.AccountProfile, query string) []p
 }
 
 func findAccountByHandle(accounts platform.AccountDirectory, handle string) (platform.AccountProfile, bool) {
-	query := normalizeAccountQuery(handle)
-	if query == "" {
-		return platform.AccountProfile{}, false
-	}
-	for _, account := range accounts.ListAccounts(0) {
-		if strings.ToLower(strings.TrimSpace(account.Handle)) == query {
-			return account, true
-		}
-	}
-	return platform.AccountProfile{}, false
+	return accounts.FindAccountByHandle(handle)
 }
 
 func archivePath() string {
@@ -3192,7 +3225,7 @@ func openGuestDirectory() (platform.GuestDirectory, error) {
 	case "sqlite":
 		return platform.NewSQLiteGuestStore(guestStoreSQLitePath())
 	case "postgres":
-		return platform.NewPostgresGuestStore(guestStorePostgresURL())
+		return openPostgresGuestStore()
 	default:
 		return platform.NewGuestStore(guestStorePath())
 	}
@@ -3203,7 +3236,7 @@ func openAccountStore() (platform.AccountDirectory, error) {
 	case "sqlite":
 		return platform.NewSQLiteAccountStore(accountStoreSQLitePath())
 	case "postgres":
-		return platform.NewPostgresAccountStore(accountStorePostgresURL())
+		return openPostgresAccountStore()
 	default:
 		return platform.NewAccountStore(accountStorePath())
 	}
@@ -3214,7 +3247,7 @@ func openFriendshipStore() (platform.FriendshipDirectory, error) {
 	case "sqlite":
 		return platform.NewSQLiteFriendshipStore(friendshipStoreSQLitePath())
 	case "postgres":
-		return platform.NewPostgresFriendshipStore(friendshipStorePostgresURL())
+		return openPostgresFriendshipStore()
 	default:
 		return platform.NewFriendshipStore(friendshipStorePath())
 	}
@@ -3225,7 +3258,7 @@ func openModerationStore() (platform.ModerationDirectory, error) {
 	case "sqlite":
 		return platform.NewSQLiteModerationStore(moderationStoreSQLitePath())
 	case "postgres":
-		return platform.NewPostgresModerationStore(moderationStorePostgresURL())
+		return openPostgresModerationStore()
 	default:
 		return platform.NewModerationStore(moderationStorePath())
 	}
@@ -3236,7 +3269,7 @@ func openDirectChallengeStore() (platform.DirectChallengeDirectory, error) {
 	case "sqlite":
 		return platform.NewSQLiteDirectChallengeStore(directChallengeStoreSQLitePath())
 	case "postgres":
-		return platform.NewPostgresDirectChallengeStore(directChallengeStorePostgresURL())
+		return openPostgresDirectChallengeStore()
 	default:
 		return platform.NewDirectChallengeStore(directChallengeStorePath())
 	}
@@ -3247,7 +3280,7 @@ func openNotificationStore() (platform.AccountNotificationDirectory, error) {
 	case "sqlite":
 		return platform.NewSQLiteAccountNotificationStore(notificationStoreSQLitePath())
 	case "postgres":
-		return platform.NewPostgresAccountNotificationStore(notificationStorePostgresURL())
+		return openPostgresNotificationStore()
 	default:
 		return platform.NewAccountNotificationStore(notificationStorePath())
 	}
@@ -3258,7 +3291,7 @@ func openAccountEmailOutboxStore() (platform.AccountEmailOutboxDirectory, error)
 	case "sqlite":
 		return platform.NewSQLiteAccountEmailOutboxStore(accountEmailOutboxSQLitePath())
 	case "postgres":
-		return platform.NewPostgresAccountEmailOutboxStore(accountEmailOutboxPostgresURL())
+		return openPostgresAccountEmailOutboxStore()
 	default:
 		return platform.NewAccountEmailOutboxStore(accountEmailOutboxStorePath())
 	}
@@ -3269,7 +3302,7 @@ func openAccountSecurityAuditStore() (platform.AccountSecurityAuditDirectory, er
 	case "sqlite":
 		return platform.NewSQLiteAccountSecurityAuditStore(accountSecurityAuditSQLitePath())
 	case "postgres":
-		return platform.NewPostgresAccountSecurityAuditStore(accountSecurityAuditPostgresURL())
+		return openPostgresAccountSecurityAuditStore()
 	default:
 		return platform.NewAccountSecurityAuditStore(accountSecurityAuditStorePath())
 	}
@@ -3278,12 +3311,77 @@ func openAccountSecurityAuditStore() (platform.AccountSecurityAuditDirectory, er
 func openAnticheatStore() (platform.AnticheatStore, error) {
 	switch strings.ToLower(httputil.EnvOrDefault("ANTICHEAT_BACKEND", "memory")) {
 	case "postgres":
-		return platform.NewPostgresAnticheatStore(anticheatPostgresURL())
+		return openPostgresAnticheatStore()
 	case "sqlite":
 		return platform.NewSqliteAnticheatStore(anticheatSQLitePath())
 	default:
 		return platform.NewInMemoryAnticheatStore(), nil
 	}
+}
+
+// openPostgresGuestStore opens the guest store, using the shared pool when
+// PLATFORM_POSTGRES_URL is set, otherwise falling back to the per-store URL.
+func openPostgresGuestStore() (platform.GuestDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresGuestStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresGuestStore(guestStorePostgresURL())
+}
+
+func openPostgresAccountStore() (platform.AccountDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresAccountStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresAccountStore(accountStorePostgresURL())
+}
+
+func openPostgresFriendshipStore() (platform.FriendshipDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresFriendshipStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresFriendshipStore(friendshipStorePostgresURL())
+}
+
+func openPostgresModerationStore() (platform.ModerationDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresModerationStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresModerationStore(moderationStorePostgresURL())
+}
+
+func openPostgresDirectChallengeStore() (platform.DirectChallengeDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresDirectChallengeStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresDirectChallengeStore(directChallengeStorePostgresURL())
+}
+
+func openPostgresNotificationStore() (platform.AccountNotificationDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresAccountNotificationStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresAccountNotificationStore(notificationStorePostgresURL())
+}
+
+func openPostgresAccountEmailOutboxStore() (platform.AccountEmailOutboxDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresAccountEmailOutboxStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresAccountEmailOutboxStore(accountEmailOutboxPostgresURL())
+}
+
+func openPostgresAccountSecurityAuditStore() (platform.AccountSecurityAuditDirectory, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresAccountSecurityAuditStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresAccountSecurityAuditStore(accountSecurityAuditPostgresURL())
+}
+
+func openPostgresAnticheatStore() (platform.AnticheatStore, error) {
+	if sharedPostgresPool != nil {
+		return platform.NewPostgresAnticheatStoreWithDB(sharedPostgresPool)
+	}
+	return platform.NewPostgresAnticheatStore(anticheatPostgresURL())
 }
 
 func runAnticheatRetentionLoop(store platform.AnticheatStore) {
@@ -3367,6 +3465,9 @@ func openArchiveStore() (*platform.MatchArchiveStore, error) {
 	case "sqlite":
 		return platform.NewSQLiteMatchArchiveStore(archiveSQLitePath())
 	case "postgres":
+		if sharedPostgresPool != nil {
+			return platform.NewPostgresMatchArchiveStoreWithDB(sharedPostgresPool)
+		}
 		return platform.NewPostgresMatchArchiveStore(archivePostgresURL())
 	default:
 		return platform.NewMatchArchiveStore(archivePath())

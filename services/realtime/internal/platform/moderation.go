@@ -144,10 +144,10 @@ type fileModerationStore struct {
 }
 
 func NewModerationStore(path string) (*ModerationStore, error) {
-	return newModerationStore(&fileModerationStore{path: path})
+	return NewModerationStoreFromDB(&fileModerationStore{path: path})
 }
 
-func newModerationStore(store moderationPersistence) (*ModerationStore, error) {
+func NewModerationStoreFromDB(store moderationPersistence) (*ModerationStore, error) {
 	blocks, reports, actions, restrictions, err := store.load()
 	if err != nil {
 		return nil, err

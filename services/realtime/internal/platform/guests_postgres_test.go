@@ -46,7 +46,7 @@ func TestPostgresGuestStoreEnsureGuestTouchesExistingGuest(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`alter table guests add column if not exists session_expires_at timestamptz`)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	store, err := newPostgresGuestStoreWithDB(db)
+	store, err := NewPostgresGuestStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres guest store to initialize, got %v", err)
 	}
@@ -91,7 +91,7 @@ func TestPostgresGuestStoreFinalizeMatchIsIdempotent(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`alter table guests add column if not exists session_expires_at timestamptz`)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	store, err := newPostgresGuestStoreWithDB(db)
+	store, err := NewPostgresGuestStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres guest store to initialize, got %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPostgresGuestStoreResumeGuestByToken(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(`alter table guests add column if not exists session_expires_at timestamptz`)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	store, err := newPostgresGuestStoreWithDB(db)
+	store, err := NewPostgresGuestStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres guest store to initialize, got %v", err)
 	}

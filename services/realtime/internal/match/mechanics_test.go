@@ -167,28 +167,54 @@ func TestCardPromote(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_promote"}, now)
+	// Advance the white pawn from (1,1) to (6,0) — row 6 is the promotion rank for white.
+	// The final step captures the black pawn at (6,0) diagonally.
+	moves := []contracts.PlayerIntent{
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "white_player",
+			From: &contracts.Square{Row: 1, Col: 1}, To: &contracts.Square{Row: 3, Col: 1}},
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "black_player",
+			From: &contracts.Square{Row: 6, Col: 2}, To: &contracts.Square{Row: 4, Col: 2}},
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "white_player",
+			From: &contracts.Square{Row: 3, Col: 1}, To: &contracts.Square{Row: 4, Col: 1}},
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "black_player",
+			From: &contracts.Square{Row: 6, Col: 3}, To: &contracts.Square{Row: 4, Col: 3}},
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "white_player",
+			From: &contracts.Square{Row: 4, Col: 1}, To: &contracts.Square{Row: 5, Col: 1}},
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "black_player",
+			From: &contracts.Square{Row: 6, Col: 4}, To: &contracts.Square{Row: 4, Col: 4}},
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "white_player",
+			From: &contracts.Square{Row: 5, Col: 1}, To: &contracts.Square{Row: 6, Col: 0}},
+		{Type: "make_move", MatchID: "test_promote", PlayerID: "black_player",
+			From: &contracts.Square{Row: 6, Col: 5}, To: &contracts.Square{Row: 4, Col: 5}},
+	}
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "promote")
+
+	for idx, m := range moves {
+		if _, err := applyTestIntent(service, m, now.Add(time.Duration(idx+1)*time.Second)); err != nil {
+			t.Fatalf("setup move %d: %v", idx, err)
+		}
+	}
 
 	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type: "play_card", MatchID: "test_promote", PlayerID: "white_player", CardID: cardID,
-	}, now.Add(time.Second)); err != nil {
+	}, now.Add(9*time.Second)); err != nil {
 		t.Fatalf("play_card: %v", err)
 	}
 	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type: "select_target", MatchID: "test_promote", PlayerID: "white_player",
-		Target: &contracts.Square{Row: 1, Col: 0},
-	}, now.Add(2*time.Second)); err != nil {
+		Target: &contracts.Square{Row: 6, Col: 0},
+	}, now.Add(10*time.Second)); err != nil {
 		t.Fatalf("target: %v", err)
 	}
 	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type: "select_target", MatchID: "test_promote", PlayerID: "white_player",
 		SelectionID: "queen",
-	}, now.Add(3*time.Second))
+	}, now.Add(11*time.Second))
 	if err != nil {
 		t.Fatalf("selection: %v", err)
 	}
 
-	if piece := service.getMatchContainer("test_promote").state.Board[1][0]; piece == nil || piece.Type != "queen" {
+	if piece := service.getMatchContainer("test_promote").state.Board[6][0]; piece == nil || piece.Type != "queen" {
 		t.Fatalf("expected queen got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
@@ -201,29 +227,55 @@ func TestCardPromotehim(t *testing.T) {
 	service := NewService()
 	now := time.Date(2026, 5, 5, 8, 0, 0, 0, time.UTC)
 	snapshot := createTestMatch(service, contracts.CreateMatchRequest{MatchID: "test_promotehim"}, now)
+	// Advance black's pawn from (6,0) to (1,1) — row 1 is the promotion rank for black.
+	// Black captures white's b-pawn at (3,1) to switch files and bypass the white a-pawn.
+	moves := []contracts.PlayerIntent{
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "white_player",
+			From: &contracts.Square{Row: 1, Col: 1}, To: &contracts.Square{Row: 3, Col: 1}},
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "black_player",
+			From: &contracts.Square{Row: 6, Col: 0}, To: &contracts.Square{Row: 4, Col: 0}},
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "white_player",
+			From: &contracts.Square{Row: 0, Col: 1}, To: &contracts.Square{Row: 2, Col: 2}},
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "black_player",
+			From: &contracts.Square{Row: 4, Col: 0}, To: &contracts.Square{Row: 3, Col: 1}},
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "white_player",
+			From: &contracts.Square{Row: 2, Col: 2}, To: &contracts.Square{Row: 0, Col: 1}},
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "black_player",
+			From: &contracts.Square{Row: 3, Col: 1}, To: &contracts.Square{Row: 2, Col: 1}},
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "white_player",
+			From: &contracts.Square{Row: 0, Col: 1}, To: &contracts.Square{Row: 2, Col: 2}},
+		{Type: "make_move", MatchID: "test_promotehim", PlayerID: "black_player",
+			From: &contracts.Square{Row: 2, Col: 1}, To: &contracts.Square{Row: 1, Col: 1}},
+	}
 	cardID := cardIDByMechanic(t, snapshot.Match.WhiteHand, "promotehim")
+
+	for idx, m := range moves {
+		if _, err := applyTestIntent(service, m, now.Add(time.Duration(idx+1)*time.Second)); err != nil {
+			t.Fatalf("setup move %d: %v", idx, err)
+		}
+	}
 
 	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type: "play_card", MatchID: "test_promotehim", PlayerID: "white_player", CardID: cardID,
-	}, now.Add(time.Second)); err != nil {
+	}, now.Add(9*time.Second)); err != nil {
 		t.Fatalf("play_card: %v", err)
 	}
 	if _, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type: "select_target", MatchID: "test_promotehim", PlayerID: "white_player",
-		Target: &contracts.Square{Row: 6, Col: 0},
-	}, now.Add(2*time.Second)); err != nil {
+		Target: &contracts.Square{Row: 1, Col: 1},
+	}, now.Add(10*time.Second)); err != nil {
 		t.Fatalf("target: %v", err)
 	}
 	result, err := applyTestIntent(service, contracts.PlayerIntent{
 		Type: "select_target", MatchID: "test_promotehim", PlayerID: "white_player",
 		SelectionID: "queen",
-	}, now.Add(3*time.Second))
+	}, now.Add(11*time.Second))
 	if err != nil {
 		t.Fatalf("selection: %v", err)
 	}
 
-	if piece := service.getMatchContainer("test_promotehim").state.Board[6][0]; piece == nil || piece.Type != "queen" || piece.Color != "black" {
-		t.Fatalf("expected black queen got %#v", piece)
+	if piece := service.getMatchContainer("test_promotehim").state.Board[1][1]; piece == nil || piece.Type != "queen" || piece.Color != "black" {
+		t.Fatalf("expected black queen at (1,1) got %#v", piece)
 	}
 	if len(result.Match.WhiteHand) != len(snapshot.Match.WhiteHand)-1 {
 		t.Fatal("expected card consumed")

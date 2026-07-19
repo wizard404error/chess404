@@ -56,22 +56,33 @@ func (s *redisTicketStore) load() (map[string]Ticket, error) {
 
 func (s *redisTicketStore) persist(tickets map[string]Ticket) error {
 	ctx := context.Background()
-	pipe := s.client.TxPipeline()
-	pipe.Del(ctx, s.key)
 
-	if len(tickets) > 0 {
-		payload := make(map[string]any, len(tickets))
-		for ticketID, ticket := range tickets {
-			encoded, err := json.Marshal(ticket)
-			if err != nil {
-				return err
-			}
-			payload[ticketID] = string(encoded)
-		}
-		pipe.HSet(ctx, s.key, payload)
+	existing, err := s.client.HKeys(ctx, s.key).Result()
+	if err != nil {
+		return err
 	}
 
-	_, err := pipe.Exec(ctx)
+	pipe := s.client.Pipeline()
+
+	stale := make(map[string]struct{}, len(existing))
+	for _, k := range existing {
+		stale[k] = struct{}{}
+	}
+
+	for ticketID, ticket := range tickets {
+		delete(stale, ticketID)
+		encoded, err := json.Marshal(ticket)
+		if err != nil {
+			return err
+		}
+		pipe.HSet(ctx, s.key, ticketID, string(encoded))
+	}
+
+	for id := range stale {
+		pipe.HDel(ctx, s.key, id)
+	}
+
+	_, err = pipe.Exec(ctx)
 	return err
 }
 

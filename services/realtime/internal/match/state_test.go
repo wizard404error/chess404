@@ -637,6 +637,8 @@ func TestMoveCheckmateFinishesAuthoritatively(t *testing.T) {
 	state.HalfMoveClock = 0
 	state.FullMoveNum = 1
 	state.MoveHistory = nil
+	state.WhiteHand = nil
+	state.BlackHand = nil
 	state.History = []contracts.PositionState{capturePositionState(state)}
 
 	snapshot, err := applyTestIntent(service, contracts.PlayerIntent{
@@ -719,6 +721,8 @@ func TestThreefoldRepetitionFinishesAuthoritatively(t *testing.T) {
 	repeated.Board[0][4] = &contracts.Piece{Type: "king", Color: "white"}
 	repeated.Board[7][4] = &contracts.Piece{Type: "king", Color: "black"}
 	repeated.Board[0][0] = &contracts.Piece{Type: "rook", Color: "white"}
+	repeated.WhiteHand = append([]contracts.GameCard{}, state.WhiteHand...)
+	repeated.BlackHand = append([]contracts.GameCard{}, state.BlackHand...)
 	state.History = []contracts.PositionState{
 		repeated,
 		repeated,

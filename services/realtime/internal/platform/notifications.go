@@ -91,10 +91,10 @@ type fileNotificationStore struct {
 }
 
 func NewAccountNotificationStore(path string) (*AccountNotificationStore, error) {
-	return newAccountNotificationStore(&fileNotificationStore{path: path})
+	return NewAccountNotificationStoreFromDB(&fileNotificationStore{path: path})
 }
 
-func newAccountNotificationStore(store notificationPersistence) (*AccountNotificationStore, error) {
+func NewAccountNotificationStoreFromDB(store notificationPersistence) (*AccountNotificationStore, error) {
 	notifications, err := store.load()
 	if err != nil {
 		return nil, err

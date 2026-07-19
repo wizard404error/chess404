@@ -67,7 +67,7 @@ func TestGuestStoreFinalizeMatchIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected finalize to succeed, got %v", err)
 	}
-	if !changed || updatedWhite.Rating != 1216 || updatedBlack.Rating != 1184 {
+	if !changed || updatedWhite.Rating != 1232 || updatedBlack.Rating != 1168 {
 		t.Fatalf("unexpected rating change %#v %#v changed=%v", updatedWhite, updatedBlack, changed)
 	}
 	if updatedWhite.Wins != 1 || updatedWhite.MatchesPlayed != 1 || updatedBlack.Losses != 1 || updatedBlack.MatchesPlayed != 1 {
@@ -78,7 +78,7 @@ func TestGuestStoreFinalizeMatchIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected repeated finalize to be harmless, got %v", err)
 	}
-	if changedAgain || repeatWhite.Rating != 1216 || repeatBlack.Rating != 1184 {
+	if changedAgain || repeatWhite.Rating != 1232 || repeatBlack.Rating != 1168 {
 		t.Fatalf("expected repeated finalize to be idempotent, got %#v %#v changed=%v", repeatWhite, repeatBlack, changedAgain)
 	}
 }

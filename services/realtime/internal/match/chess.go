@@ -2,6 +2,7 @@ package match
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/chess404/realtime/internal/contracts"
@@ -26,13 +27,13 @@ func makeBoard() [][]*contracts.Piece {
 	return board
 }
 
-func legalMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}) []contracts.Square {
+func legalMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}, fortressZones []contracts.FortressZone) []contracts.Square {
 	piece := pieceAt(board, from)
 	if piece == nil {
 		return nil
 	}
 
-	candidates := pseudoMoves(board, from, lastMove, moved)
+	candidates := pseudoMoves(board, from, lastMove, moved, fortressZones)
 	legal := make([]contracts.Square, 0, len(candidates))
 
 	for _, move := range candidates {
@@ -48,7 +49,7 @@ func legalMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *con
 		if king == nil {
 			continue
 		}
-		if !isAttackedWithFusion(nextBoard, *king, opposite(piece.Color)) {
+		if !isAttackedWithFusion(nextBoard, *king, opposite(piece.Color), fortressZones) {
 			legal = append(legal, move)
 		}
 	}
@@ -56,13 +57,13 @@ func legalMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *con
 	return legal
 }
 
-func legalMovesWithFusion(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}) []contracts.Square {
+func legalMovesWithFusion(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}, fortressZones []contracts.FortressZone) []contracts.Square {
 	piece := pieceAt(board, from)
 	if piece == nil {
 		return nil
 	}
 	if piece.FusedWith == "" {
-		return legalMoves(board, from, lastMove, moved)
+		return legalMoves(board, from, lastMove, moved, fortressZones)
 	}
 
 	merged := make([]contracts.Square, 0, 16)
@@ -78,16 +79,16 @@ func legalMovesWithFusion(board [][]*contracts.Piece, from contracts.Square, las
 		}
 	}
 
-	appendMoves(legalMoves(board, from, lastMove, moved))
+	appendMoves(legalMoves(board, from, lastMove, moved, fortressZones))
 
 	transformedBoard := cloneBoard(board)
 	transformedBoard[from.Row][from.Col] = clonePieceAsType(piece, piece.FusedWith)
-	appendMoves(legalMoves(transformedBoard, from, lastMove, moved))
+	appendMoves(legalMoves(transformedBoard, from, lastMove, moved, fortressZones))
 
 	return merged
 }
 
-func hasLegalMoveWithFusion(board [][]*contracts.Piece, color string, lastMove *contracts.LastMove, moved map[string]struct{}) bool {
+func hasLegalMoveWithFusion(board [][]*contracts.Piece, color string, lastMove *contracts.LastMove, moved map[string]struct{}, fortressZones []contracts.FortressZone) bool {
 	opponent := opposite(color)
 	for r := 0; r < 8; r++ {
 		for c := 0; c < 8; c++ {
@@ -97,7 +98,7 @@ func hasLegalMoveWithFusion(board [][]*contracts.Piece, color string, lastMove *
 			}
 
 			from := contracts.Square{Row: r, Col: c}
-			moves := legalMovesWithFusion(board, from, lastMove, moved)
+			moves := legalMovesWithFusion(board, from, lastMove, moved, fortressZones)
 			for _, move := range moves {
 				testBoard := cloneBoard(board)
 				moving := testBoard[from.Row][from.Col]
@@ -107,7 +108,7 @@ func hasLegalMoveWithFusion(board [][]*contracts.Piece, color string, lastMove *
 				captureEmptyDiagonal := moving.Type == "pawn" && move.Col != from.Col && pieceAt(board, move) == nil
 				movePiece(testBoard, from, move, moving, captureEmptyDiagonal)
 				king := findKing(testBoard, color)
-				if king != nil && !isAttackedWithFusion(testBoard, *king, opponent) {
+				if king != nil && !isAttackedWithFusion(testBoard, *king, opponent, fortressZones) {
 					return true
 				}
 			}
@@ -117,18 +118,18 @@ func hasLegalMoveWithFusion(board [][]*contracts.Piece, color string, lastMove *
 	return false
 }
 
-func gameStatusWithFusion(board [][]*contracts.Piece, player string, lastMove *contracts.LastMove, moved map[string]struct{}) (bool, bool, bool) {
+func gameStatusWithFusion(board [][]*contracts.Piece, player string, lastMove *contracts.LastMove, moved map[string]struct{}, fortressZones []contracts.FortressZone) (bool, bool, bool) {
 	king := findKing(board, player)
 	if king == nil {
 		return false, false, false
 	}
 
-	inCheck := isAttackedWithFusion(board, *king, opposite(player))
-	hasLegal := hasLegalMoveWithFusion(board, player, lastMove, moved)
+	inCheck := isAttackedWithFusion(board, *king, opposite(player), fortressZones)
+	hasLegal := hasLegalMoveWithFusion(board, player, lastMove, moved, fortressZones)
 	return inCheck, inCheck && !hasLegal, !inCheck && !hasLegal
 }
 
-func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}) []contracts.Square {
+func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *contracts.LastMove, moved map[string]struct{}, fortressZones []contracts.FortressZone) []contracts.Square {
 	piece := pieceAt(board, from)
 	if piece == nil {
 		return nil
@@ -209,13 +210,13 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 		// Use the king's starting column (4) so a king that has already moved
 		// (e.g. e1→g1) is correctly detected as moved even from its new square.
 		kingStartKey := keyForCoords(from.Row, 4)
-		if _, movedKing := moved[kingStartKey]; !movedKing && !isAttackedWithFusion(board, from, opposite(piece.Color)) {
+		if _, movedKing := moved[kingStartKey]; !movedKing && !isAttackedWithFusion(board, from, opposite(piece.Color), fortressZones) {
 			if _, rookMoved := moved[keyForCoords(from.Row, 7)]; !rookMoved &&
 				isRookPiece(pieceAt(board, contracts.Square{Row: from.Row, Col: 7}), piece.Color) &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 5}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 6}) == nil &&
-				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 5}, opposite(piece.Color)) &&
-				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 6}, opposite(piece.Color)) {
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 5}, opposite(piece.Color), fortressZones) &&
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 6}, opposite(piece.Color), fortressZones) {
 				moves = append(moves, contracts.Square{Row: from.Row, Col: 6})
 			}
 			if _, rookMoved := moved[keyForCoords(from.Row, 0)]; !rookMoved &&
@@ -223,8 +224,8 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 1}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 2}) == nil &&
 				pieceAt(board, contracts.Square{Row: from.Row, Col: 3}) == nil &&
-				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 3}, opposite(piece.Color)) &&
-				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 2}, opposite(piece.Color)) {
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 3}, opposite(piece.Color), fortressZones) &&
+				!isAttackedWithFusion(board, contracts.Square{Row: from.Row, Col: 2}, opposite(piece.Color), fortressZones) {
 				moves = append(moves, contracts.Square{Row: from.Row, Col: 2})
 			}
 		}
@@ -233,11 +234,11 @@ func pseudoMoves(board [][]*contracts.Piece, from contracts.Square, lastMove *co
 	return moves
 }
 
-func isAttacked(board [][]*contracts.Piece, target contracts.Square, by string) bool {
+func isAttacked(board [][]*contracts.Piece, target contracts.Square, by string, fortressZones []contracts.FortressZone) bool {
 	for r := 0; r < 8; r++ {
 		for c := 0; c < 8; c++ {
 			piece := board[r][c]
-			if piece != nil && piece.Color == by && attacks(board, contracts.Square{Row: r, Col: c}, target, piece) {
+			if piece != nil && piece.Color == by && attacks(board, contracts.Square{Row: r, Col: c}, target, piece, fortressZones) {
 				return true
 			}
 		}
@@ -245,7 +246,7 @@ func isAttacked(board [][]*contracts.Piece, target contracts.Square, by string) 
 	return false
 }
 
-func attacks(board [][]*contracts.Piece, from, to contracts.Square, piece *contracts.Piece) bool {
+func attacks(board [][]*contracts.Piece, from, to contracts.Square, piece *contracts.Piece, fortressZones []contracts.FortressZone) bool {
 	dr := to.Row - from.Row
 	dc := to.Col - from.Col
 	switch piece.Type {
@@ -263,22 +264,22 @@ func attacks(board [][]*contracts.Piece, from, to contracts.Square, piece *contr
 		if dr != 0 && dc != 0 {
 			return false
 		}
-		return clearPath(board, from, to)
+		return clearPath(board, from, to, fortressZones, piece.Color)
 	case "bishop":
 		if abs(dr) != abs(dc) {
 			return false
 		}
-		return clearPath(board, from, to)
+		return clearPath(board, from, to, fortressZones, piece.Color)
 	case "queen":
 		if dr == 0 || dc == 0 || abs(dr) == abs(dc) {
-			return clearPath(board, from, to)
+			return clearPath(board, from, to, fortressZones, piece.Color)
 		}
 		return false
 	}
 	return false
 }
 
-func clearPath(board [][]*contracts.Piece, from, to contracts.Square) bool {
+func clearPath(board [][]*contracts.Piece, from, to contracts.Square, fortressZones []contracts.FortressZone, attackerColor string) bool {
 	dr := sign(to.Row - from.Row)
 	dc := sign(to.Col - from.Col)
 	r, c := from.Row+dr, from.Col+dc
@@ -286,10 +287,28 @@ func clearPath(board [][]*contracts.Piece, from, to contracts.Square) bool {
 		if board[r][c] != nil {
 			return false
 		}
+		if isInsideEnemyFortress(contracts.Square{Row: r, Col: c}, fortressZones, attackerColor) {
+			return false
+		}
 		r += dr
 		c += dc
 	}
 	return true
+}
+
+func isInsideEnemyFortress(sq contracts.Square, zones []contracts.FortressZone, color string) bool {
+	for _, z := range zones {
+		if z.OwnerColor != color {
+			for r := z.TopRow; r < z.TopRow+2 && r < 8; r++ {
+				for c := z.LeftCol; c < z.LeftCol+2 && c < 8; c++ {
+					if sq.Row == r && sq.Col == c {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func findKing(board [][]*contracts.Piece, color string) *contracts.Square {
@@ -353,7 +372,7 @@ func insufficientMaterial(board [][]*contracts.Piece) bool {
 	}
 }
 
-func positionKey(board [][]*contracts.Piece, turn string, moved map[string]struct{}, lastMove *contracts.LastMove) string {
+func positionKey(board [][]*contracts.Piece, turn string, moved map[string]struct{}, lastMove *contracts.LastMove, whiteHand, blackHand []contracts.GameCard) string {
 	castling := ""
 	if _, movedWhiteKing := moved["0-4"]; !movedWhiteKing && pieceAt(board, contracts.Square{Row: 0, Col: 4}) != nil && pieceAt(board, contracts.Square{Row: 0, Col: 4}).Type == "king" {
 		if _, movedWhiteRookKing := moved["0-7"]; !movedWhiteRookKing && pieceAt(board, contracts.Square{Row: 0, Col: 7}) != nil && pieceAt(board, contracts.Square{Row: 0, Col: 7}).Type == "rook" {
@@ -380,7 +399,23 @@ func positionKey(board [][]*contracts.Piece, turn string, moved map[string]struc
 		}
 	}
 
-	return fmt.Sprintf("%s|%c|%s|%s", boardPositionString(board), turn[0], fallbackCastling(castling), enPassant)
+	handKey := handKeyString(whiteHand, blackHand)
+
+	return fmt.Sprintf("%s|%c|%s|%s|%s", boardPositionString(board), turn[0], fallbackCastling(castling), enPassant, handKey)
+}
+
+func handKeyString(whiteHand, blackHand []contracts.GameCard) string {
+	hw := make([]string, len(whiteHand))
+	for i, c := range whiteHand {
+		hw[i] = c.Mechanic
+	}
+	sort.Strings(hw)
+	hb := make([]string, len(blackHand))
+	for i, c := range blackHand {
+		hb[i] = c.Mechanic
+	}
+	sort.Strings(hb)
+	return strings.Join(hw, ",") + "|" + strings.Join(hb, ",")
 }
 
 func threefold(history []string, current string) bool {
@@ -449,7 +484,7 @@ func moveNotation(board [][]*contracts.Piece, from, to contracts.Square, piece *
 			for c := 0; c < 8; c++ {
 				other := board[r][c]
 				if other != nil && other.Type == piece.Type && other.Color == piece.Color && !(r == from.Row && c == from.Col) {
-					moves := pseudoMoves(board, contracts.Square{Row: r, Col: c}, nil, nil)
+					moves := pseudoMoves(board, contracts.Square{Row: r, Col: c}, nil, nil, nil)
 					for _, m := range moves {
 						if m.Row == to.Row && m.Col == to.Col {
 							ambiguous = append(ambiguous, contracts.Square{Row: r, Col: c})

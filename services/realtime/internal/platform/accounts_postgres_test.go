@@ -97,7 +97,7 @@ func TestPostgresAccountStoreClaimGuestTouchesExistingAccount(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(postgresAccountInitSQL)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	store, err := newPostgresAccountStoreWithDB(db)
+	store, err := NewPostgresAccountStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres account store to initialize, got %v", err)
 	}
@@ -139,7 +139,7 @@ func TestPostgresAccountStoreResumeAccountByToken(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(postgresAccountInitSQL)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	store, err := newPostgresAccountStoreWithDB(db)
+	store, err := NewPostgresAccountStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres account store to initialize, got %v", err)
 	}
@@ -184,7 +184,7 @@ func TestPostgresAccountStoreEnablePasswordLoginAndLoginByEmail(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(postgresAccountInitSQL)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	store, err := newPostgresAccountStoreWithDB(db)
+	store, err := NewPostgresAccountStoreWithDB(db)
 	if err != nil {
 		t.Fatalf("expected postgres account store to initialize, got %v", err)
 	}

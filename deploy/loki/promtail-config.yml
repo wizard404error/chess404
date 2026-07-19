@@ -1,0 +1,45 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: gateway
+          __path__: /var/log/gateway/*.log
+
+  - job_name: match-service
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: match-service
+          __path__: /var/log/match-service/*.log
+
+  - job_name: platform-service
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: platform-service
+          __path__: /var/log/platform-service/*.log
+
+  - job_name: matchmaking-service
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: matchmaking-service
+          __path__: /var/log/matchmaking-service/*.log
+
+  - job_name: system
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: system
+          __path__: /var/log/syslog

@@ -19,7 +19,7 @@ func NewSQLiteFriendshipStore(path string) (*FriendshipStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newFriendshipStore(store)
+	return NewFriendshipStoreFromDB(store)
 }
 
 func newSQLiteFriendshipPersistence(path string) (*sqliteFriendshipStore, error) {
@@ -156,6 +156,8 @@ func (s *sqliteFriendshipStore) close() error {
 }
 
 func (s *sqliteFriendshipStore) init() error {
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists friend_requests (
 			request_id text primary key,

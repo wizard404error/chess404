@@ -36,6 +36,7 @@ type Piece struct {
 	ShieldTurn     *int   `json:"shieldTurn,omitempty"`
 	Frozen         bool   `json:"frozen,omitempty"`
 	Borrowed       bool   `json:"borrowed,omitempty"`
+	BorrowCount    int    `json:"borrowCount,omitempty"`
 	ParasiteTarget string `json:"parasiteTarget,omitempty"`
 	Bomb           bool   `json:"bomb,omitempty"`
 	Invisible      bool   `json:"invisible,omitempty"`

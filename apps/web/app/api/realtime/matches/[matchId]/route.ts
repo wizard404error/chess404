@@ -129,6 +129,7 @@ function buildPublicSpectatorSnapshot(snapshot: MatchSnapshotResponse): MatchSna
 
 async function requestOwnsMatchSeat(request: Request, matchId: string): Promise<boolean> {
   const candidates = readGuestSessionCandidates(request.headers);
+  const sideSecrets = readSideSecretsFromCookies(request.headers);
   for (const candidate of candidates) {
     const payload: Record<string, string> = {
       matchId,
@@ -136,8 +137,12 @@ async function requestOwnsMatchSeat(request: Request, matchId: string): Promise<
     };
     if (candidate.sessionToken) {
       payload.sessionToken = candidate.sessionToken;
-    } else if (candidate.sessionSecret) {
-      payload.sessionSecret = candidate.sessionSecret;
+    } else {
+      const side = resolveCandidateSide(candidate.guestId, candidates);
+      const secret = side ? sideSecrets[side] : undefined;
+      if (secret) {
+        payload.sessionSecret = secret;
+      }
     }
 
     try {
@@ -161,23 +166,42 @@ async function requestOwnsMatchSeat(request: Request, matchId: string): Promise<
   return false;
 }
 
-function readGuestSessionCandidates(headers: Headers): Array<{ guestId: string; sessionToken?: string; sessionSecret?: string }> {
+function readGuestSessionCandidates(headers: Headers): Array<{ guestId: string; sessionToken?: string }> {
   const sides = ['white', 'black'] as const;
   const candidates = sides.map((side) => ({
     guestId: normalize(headers.get(`x-chess404-${side}-guest-id`)),
     sessionToken: normalize(headers.get(`x-chess404-${side}-session-token`)) || undefined,
-    sessionSecret: normalize(headers.get(`x-chess404-${side}-session-secret`)) || undefined,
-  })).filter((candidate) => candidate.guestId && (candidate.sessionToken || candidate.sessionSecret));
+  })).filter((candidate) => candidate.guestId);
 
   const generic = {
     guestId: normalize(headers.get('x-chess404-guest-id')),
     sessionToken: normalize(headers.get('x-chess404-session-token')) || undefined,
-    sessionSecret: normalize(headers.get('x-chess404-session-secret')) || undefined,
   };
-  if (generic.guestId && (generic.sessionToken || generic.sessionSecret)) {
+  if (generic.guestId) {
     candidates.push(generic);
   }
   return candidates;
+}
+
+function readSideSecretsFromCookies(headers: Headers): Record<'white' | 'black', string | undefined> {
+  const cookie = headers.get('cookie') ?? '';
+  const parse = (name: string): string | undefined => {
+    const match = cookie.match(new RegExp(`(?:^|;)\\s*${name}=([^;]*)`));
+    return match ? decodeURIComponent(match[1].trim()) : undefined;
+  };
+  return {
+    white: parse('session_secret_white'),
+    black: parse('session_secret_black'),
+  };
+}
+
+function resolveCandidateSide(guestId: string, candidates: Array<{ guestId: string }>): 'white' | 'black' | undefined {
+  if (candidates.length >= 2 && normalize(candidates[0].guestId) === normalize(guestId)) return 'white';
+  if (candidates.length >= 2 && normalize(candidates[1].guestId) === normalize(guestId)) return 'black';
+  if (candidates.length === 1) {
+    return candidates[0].guestId === guestId ? 'white' : undefined;
+  }
+  return undefined;
 }
 
 function isRecoverableClaimStatus(status?: string): boolean {

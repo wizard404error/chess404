@@ -16,19 +16,19 @@ func NewPostgresModerationStore(dsn string) (*ModerationStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(3 * time.Minute)
-	store, err := newPostgresModerationPersistenceWithDB(db)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return newModerationStore(store)
+	configurePostgresPool(db, 25, 5)
+	return NewPostgresModerationStoreWithDB(db)
 }
 
-func newPostgresModerationPersistenceWithDB(db *sql.DB) (*postgresModerationStore, error) {
+func NewPostgresModerationStoreWithDB(db *sql.DB) (*ModerationStore, error) {
+	store, err := newPostgresModerationStoreWithDB(db)
+	if err != nil {
+		return nil, err
+	}
+	return NewModerationStoreFromDB(store)
+}
+
+func newPostgresModerationStoreWithDB(db *sql.DB) (*postgresModerationStore, error) {
 	store := &postgresModerationStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

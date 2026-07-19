@@ -22,14 +22,11 @@ func NewPostgresAccountStore(dsn string) (*PostgresAccountStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(3 * time.Minute)
-	return newPostgresAccountStoreWithDB(db)
+	configurePostgresPool(db, 25, 5)
+	return NewPostgresAccountStoreWithDB(db)
 }
 
-func newPostgresAccountStoreWithDB(db *sql.DB) (*PostgresAccountStore, error) {
+func NewPostgresAccountStoreWithDB(db *sql.DB) (*PostgresAccountStore, error) {
 	store := &PostgresAccountStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()
@@ -113,13 +110,17 @@ func (s *PostgresAccountStore) ClaimGuest(guest GuestProfile, handle string) (Ac
 		return AccountSession{}, ErrAccountHandleTaken
 	}
 
+	placements := guest.PlacementsRemaining
+	if placements == 0 && guest.MatchesPlayed == 0 {
+		placements = defaultPlacementMatches
+	}
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
 		AccountID:           accountID,
 		Handle:              normalizedHandle,
 		PrimaryGuestID:      guest.GuestID,
 		LinkedGuestIDs:      []string{guest.GuestID},
-		PlacementsRemaining: defaultPlacementMatches,
+		PlacementsRemaining: placements,
 		CreatedAt:           now,
 		LastSeenAt:          now,
 		LastActiveAt:        now,
@@ -240,15 +241,20 @@ func (s *PostgresAccountStore) RegisterGuestAccount(guest GuestProfile, handle, 
 		return AccountSession{}, ErrAccountEmailTaken
 	}
 
+	placements := guest.PlacementsRemaining
+	if placements == 0 && guest.MatchesPlayed == 0 {
+		placements = defaultPlacementMatches
+	}
 	accountID := "acct_" + randomToken(8)
 	account := AccountProfile{
-		AccountID:      accountID,
-		Handle:         normalizedHandle,
-		PrimaryGuestID: resolvedGuestID,
-		LinkedGuestIDs: []string{resolvedGuestID},
-		CreatedAt:      now,
-		LastSeenAt:     now,
-		LastActiveAt:   now,
+		AccountID:           accountID,
+		Handle:              normalizedHandle,
+		PrimaryGuestID:      resolvedGuestID,
+		LinkedGuestIDs:      []string{resolvedGuestID},
+		PlacementsRemaining: placements,
+		CreatedAt:           now,
+		LastSeenAt:          now,
+		LastActiveAt:        now,
 	}
 	session := AccountSession{
 		Account:      account,
@@ -1028,6 +1034,14 @@ func (s *PostgresAccountStore) ListAccounts(limit int) []AccountProfile {
 	return items
 }
 
+func (s *PostgresAccountStore) FindAccountByHandle(handle string) (AccountProfile, bool) {
+	session, ok, err := lookupPostgresAccountSessionByHandle(s.db, strings.TrimSpace(handle))
+	if err != nil || !ok {
+		return AccountProfile{}, false
+	}
+	return session.Account, true
+}
+
 func (s *PostgresAccountStore) init() error {
 	_, err := s.db.Exec(`
 		create table if not exists accounts (
@@ -1115,6 +1129,12 @@ func lookupPostgresAccountSessionByID(queryable interface {
 	QueryRow(query string, args ...any) *sql.Row
 }, accountID string) (AccountSession, bool, error) {
 	return scanPostgresAccountSession(queryable.QueryRow(`select account_id, handle, primary_guest_id, linked_guest_ids, rating, matches_played, wins, losses, draws, rating_history, created_at, last_seen_at, last_active_at, session_token, session_expires_at from accounts where account_id = $1`, accountID))
+}
+
+func lookupPostgresAccountSessionByHandle(queryable interface {
+	QueryRow(query string, args ...any) *sql.Row
+}, handle string) (AccountSession, bool, error) {
+	return scanPostgresAccountSession(queryable.QueryRow(`select account_id, handle, primary_guest_id, linked_guest_ids, rating, matches_played, wins, losses, draws, rating_history, created_at, last_seen_at, last_active_at, session_token, session_expires_at from accounts where handle = $1`, handle))
 }
 
 func lookupPostgresAccountSessionByGuest(queryable interface {

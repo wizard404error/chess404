@@ -2,7 +2,6 @@ package platform
 
 import (
 	"database/sql"
-	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -16,19 +15,19 @@ func NewPostgresFriendshipStore(dsn string) (*FriendshipStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(3 * time.Minute)
-	store, err := newPostgresFriendshipPersistenceWithDB(db)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return newFriendshipStore(store)
+	configurePostgresPool(db, 25, 5)
+	return NewPostgresFriendshipStoreWithDB(db)
 }
 
-func newPostgresFriendshipPersistenceWithDB(db *sql.DB) (*postgresFriendshipStore, error) {
+func NewPostgresFriendshipStoreWithDB(db *sql.DB) (*FriendshipStore, error) {
+	store, err := newPostgresFriendshipStoreWithDB(db)
+	if err != nil {
+		return nil, err
+	}
+	return NewFriendshipStoreFromDB(store)
+}
+
+func newPostgresFriendshipStoreWithDB(db *sql.DB) (*postgresFriendshipStore, error) {
 	store := &postgresFriendshipStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

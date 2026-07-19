@@ -42,6 +42,8 @@ func main() {
 	}
 	defer func() { _ = archive.Close() }()
 
+	finArchive := newFinalizingArchiveStore(archive)
+
 	store, broadcaster := openMatchStore()
 	var tokenStore match.TokenStore
 	if redisURL := httputil.EnvOrDefault("MATCH_REDIS_URL", ""); redisURL != "" {
@@ -52,7 +54,7 @@ func main() {
 			log.Printf("WARNING: failed to connect to redis for auth token store, using in-memory: %v", err)
 		}
 	}
-	service := match.NewServiceWithStoreBroadcasterAndTokenStore(newFinalizingArchiveStore(archive), store, broadcaster, tokenStore)
+	service := match.NewServiceWithStoreBroadcasterAndTokenStore(finArchive, store, broadcaster, tokenStore)
 	rl, err := rate_limit.NewRateLimiter()
 	if err != nil {
 		log.Fatalf("failed to initialize rate limiter: %v", err)
@@ -151,7 +153,15 @@ func main() {
 			httputil.WriteError(w, http.StatusServiceUnavailable, "internal service token not configured on server")
 			return
 		}
-		if r.Header.Get("X-Internal-Service-Token") != expected {
+			provided := strings.TrimSpace(r.Header.Get("X-Chess404-Service-Token"))
+		if provided == "" {
+			const prefix = "Bearer "
+			auth := strings.TrimSpace(r.Header.Get("Authorization"))
+			if strings.HasPrefix(auth, prefix) {
+				provided = strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+			}
+		}
+		if provided == "" || provided != expected {
 			httputil.WriteError(w, http.StatusUnauthorized, "internal service token required")
 			return
 		}
@@ -277,7 +287,7 @@ func main() {
 		// carry the proper Access-Control-Allow-* headers. Otherwise the
 		// browser reports "blocked by CORS policy" on legitimate cross-origin
 		// POSTs whose Origin happens to mismatch the same-origin self check.
-		Handler:           rate_limit.NewHeaderStrippingMiddleware("X-Powered-By")(httputil.WithRecovery(httputil.WithLogging("match-service", rate_limit.SecurityHeadersMiddleware(httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux), httputil.ParseAllowedOrigins(), ""))))))),
+		Handler:           rate_limit.NewHeaderStrippingMiddleware("X-Powered-By")(httputil.WithRecovery(httputil.WithLogging("match-service", rate_limit.SecurityHeadersMiddleware(httputil.LimitBody(withCORS(rate_limit.CSRFMiddleware(rate_limit.GlobalIPRateLimitMiddleware(rl)(rl.Middleware(rate_limit.DefaultAPIWindow, rate_limit.DefaultAPILimit)(mux)), httputil.ParseAllowedOrigins(), ""))))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -294,9 +304,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("match-service shutting down...")
+	service.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	finArchive.Drain()
 	rl.Close()
 }
 
@@ -308,6 +320,7 @@ type finalizingArchiveStore struct {
 	mu           sync.Mutex
 	inFlight     map[string]struct{}
 	done         map[string]struct{}
+	wg           sync.WaitGroup
 }
 
 func newFinalizingArchiveStore(archive *platform.MatchArchiveStore) *finalizingArchiveStore {
@@ -341,6 +354,10 @@ func (s *finalizingArchiveStore) ListFinishedMatchIDs(limit int) []string {
 	return s.archive.ListFinishedMatchIDs(limit)
 }
 
+func (s *finalizingArchiveStore) Drain() {
+	s.wg.Wait()
+}
+
 func (s *finalizingArchiveStore) maybeFinalizeRatedMatch(snapshot contracts.MatchSnapshotResponse) {
 	matchState := snapshot.Match
 	matchID := strings.TrimSpace(matchState.MatchID)
@@ -357,7 +374,9 @@ func (s *finalizingArchiveStore) maybeFinalizeRatedMatch(snapshot contracts.Matc
 		return
 	}
 
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		err := s.finalizeRatedMatch(matchID)
 		s.finishFinalization(matchID, err == nil)
 		if err != nil {
@@ -398,7 +417,7 @@ func (s *finalizingArchiveStore) finalizeRatedMatch(matchID string) error {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+s.serviceToken)
+	request.Header.Set("X-Chess404-Service-Token", s.serviceToken)
 
 	response, err := s.client.Do(request)
 	if err != nil {
@@ -483,6 +502,11 @@ func writeMatchError(w http.ResponseWriter, err error) {
 	}
 }
 
+type intentResult struct {
+	err  error
+	resp contracts.MatchSnapshotResponse
+}
+
 var wsConnSemaphore = make(chan struct{}, 500)
 
 func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Service, upgrader *websocket.Upgrader, matchID string, wsReadLimit int64) {
@@ -550,17 +574,43 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 		return
 	}
 
-	done := make(chan struct{})
+	readDone := make(chan struct{})
+	intentCh := make(chan intentResult, 32)
 
 	go func() {
-		defer close(done)
+		defer close(readDone)
 		conn.SetPongHandler(func(string) error {
 			_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			return nil
 		})
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			_, msgBytes, err := conn.ReadMessage()
+			if err != nil {
 				return
+			}
+			var env contracts.Envelope
+			if err := json.Unmarshal(msgBytes, &env); err != nil {
+				continue
+			}
+			if env.Type != "apply_intent" {
+				continue
+			}
+			payloadBytes, err := json.Marshal(env.Payload)
+			if err != nil {
+				continue
+			}
+			var intent contracts.PlayerIntent
+			if err := json.Unmarshal(payloadBytes, &intent); err != nil {
+				continue
+			}
+			intent.MatchID = matchID
+			intent.PlayerID = playerID
+			intent.PlayerSecret = playerSecret
+
+			resp, err := service.ApplyIntent(intent, httputil.NowUTC())
+			select {
+			case intentCh <- intentResult{err: err, resp: resp}:
+			default:
 			}
 		}
 	}()
@@ -587,11 +637,24 @@ func handleMatchSocket(w http.ResponseWriter, r *http.Request, service *match.Se
 			if err := writeEnvelope(conn, "match.snapshot", snapshot); err != nil {
 				return
 			}
+		case result, ok := <-intentCh:
+			if !ok {
+				return
+			}
+			if result.err != nil {
+				if err := writeEnvelope(conn, "intent.error", map[string]string{"error": result.err.Error()}); err != nil {
+					return
+				}
+			} else {
+				if err := writeEnvelope(conn, "intent.success", result.resp); err != nil {
+					return
+				}
+			}
 		case <-pingTicker.C:
 			if err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second)); err != nil {
 				return
 			}
-		case <-done:
+		case <-readDone:
 			return
 		}
 	}
@@ -621,11 +684,12 @@ func withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		// Allow the custom identity headers used by the web client (x-chess404-{white|black}-{guest-id|session-token|session-secret}).
-		// Safe to use "*" because no `credentials: include` is set on the client side.
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Chess404-White-Guest-Id, X-Chess404-White-Session-Token, X-Chess404-White-Session-Secret, X-Chess404-Black-Guest-Id, X-Chess404-Black-Session-Token, X-Chess404-Black-Session-Secret")
+		// Allow the custom identity headers used by the web client (x-chess404-{white|black}-{guest-id|session-token}).
+		// Session secrets are transmitted via HttpOnly cookies, not headers.
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Chess404-White-Guest-Id, X-Chess404-White-Session-Token, X-Chess404-Black-Guest-Id, X-Chess404-Black-Session-Token")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Type, X-Request-Id")
 		w.Header().Set("Access-Control-Max-Age", "600")
+		w.Header().Set("Cache-Control", "public, max-age=600")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

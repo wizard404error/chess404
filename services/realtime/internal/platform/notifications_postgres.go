@@ -17,19 +17,19 @@ func NewPostgresAccountNotificationStore(dsn string) (*AccountNotificationStore,
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(3 * time.Minute)
-	store, err := newPostgresAccountNotificationPersistenceWithDB(db)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return newAccountNotificationStore(store)
+	configurePostgresPool(db, 25, 5)
+	return NewPostgresAccountNotificationStoreWithDB(db)
 }
 
-func newPostgresAccountNotificationPersistenceWithDB(db *sql.DB) (*postgresAccountNotificationStore, error) {
+func NewPostgresAccountNotificationStoreWithDB(db *sql.DB) (*AccountNotificationStore, error) {
+	store, err := newPostgresAccountNotificationStoreWithDB(db)
+	if err != nil {
+		return nil, err
+	}
+	return NewAccountNotificationStoreFromDB(store)
+}
+
+func newPostgresAccountNotificationStoreWithDB(db *sql.DB) (*postgresAccountNotificationStore, error) {
 	store := &postgresAccountNotificationStore{db: db}
 	if err := store.init(); err != nil {
 		_ = db.Close()

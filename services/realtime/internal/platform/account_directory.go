@@ -25,5 +25,6 @@ type AccountDirectory interface {
 	GetAccount(accountID string) (AccountProfile, bool)
 	GetAccountByGuest(guestID string) (AccountProfile, bool)
 	ListAccounts(limit int) []AccountProfile
+	FindAccountByHandle(handle string) (AccountProfile, bool)
 	Stats() AccountStoreStats
 }

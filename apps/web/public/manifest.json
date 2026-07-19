@@ -1,16 +1,19 @@
 {
+  "id": "chess404",
   "name": "Chess404",
   "short_name": "Chess404",
   "description": "Chess with 37 unique card mechanics",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#0a0e1a",
-  "theme_color": "#0a0e1a",
+  "theme_color": "#6366f1",
+  "scope": "/",
+  "categories": ["games", "board"],
   "icons": [
-    {
-      "src": "/favicon.ico",
-      "sizes": "64x64",
-      "type": "image/x-icon"
-    }
+    { "src": "/favicon.ico", "sizes": "64x64", "type": "image/x-icon" },
+    { "src": "/logo192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/logo512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/logo512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

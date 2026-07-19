@@ -361,6 +361,8 @@ func (s *SQLiteGuestStore) Stats() GuestStoreStats {
 }
 
 func (s *SQLiteGuestStore) init() error {
+	_, _ = s.db.Exec(`PRAGMA journal_mode=WAL`)
+	_, _ = s.db.Exec(`PRAGMA busy_timeout=5000`)
 	_, err := s.db.Exec(`
 		create table if not exists guests (
 			guest_id text primary key,

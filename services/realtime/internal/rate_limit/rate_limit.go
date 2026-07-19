@@ -2,7 +2,9 @@ package rate_limit
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"log"
 	"math"
 	"net"
@@ -17,6 +19,9 @@ import (
 )
 
 const (
+	DefaultGlobalIPWindow = time.Minute
+	DefaultGlobalIPLimit  = 60
+
 	DefaultAPIWindow    = time.Minute
 	DefaultAPILimit     = 120
 	DefaultAuthWindow   = 10 * time.Minute
@@ -126,9 +131,12 @@ func (l *InMemoryRateLimiter) Middleware(window time.Duration, limit int) func(h
 }
 
 // RedisRateLimiter is a Redis-backed rate limiter for distributed deployments.
+// On Redis errors it falls back to an in-memory limiter rather than allowing
+// all requests through (fail-closed semantics at runtime).
 type RedisRateLimiter struct {
-	client *redis.Client
-	now    func() time.Time
+	client  *redis.Client
+	now     func() time.Time
+	fallback *InMemoryRateLimiter
 }
 
 func NewRedis(redisURL string) (*RedisRateLimiter, error) {
@@ -142,13 +150,15 @@ func NewRedis(redisURL string) (*RedisRateLimiter, error) {
 		return nil, err
 	}
 	return &RedisRateLimiter{
-		client: client,
-		now:    time.Now,
+		client:   client,
+		now:      time.Now,
+		fallback: New(),
 	}, nil
 }
 
 func (r *RedisRateLimiter) Close() {
 	_ = r.client.Close()
+	r.fallback.Close()
 }
 
 var rateLimitLua = redis.NewScript(`
@@ -166,8 +176,8 @@ func (r *RedisRateLimiter) Allow(key string, window time.Duration, limit int) (b
 	ctx := context.Background()
 	count, err := rateLimitLua.Run(ctx, r.client, []string{key}, int(window.Seconds())).Int64()
 	if err != nil {
-		log.Printf("rate_limit:redis: script failed for key=%s err=%v, allowing request", key, err)
-		return true, 0
+		log.Printf("rate_limit:redis: script failed for key=%s err=%v, falling back to in-memory limiter", key, err)
+		return r.fallback.Allow(key, window, limit)
 	}
 	if count > int64(limit) {
 		ttl, _ := r.client.TTL(ctx, key).Result()
@@ -203,10 +213,10 @@ func (r *RedisRateLimiter) Middleware(window time.Duration, limit int) func(http
 }
 
 // NewRateLimiter creates a rate limiter based on the RATE_LIMIT_BACKEND env var.
-// Supported values: "memory" (default), "redis".
+// Supported values: "redis" (default when REDIS_URL is set), "memory" (explicit opt-out).
 func NewRateLimiter() (RateLimiter, error) {
 	backend := strings.ToLower(strings.TrimSpace(os.Getenv("RATE_LIMIT_BACKEND")))
-	if backend == "redis" {
+	if backend == "redis" || (backend == "" && os.Getenv("REDIS_URL") != "") {
 		redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
 		if redisURL == "" {
 			log.Println("rate_limit: RATE_LIMIT_BACKEND=redis but REDIS_URL is empty, falling back to memory")
@@ -223,8 +233,46 @@ func NewRateLimiter() (RateLimiter, error) {
 	return New(), nil
 }
 
+func generateCSRFToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+func csrfCookieName() string { return "csrf_token" }
+
+func readCSRFToken(r *http.Request) string {
+	if c, err := r.Cookie(csrfCookieName()); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+func setCSRFCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName(),
+		Value:    token,
+		Path:     "/",
+		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
+		HttpOnly: false,
+	})
+}
+
+func ensureCSRFCookie(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(csrfCookieName()); err != nil || c.Value == "" {
+		if token := generateCSRFToken(); token != "" {
+			setCSRFCookie(w, token)
+		}
+	}
+}
+
 func CSRFMiddleware(next http.Handler, allowedOrigins []string, internalToken string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ensureCSRFCookie(w, r)
+
 		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
@@ -245,6 +293,22 @@ func CSRFMiddleware(next http.Handler, allowedOrigins []string, internalToken st
 				next.ServeHTTP(w, r)
 				return
 			}
+		}
+
+		// Double-submit cookie CSRF check: if the client already has a csrf_token
+		// cookie, require an X-CSRF-Token header with the same value.
+		cookieToken := readCSRFToken(r)
+		headerToken := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+		if cookieToken != "" && headerToken != "" {
+			if subtle.ConstantTimeCompare([]byte(cookieToken), []byte(headerToken)) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Token mismatch — reject.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"CSRF check failed: token mismatch"}`))
+			return
 		}
 
 		origin := r.Header.Get("Origin")
@@ -384,11 +448,38 @@ func ClientIP(r *http.Request) string {
 
 func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// GlobalIPRateLimitMiddleware enforces a strict per-IP request cap across all
+// routes. This is the outermost rate limit — a bulkhead to prevent any single
+// client from saturating the server regardless of which endpoint they target.
+// The key uses only the client IP (no path), so this limit is truly global per
+// IP regardless of backend (memory or Redis).
+func GlobalIPRateLimitMiddleware(rl RateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := ClientIP(r)
+			key := "rl:" + ip
+			allowed, retryAfter := rl.Allow(key, DefaultGlobalIPWindow, DefaultGlobalIPLimit)
+			if !allowed {
+				seconds := int(math.Ceil(retryAfter.Seconds()))
+				if seconds < 1 {
+					seconds = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(seconds))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 type headerStrippingResponseWriter struct {
