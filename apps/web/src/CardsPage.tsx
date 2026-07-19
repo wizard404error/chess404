@@ -379,9 +379,8 @@ export default function CardsPage({onNavigate, embedded = false}:CardsPageProps)
   },[filterType,filterRarity,search]);
 
   return (
-    <div style={{height:embedded?'100%':'100vh',minHeight:0,flex:embedded?1:undefined,display:'flex',flexDirection:'column',fontFamily:"'Rajdhani','Segoe UI',sans-serif",backgroundImage:embedded?undefined:'url(/background.png)',backgroundSize:'cover',backgroundPosition:'center',backgroundAttachment:'fixed',overflow:'hidden'}}>
+    <div style={{height:embedded?'100%':'100vh',minHeight:0,flex:embedded?1:undefined,display:'flex',flexDirection:'column',fontFamily:"var(--font-sans),'Segoe UI',sans-serif",backgroundImage:embedded?undefined:'url(/background.png)',backgroundSize:'cover',backgroundPosition:'center',backgroundAttachment:'fixed',overflow:'hidden'}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');
         @keyframes float   {0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)}}
         @keyframes sparkle {0%,100%{opacity:0.2;transform:scale(1) rotate(0deg)} 50%{opacity:1;transform:scale(1.5) rotate(20deg)}}
         @keyframes fadeUp  {from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)}}

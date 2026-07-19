@@ -5,5 +5,5 @@ import { usePlatform } from '../../src/contexts/PlatformContext';
 
 export default function CardsRoute() {
   const p = usePlatform();
-  return <CardsPage embedded={false} onNavigate={(page: string) => p.setActivePage(page as any)} />;
+  return <CardsPage embedded onNavigate={(page: string) => p.setActivePage(page as any)} />;
 }
