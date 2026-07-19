@@ -147,27 +147,6 @@ export default function AppShellLayout({ children }: { children?: React.ReactNod
     }
   }, [timeW, timeB, tickingState, clockActive, over, authoritativeLive]);
 
-  // ── Loading skeleton ───────────────────────────────────────────────────────
-  if (hostedRuntime === null) {
-    return (
-      <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100vh', background: '#0a0d16', color: '#ffbe5a', gap: '16px'
-      }}>
-        <div style={{ fontSize: '28px', fontWeight: 800, letterSpacing: '2px' }}>♟ CHESS404</div>
-        <div style={{
-          width: '200px', height: '4px', borderRadius: '2px',
-          background: 'rgba(255,190,90,0.15)', overflow: 'hidden'
-        }}>
-          <div style={{
-            width: '40%', height: '100%', borderRadius: '2px',
-            background: '#ffbe5a', animation: 'loadingSlide 1.2s ease-in-out infinite'
-          }} />
-        </div>
-      </div>
-    );
-  }
-
   // ── Platform context ───────────────────────────────────────────────────────
   const platformContextValue = React.useMemo(() => ({
     hostedRuntime,
@@ -223,6 +202,27 @@ export default function AppShellLayout({ children }: { children?: React.ReactNod
     setActivePage, engine.primaryAccountIdentity, hasPrimaryAccountSession,
     showReturnToMatch,
   ]);
+
+  // ── Loading skeleton ───────────────────────────────────────────────────────
+  if (hostedRuntime === null) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        minHeight: '100vh', background: '#0a0d16', color: '#ffbe5a', gap: '16px'
+      }}>
+        <div style={{ fontSize: '28px', fontWeight: 800, letterSpacing: '2px' }}>♟ CHESS404</div>
+        <div style={{
+          width: '200px', height: '4px', borderRadius: '2px',
+          background: 'rgba(255,190,90,0.15)', overflow: 'hidden'
+        }}>
+          <div style={{
+            width: '40%', height: '100%', borderRadius: '2px',
+            background: '#ffbe5a', animation: 'loadingSlide 1.2s ease-in-out infinite'
+          }} />
+        </div>
+      </div>
+    );
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (

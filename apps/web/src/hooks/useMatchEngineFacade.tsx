@@ -110,6 +110,8 @@ import { useMatchNav } from './useMatchNav';
 import { useMatchAnimations } from './useMatchAnimations';
 import { useCardEngine } from './useCardEngine';
 import { useGameState } from './useGameState';
+import { useMatchChat } from './useMatchChat';
+import { useMatchAntiCheat } from './useMatchAntiCheat';
 
 function buildStoredRoomMeta(
   base: StoredRoomMeta | null | undefined,
@@ -458,9 +460,11 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
     setRadarActive(false);
   }, []);
 
-  const [chatMessages, setChatMessages] = React.useState<{ sender: 'white' | 'black'; text: string }[]>([]);
-  const [chatInput,    setChatInput]    = React.useState('');
-  const chatRef = React.useRef<HTMLDivElement>(null);
+  const {
+    chatMessages, setChatMessages,
+    chatInput, setChatInput,
+    chatRef, resetChat,
+  } = useMatchChat();
 
 
   React.useEffect(() => {
@@ -570,11 +574,14 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
     onStreamReconnect,
   } = matchConnection;
 
-  const [cheaterTurnsLeft, setCheaterTurnsLeft] = React.useState(0);
-  const [cheaterColor,     setCheaterColor]     = React.useState<PieceColor | null>(null);
-  const cheaterColorRef = React.useRef<PieceColor | null>(null);
-  const cheaterActive = cheaterTurnsLeft > 0;
-  const [radarActive,   setRadarActive]   = React.useState(false);
+  const {
+    cheaterTurnsLeft, setCheaterTurnsLeft,
+    cheaterColor, setCheaterColor,
+    cheaterColorRef,
+    cheaterActive,
+    radarActive, setRadarActive,
+    resetAntiCheat,
+  } = useMatchAntiCheat();
 
 
   const [lavaSquares,   setLavaSquares]   = React.useState<LavaSquare[]>([]);
@@ -611,7 +618,6 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
   });
   const movRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => { movRef.current?.scrollTo({ top: movRef.current.scrollHeight }); }, [movHist]);
-  React.useEffect(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight }); }, [chatMessages]);
 
 
 
@@ -3165,8 +3171,7 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
     setReviewIdx(-1);
     setReviewBoard(null);
     setEngineOn(false);
-    setChatMessages([]);
-    setChatInput('');
+    resetChat();
     resetTimer();
     blackMovedRef.current = false;
     finalPositionRef.current = null;
@@ -3190,10 +3195,7 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
     ghostRef.current = null;
     setSwapAnim(null);
     setJokerPicker(null);
-    setRadarActive(false);
-    setCheaterTurnsLeft(0);
-    setCheaterColor(null);
-    cheaterColorRef.current = null;
+    resetAntiCheat();
     setCardPromo(null);
     setDoubleMove(null);
     setCardAnim(null);
