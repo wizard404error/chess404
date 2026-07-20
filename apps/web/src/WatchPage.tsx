@@ -155,7 +155,7 @@ export default function WatchPage({ onWatchMatch, onOpenReplay }: WatchPageProps
               }}
             >
               <option value="">All official modes</option>
-              {OFFICIAL_MATCH_MODES.map((mode) => (
+              {OFFICIAL_MATCH_MODES.filter((mode) => mode.id !== 'computer').map((mode) => (
                 <option key={mode.id} value={mode.id}>
                   {mode.label}
                 </option>

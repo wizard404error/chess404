@@ -112,6 +112,7 @@ import { useCardEngine } from './useCardEngine';
 import { useGameState } from './useGameState';
 import { useMatchChat } from './useMatchChat';
 import { useMatchAntiCheat } from './useMatchAntiCheat';
+import { useMatchBoardEffects } from './useMatchBoardEffects';
 
 function buildStoredRoomMeta(
   base: StoredRoomMeta | null | undefined,
@@ -584,19 +585,26 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
   } = useMatchAntiCheat();
 
 
-  const [lavaSquares,   setLavaSquares]   = React.useState<LavaSquare[]>([]);
-  const [lavaExploding, setLavaExploding] = React.useState<Sq[]>([]);
-
-  // Ghost piece: invisible piece lives OUTSIDE the board entirely
-  // { row, col } = where it currently is; piece = what it is; ownerColor = who owns it; roundsLeft = owner turns before expiry
-  const [ghostPiece, setGhostPiece] = React.useState<{ row: number; col: number; piece: Piece; ownerColor: PieceColor; roundsLeft: number } | null>(null);
-  const ghostRef = React.useRef<{ row: number; col: number; piece: Piece; ownerColor: PieceColor; roundsLeft: number } | null>(null);
-  React.useEffect(() => { ghostRef.current = ghostPiece; }, [ghostPiece]);
-
-  // ── Fog of War zones ───────────────────────────────────────────────────────
-  // Each zone: a 3×3 area centered on (centerRow,centerCol) owned by ownerColor
-  // turnsLeft counts down each time white is about to move (= 1 full round passed)
-  const [fogZones, setFogZones] = React.useState<{ centerRow: number; centerCol: number; ownerColor: PieceColor; turnsLeft: number }[]>([]);
+  const boardEffects = useMatchBoardEffects({
+    setBoard,
+    setCardMsg,
+    fireCardAnim,
+    bombPiecesRef,
+    setBombPieces,
+    setBombExploding,
+  });
+  const {
+    lavaSquares, setLavaSquares,
+    lavaExploding, setLavaExploding,
+    lavaSquaresRef,
+    ghostPiece, setGhostPiece,
+    ghostRef,
+    fogZones, setFogZones,
+    processBombs,
+    handleLavaLanding,
+    processTurnEffects,
+    resetBoardEffects,
+  } = boardEffects;
 
   const { isReady: sfReady, isThinking, ev, sfErr, analyse, stop, resetEval } = useStockfish(engineOn);
 
@@ -621,8 +629,6 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
 
 
 
-  const lavaSquaresRef = React.useRef(lavaSquares);
-  React.useEffect(() => { lavaSquaresRef.current = lavaSquares; }, [lavaSquares]);
 
   const isMountedRef = React.useRef(true);
   React.useEffect(() => {
@@ -732,95 +738,6 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
   }, []);
   premoveActorRef.current = authoritativeActorForColor;
   React.useEffect(() => { actorForColorRef.current = authoritativeActorForColor; });
-
-  // ── NEW: Bomb explosion logic ──────────────────────────────────────────────
-  // Called at start of each turn.
-  // Countdown ticks ONLY when white is about to move (= black just finished = 1 full round passed).
-  const processBombs = React.useCallback((currentTurn: PieceColor, currentBoard: Board) => {
-    const bombs = bombPiecesRef.current;
-    if (bombs.length === 0) return currentBoard;
-
-    // Only decrement once per FULL round (after black moves)
-    const shouldDecrement = currentTurn === 'white';
-
-    const updatedBombs: BombPiece[] = [];
-    const nb = currentBoard;
-    const newExplodingSqs: Sq[] = [];
-
-    for (const bomb of bombs) {
-      const p = nb[bomb.row]?.[bomb.col];
-      const hasBombAtTracked = p?.bomb === true;
-
-      let foundRow = -1, foundCol = -1;
-      if (hasBombAtTracked) {
-        foundRow = bomb.row; foundCol = bomb.col;
-      } else {
-        outer: for (let r = 0; r < 8; r++) {
-          for (let c = 0; c < 8; c++) {
-            if (nb[r][c]?.bomb === true && nb[r][c]?.color === bomb.ownerColor) {
-              foundRow = r; foundCol = c; break outer;
-            }
-          }
-        }
-      }
-
-      const newTurnsLeft = shouldDecrement ? bomb.turnsLeft - 1 : bomb.turnsLeft;
-
-      if (newTurnsLeft <= 0 && foundRow >= 0) {
-        // EXPLODE! Destroy all adjacent pieces (kings immune) + the bomb piece itself
-        const explodeCenter = { row: foundRow, col: foundCol };
-        newExplodingSqs.push(explodeCenter);
-
-        // Collect adjacent squares
-        for (let dr = -1; dr <= 1; dr++) {
-          for (let dc = -1; dc <= 1; dc++) {
-            const r = foundRow + dr, c = foundCol + dc;
-            if (!inB(r, c)) continue;
-            const target = nb[r][c];
-            if (target && target.type !== 'king') {
-              newExplodingSqs.push({ row: r, col: c });
-            }
-          }
-        }
-
-        // Apply destruction after animation frame
-        // (we'll do the actual board update in setTimeout below)
-      } else if (foundRow >= 0) {
-        updatedBombs.push({ ...bomb, row: foundRow, col: foundCol, turnsLeft: newTurnsLeft });
-      }
-    }
-
-    if (newExplodingSqs.length > 0) {
-      // Deduplicate
-      const uniqueSqs = newExplodingSqs.filter((s, i, arr) =>
-        arr.findIndex(x => x.row === s.row && x.col === s.col) === i
-      );
-      setBombExploding(uniqueSqs);
-      fireCardAnim('bomb_explode', '💥 Bomb detonated!');
-
-      setTimeout(() => {
-        setBoard(b2 => {
-          const explodedBoard = cloneBoard(b2);
-          for (const sq of uniqueSqs) {
-            const tp = explodedBoard[sq.row]?.[sq.col];
-            if (tp && tp.type !== 'king') {
-              explodedBoard[sq.row][sq.col] = null;
-            }
-          }
-          return explodedBoard;
-        });
-        setBombPieces(updatedBombs);
-        setBombExploding([]);
-        setCardMsg(`💥 BOMB EXPLODED! ${uniqueSqs.length} pieces destroyed!`);
-        setTimeout(() => setCardMsg(''), 3000);
-      }, 900);
-    } else {
-      setBombPieces(updatedBombs);
-    }
-
-    return currentBoard;
-  }, []);
-
 
 
   // Engine analysis trigger
@@ -1046,58 +963,10 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
       }
       return changed ? nb : prev;
     });
-
-    // Ghost piece expiry:
-    // activate -> owner plays (move 1) -> opponent plays -> owner plays (move 2) + piece reappears
-    // roundsLeft=1: decrements when owner's turn starts; expires on opponent's turn after roundsLeft<=0
-    const ghost = ghostRef.current;
-    if (ghost) {
-      if (ghost.ownerColor === turn) {
-        // Owner's turn starting - decrement counter
-        const updated = { ...ghost, roundsLeft: ghost.roundsLeft - 1 };
-        setGhostPiece(updated);
-        ghostRef.current = updated;
-      } else if (ghost.roundsLeft <= 0) {
-        // Opponent's turn starting after owner played - expire now
-        setGhostPiece(null);
-        ghostRef.current = null;
-        setBoard(prev => {
-          const nb = prev.map(r => r.map(p => p ? { ...p } : null)) as Board;
-          const occupant = nb[ghost.row][ghost.col];
-          if (occupant) {
-            setCardMsg(`👁️ ${ghost.piece.type} reappeared on an occupied square and was destroyed!`);
-            setTimeout(() => setCardMsg(''), 3000);
-            return nb;
-          } else {
-            nb[ghost.row][ghost.col] = { ...ghost.piece };
-            setCardMsg(`👁️ ${ghost.piece.type} reappears!`);
-            setTimeout(() => setCardMsg(''), 2000);
-            return nb;
-          }
-        });
-      }
-    }
     }
 
-    // Process bombs at start of each turn
-    if (!authoritativeLive) {
-      processBombs(turn, boardRef.current);
-    }
-
-    // Countdown fog zones — decrement once per full round (when white is about to move)
-      if (!authoritativeLive && turn === 'white') {
-        setFogZones(prev => {
-          const next = prev
-            .map(z => ({ ...z, turnsLeft: z.turnsLeft - 1 }))
-          .filter(z => z.turnsLeft > 0);
-        if (next.length < prev.length) {
-          setCardMsg('🌤️ Fog of War lifted!');
-          setTimeout(() => setCardMsg(''), 2500);
-        }
-        return next;
-      });
-    }
-  }, [turn, processBombs, authoritativeLive]);
+    processTurnEffects(turn, authoritativeLive, boardRef);
+  }, [turn, processTurnEffects, authoritativeLive]);
 
   // ── Fusion attack helper ───────────────────────────────────────────────────
   const isAttackedWithFusion = React.useCallback((b: Board, row: number, col: number, byColor: PieceColor): boolean => {
@@ -1199,27 +1068,6 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
       else if (isStale || im)            setWinner('draw');
     }
   }, [isAttackedWithFusion]);
-
-  // ── Handle lava landing ────────────────────────────────────────────────────
-  const handleLavaLanding = React.useCallback((tr: number, tc: number, pieceType: PieceType | undefined) => {
-    const lava = lavaSquaresRef.current.find(l => l.row === tr && l.col === tc);
-    if (lava && pieceType !== 'king') {
-      setLavaExploding(prev => [...prev, { row: tr, col: tc }]);
-      fireCardAnim('lava_kill', `Piece incinerated on ${FILES[tc]}${RANKS[tr]}`);
-      setTimeout(() => {
-        setBoard(b2 => { const nb2 = cloneBoard(b2); nb2[tr][tc] = null; return nb2; });
-        setLavaSquares(prev =>
-          prev
-            .filter(l => !(l.row === tr && l.col === tc))
-            .map(l => ({ ...l, movesLeft: l.movesLeft - 1 }))
-            .filter((l): l is LavaSquare => l.movesLeft > 0)
-        );
-        setLavaExploding(prev => prev.filter(l => !(l.row === tr && l.col === tc)));
-      }, 700);
-      return true;
-    }
-    return false;
-  }, []);
 
   const canSubmitAuthoritativeMove = React.useCallback((fr: number, fc: number, tr: number, tc: number) => {
     const matchId = authoritativeMatchIdRef.current;
@@ -3186,13 +3034,9 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
     setCardPending(null);
     setCardMsg('');
     setPromoPicker(null);
-    setLavaSquares([]);
-    setLavaExploding([]);
-    setFogZones([]);
+    resetBoardEffects();
     setBombPieces([]);
     setBombExploding([]);
-    setGhostPiece(null);
-    ghostRef.current = null;
     setSwapAnim(null);
     setJokerPicker(null);
     resetAntiCheat();
@@ -3227,7 +3071,7 @@ export function useMatchEngineFacade(props: UseMatchEngineProps) {
     }
     setTimeout(() => startAbortCountdown(), 0);
     void bootstrapAuthoritativeMatch();
-  }, [stop, setTicking, startAbortCountdown, bootstrapAuthoritativeMatch, hostedRuntime]);
+  }, [stop, setTicking, startAbortCountdown, bootstrapAuthoritativeMatch, hostedRuntime, resetBoardEffects]);
 
   const returnToQueueHome = React.useCallback(() => {
     setQueueLaunchIntent(null);

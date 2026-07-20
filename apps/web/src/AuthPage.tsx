@@ -571,6 +571,24 @@ export default function AuthPage({
                   >
                     {busy ? 'Signing in...' : 'Sign In'}
                   </button>
+                  <button
+                    onClick={() => setActiveTab('reset')}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'rgba(255,180,60,0.7)',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                      padding: '2px 0',
+                      textDecoration: 'underline',
+                      textDecorationColor: 'rgba(255,180,60,0.3)',
+                      textUnderlineOffset: '3px',
+                    }}
+                  >
+                    Forgot password?
+                  </button>
                 </div>
               ) : (
                 <div style={{ display:'grid', gap:'12px' }}>
